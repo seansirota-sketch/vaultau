@@ -1,6 +1,8 @@
 <!DOCTYPE html>
 <html lang="he" dir="rtl">
 <head>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
 <title>פאנל ניהול — בנק מבחנים</title>
@@ -26,6 +28,28 @@
   };
 </script>
 <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js" async></script>
+<style>
+  /* ── Admin card inner padding fix ── */
+  .ac > *:not(.ac-title):not(.upload-zone):not(.progress-bar-wrap):not(.import-area):not(.parse-row):not(#upload-status):not(.or-divider) {
+    padding-left: 1.4rem;
+    padding-right: 1.4rem;
+  }
+  .ac > .form-group { padding-top: .3rem; }
+  .ac > .form-group:first-of-type { padding-top: 1.2rem; }
+  .ac > .form-group:last-of-type { padding-bottom: 1.2rem; }
+  .ac > .form-row { padding-top: .3rem; }
+  .ac > .preview-grid { padding-top: 0; padding-bottom: 1rem; }
+  .ac > #preview-container { padding: 0; }
+  .ac > [id$="-error"] { padding-top: 0; padding-bottom: .5rem; }
+  /* dashboard lists */
+  #dash-courses, #stats-grid { padding-left: 1.4rem; padding-right: 1.4rem; }
+  #stats-grid { padding-top: 1.2rem; }
+  #dash-courses { padding-bottom: 1.2rem; }
+  /* courses & manage sections */
+  #courses-list, #manage-table { padding-bottom: 1rem; }
+  /* form-row inside ac */
+  .ac > .form-row:first-of-type { padding-top: 1.2rem; }
+</style>
 </head>
 <body>
 
@@ -140,17 +164,9 @@
               </select>
             </div>
           </div>
-          <!-- ── Multi-lecturer widget ── -->
           <div class="form-group">
-            <label>מרצים</label>
-            <div id="lecturers-list" class="lecturers-list"></div>
-            <div class="lecturer-add-row">
-              <input id="ae-lecturer-input" type="text"
-                placeholder='ד"ר ישראלי'
-                onkeydown="if(event.key==='Enter'){event.preventDefault();addLecturer()}">
-              <button type="button" class="btn btn-secondary btn-sm"
-                onclick="addLecturer()">+ הוסף</button>
-            </div>
+            <label>שם מרצה</label>
+            <input id="ae-lecturer" type="text" placeholder='ד"ר ישראלי'>
           </div>
           <div id="ae-error" class="form-error"></div>
         </div>
@@ -166,7 +182,7 @@
             <div class="uz-sub">או לחץ לבחירת קובץ &mdash; PDF / LaTeX / LyX / TXT</div>
           </div>
 
-          <div id="upload-status" style="display:none;font-size:.85rem;color:var(--primary);margin:.5rem 0;text-align:center"></div>
+          <div id="upload-status" style="display:none"></div>
 
           <div id="progress-wrap" style="display:none;margin:.4rem 0">
             <div class="progress-bar-wrap">
@@ -174,14 +190,14 @@
             </div>
           </div>
 
-          <div style="text-align:center;color:var(--muted);font-size:.82rem;margin:.65rem 0">&#8213; או הדבק טקסט ידנית &#8213;</div>
+          <div class="or-divider">או הדבק טקסט ידנית</div>
 
           <div class="import-area">
             <textarea id="raw-text"
               placeholder="הדבק כאן טקסט LaTeX / LyX / פשוט...&#10;&#10;שאלה 1: ...&#10;שאלה 2: ..."></textarea>
           </div>
 
-          <div style="margin:.75rem 0;display:flex;gap:.75rem;align-items:center">
+          <div class="parse-row" style="">
             <button id="parse-btn" class="btn btn-primary" onclick="runParser()">
               🤖 נתח עם AI
             </button>
@@ -202,7 +218,7 @@
         </div>
 
         <!-- Save button -->
-        <div style="display:flex;justify-content:flex-end;gap:.75rem;margin-top:1rem">
+        <div style="display:flex;justify-content:flex-end;gap:.75rem;margin-top:1rem;padding:0 1.4rem 1.4rem">
           <button class="btn btn-secondary" onclick="resetForm()">🔄 איפוס</button>
           <button class="btn btn-primary btn-lg" onclick="submitAddExam()">
             💾 שמור מבחן
