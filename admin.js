@@ -25,59 +25,6 @@ const ICONS = ['📐','📊','⚛️','🧮','🔬','🧬','💻','🌍','🏛�
                '🎓','🔭','📈','🧪','🔢','📜','🗓️','🖥️','🎯','⚙️'];
 function randIcon() { return ICONS[Math.floor(Math.random() * ICONS.length)]; }
 
-/* ── Multi-lecturer widget ─────────────────────────────────── */
-let _lecturers = [];
-
-function getLecturers() { return [..._lecturers]; }
-
-function addLecturer() {
-  const inp = document.getElementById('ae-lecturer-input');
-  if (!inp) return;
-  const name = inp.value.trim();
-  if (!name) return;
-  if (_lecturers.includes(name)) { toast('מרצה זה כבר נוסף', 'error'); inp.value = ''; return; }
-  _lecturers.push(name);
-  inp.value = '';
-  _renderLecturersWidget();
-}
-
-function removeLecturer(idx) {
-  _lecturers.splice(idx, 1);
-  _renderLecturersWidget();
-}
-
-function _renderLecturersWidget() {
-  const el = document.getElementById('lecturers-list');
-  if (!el) return;
-  if (!_lecturers.length) {
-    el.innerHTML = '<span class="lecturer-empty">לא נוספו מרצים</span>';
-    return;
-  }
-  el.innerHTML = _lecturers.map((name, i) => `
-    <span class="lecturer-tag">
-      <span class="lecturer-tag-name">👨‍🏫 ${esc(name)}</span>
-      <button class="lecturer-tag-rm" onclick="removeLecturer(${i})" title="הסר">✕</button>
-    </span>`).join('');
-}
-
-function _setLecturers(arr) {
-  _lecturers = Array.isArray(arr) ? arr.filter(Boolean) : (arr ? [arr] : []);
-  _renderLecturersWidget();
-}
-
-function _clearLecturers() {
-  _lecturers = [];
-  _renderLecturersWidget();
-  const inp = document.getElementById('ae-lecturer-input');
-  if (inp) inp.value = '';
-}
-
-function _fmtLecturers(val) {
-  if (!val) return '-';
-  if (Array.isArray(val)) return val.length ? val.map(esc).join(', ') : '-';
-  return esc(val);
-}
-
 /* ── FIREBASE AUTH (Admin login) ───────────────────────────── */
 let adminUser = null; // Firebase user object
 
@@ -167,7 +114,6 @@ async function initAdmin() {
     await renderManageTable();
     await renderCoursesList();
     setupUploadZone();
-    _renderLecturersWidget();
   } catch (e) {
     console.error('Init error:', e);
     toast('שגיאה בטעינה: ' + e.message, 'error');
@@ -597,6 +543,7 @@ async function handleFileInput(file) {
 
 /* ── Live text parser ─────────────────────────────────────── */
 let parsedQuestions = [];
+let _editingExamId  = null;  // tracks the exam being edited (for safe update, not delete-first)
 
 async function runParser() {
   const raw = document.getElementById('raw-text')?.value || '';
@@ -736,7 +683,7 @@ async function submitAddExam() {
   const year     = document.getElementById('ae-year').value.trim();
   const sem      = document.getElementById('ae-sem').value;
   const moed     = document.getElementById('ae-moed').value;
-  const lecturers = getLecturers();
+  const lecturer = document.getElementById('ae-lecturer').value.trim();
   const err      = document.getElementById('ae-error');
   err.classList.remove('show');
 
@@ -769,7 +716,25 @@ async function submitAddExam() {
   showSpinner('💾 שומר מבחן ל-Firebase...');
 
   try {
-    const examId = genId();
+    // ── Duplicate detection: same course + year + moed ──────────────
+    if (year && moed) {
+      let dupQuery = db.collection('exams').where('courseId', '==', courseId);
+      if (year) dupQuery = dupQuery.where('year', '==', parseInt(year));
+      if (moed) dupQuery = dupQuery.where('moed',  '==', moed);
+      const dupSnap = await dupQuery.get();
+      const conflicts = dupSnap.docs.filter(d => d.id !== (_editingExamId || ''));
+      if (conflicts.length) {
+        const conflict = conflicts[0].data();
+        const ok = confirm(
+          `שים לב: כבר קיים מבחן "${conflict.title}" לקורס זה עם שנה ${year} ומועד ${moed}.\n` +
+          `האם להמשיך ולשמור כמבחן נפרד?`
+        );
+        if (!ok) return;
+      }
+    }
+
+    // ── Build exam object ───────────────────────────────────────────
+    const examId = _editingExamId || genId();   // reuse ID when editing, new ID for new exam
     const exam   = {
       id:        examId,
       courseId,
@@ -777,7 +742,7 @@ async function submitAddExam() {
       year:      year ? parseInt(year) : null,
       semester:  sem  || null,
       moed:      moed || null,
-      lecturers: lecturers.length ? lecturers : null,
+      lecturer:  lecturer || null,
       questions: questions.map(q => ({
         id:   q.id || genId(),
         text: q.text,
@@ -787,13 +752,19 @@ async function submitAddExam() {
           text:  s.text
         }))
       })),
-      createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+      updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
       createdBy: adminUser?.email || 'admin',
     };
+    // Preserve original createdAt when editing; set it fresh when creating
+    if (!_editingExamId) {
+      exam.createdAt = firebase.firestore.FieldValue.serverTimestamp();
+    }
 
+    // ── Safe write: setDoc with merge:false (always a full replacement of THIS doc only) ──
     await db.collection('exams').doc(examId).set(exam);
 
-    toast(`✅ מבחן נשמר — ${exam.questions.length} שאלות`, 'success');
+    const action = _editingExamId ? 'עודכן' : 'נשמר';
+    toast(`מבחן ${action} — ${exam.questions.length} שאלות`, 'success');
     resetForm();
     await refreshDashboard();
   } catch (e) {
@@ -807,8 +778,9 @@ async function submitAddExam() {
 
 function resetForm() {
   ['ae-course','ae-sem','ae-moed'].forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
-  ['ae-title','ae-year'].forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
-  _clearLecturers();
+  ['ae-title','ae-year','ae-lecturer'].forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
+  parsedQuestions = [];          // ← FIX: clear carry-over questions from previous exam
+  _editingExamId  = null;        // ← FIX: clear edit context
   clearImport();
   document.getElementById('ae-error')?.classList.remove('show');
 }
@@ -905,7 +877,7 @@ async function renderManageTable() {
         <td>${e.year || '-'}</td>
         <td>${esc(e.semester) || '-'}</td>
         <td>${esc(e.moed) || '-'}</td>
-        <td>${_fmtLecturers(e.lecturers || e.lecturer)}</td>
+        <td>${esc(e.lecturer) || '-'}</td>
         <td><span class="badge b-gray">${(e.questions || []).length}</span></td>
         <td>
           <button class="btn btn-sm btn-secondary" onclick="editExam('${e.courseId}','${e.id}')">✏️</button>
@@ -941,21 +913,25 @@ async function editExam(courseId, examId) {
     const exam = await fetchExam(examId);
     if (!exam) { toast('מבחן לא נמצא', 'error'); return; }
 
+    // ── FIX: store edit context — do NOT delete until user explicitly saves ──
+    _editingExamId = examId;
+
     showSection('add-exam');
     document.getElementById('ae-course').value   = courseId;
-    document.getElementById('ae-title').value    = exam.title  || '';
-    document.getElementById('ae-year').value     = exam.year   || '';
-    document.getElementById('ae-sem').value      = exam.semester || '';
-    document.getElementById('ae-moed').value     = exam.moed   || '';
-    _setLecturers(exam.lecturers || exam.lecturer || []);
+    document.getElementById('ae-title').value    = exam.title     || '';
+    document.getElementById('ae-year').value     = exam.year      || '';
+    document.getElementById('ae-sem').value      = exam.semester  || '';
+    document.getElementById('ae-moed').value     = exam.moed      || '';
+    document.getElementById('ae-lecturer').value = exam.lecturer  || '';
 
-    parsedQuestions = (exam.questions || []).map(q => ({ ...q, subs: q.subs || [] }));
-
-    // Delete original — user will re-save as new
-    await db.collection('exams').doc(examId).delete();
+    // ── FIX: deep-copy questions so edits don't mutate cached data ──
+    parsedQuestions = (exam.questions || []).map(q => ({
+      ...q,
+      subs: (q.subs || []).map(s => ({ ...s }))
+    }));
 
     renderPreview();
-    toast('ℹ️ המבחן נטען לעריכה — שמור כדי לעדכן', 'info');
+    toast('המבחן נטען לעריכה — ערוך ושמור', 'info');
   } catch (e) {
     toast('שגיאה: ' + e.message, 'error');
   } finally {
