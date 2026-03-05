@@ -9,7 +9,7 @@
 
 const CLAUDE_API = 'https://api.anthropic.com/v1/messages';
 const MODEL      = 'claude-sonnet-4-20250514';
-const MAX_TOKENS = 4096;
+const MAX_TOKENS = 8192; // math exams with LaTeX can be verbose
 
 /* ── CORS headers ── */
 const CORS = {
@@ -40,22 +40,43 @@ function isRateLimited(ip) {
 
 /* ── Prompt builder ── */
 function buildPrompt(text, titleHint) {
-  const hint = titleHint ? `שם/קוד המבחן: "${titleHint}". ` : '';
-  return `${hint}אתה מנתח מבחן אקדמי. שלוף את כל השאלות והסעיפים.
+  const hint = titleHint ? `שם/קוד המבחן: "${titleHint}".\n` : '';
+  const textSection = text
+    ? `\n\nטקסט המבחן (עברית RTL — שים לב: הטקסט עלול להיות הפוך/מקולקל בשל בעיות חילוץ PDF; קרא אותו על-פי הקשר):\n${text}`
+    : '';
 
-החזר JSON בלבד (ללא markdown, ללא טקסט נוסף) בפורמט הזה בדיוק:
-{"questions":[{"number":1,"text":"טקסט שאלה ראשית","parts":[{"letter":"א","text":"טקסט סעיף"}]}]}
+  return `${hint}אתה מנתח מבחן אקדמי בעברית. משימתך: לשלוף את כל השאלות והסעיפים ולהחזיר JSON תקני בלבד.
 
-הוראות:
-- שלוף את כל השאלות
-- אם לשאלה יש סעיפים (א)(ב)(ג) — כלול ב-parts
-- אם אין סעיפים — parts יהיה []
-- נוסחאות מתמטיות: LaTeX עם $...$ או $$...$$
-- שמור על הטקסט העברי המקורי
-- החזר JSON תקני בלבד
+═══ פורמט הפלט ═══
+החזר JSON בלבד — ללא markdown, ללא \`\`\`, ללא טקסט לפני או אחרי.
+פורמט מדויק:
+{"questions":[{"number":1,"text":"טקסט גוף השאלה (ריק אם כל התוכן בסעיפים)","parts":[{"letter":"1","text":"טקסט סעיף"}]}]}
 
-טקסט המבחן:
-${text}`;
+═══ חוקי זיהוי שאלות ═══
+• זהה שאלות לפי: "שאלה N", "Question N", או מספר גדול N עצמאי בתחילת פסקה.
+• ספור כל שאלה שמופיעה — אל תדלג על אף שאלה.
+
+═══ חוקי זיהוי סעיפים ═══
+סעיף הוא כל אחד מאלה (גם בסדר הפוך בגלל RTL):
+• .1 / .2 / .3 (נקודה-מספר, נפוץ בעברית RTL)
+• (1) (2) (3)
+• א. ב. ג. / .א .ב .ג
+• (א) (ב) (ג)
+• a. b. c. / (a) (b) (c)
+• i. ii. iii.
+letter יהיה: "1","2","3" או "א","ב","ג" — בהתאם לפורמט המקורי.
+
+═══ נוסחאות מתמטיות ═══
+• שמור LaTeX מקורי ב-$...$ (inline) או $$...$$ (display).
+• אם אין LaTeX מפורש — כתוב נוסחה בטקסט ב-$...$, למשל: $f(x) = x^2$.
+• אל תמחק נוסחאות — הן חלק מהותי מהשאלה.
+
+═══ כללים נוספים ═══
+• שפה: שמור עברית מקורית — אל תתרגם, אל תפרפרז.
+• אם הטקסט מקולקל/הפוך (בשל RTL) — קרא אותו לפי הקשר ובנה שאלה קוהרנטית.
+• "parts" ריק ([]) אם לשאלה אין סעיפים.
+• "text" ריק ("") אם כל תוכן השאלה נמצא בסעיפים בלבד.
+• אל תכלול הוראות בחינה, כותרת עמוד, שם מרצה, שאלות בונוס שאינן שאלות — רק שאלות תוכן.${textSection}`;
 }
 
 /* ── Main handler ── */
@@ -118,6 +139,15 @@ exports.handler = async (event) => {
       statusCode: 400,
       headers: CORS,
       body: JSON.stringify({ error: 'Missing required field: text or base64' }),
+    };
+  }
+
+  // Guard: base64 PDF > ~4.5 MB decoded → Netlify body limit is 6 MB
+  if (base64 && base64.length > 6_000_000) {
+    return {
+      statusCode: 413,
+      headers: CORS,
+      body: JSON.stringify({ error: 'PDF גדול מדי — נסה לפצל לפי עמודים (מקסימום ~4 MB)' }),
     };
   }
 
