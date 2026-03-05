@@ -1,0 +1,25 @@
+# ============================================================
+# netlify.toml  —  שים קובץ זה בשורש הפרויקט שלך
+# ============================================================
+
+[build]
+  # תיקיית הפונקציות — Netlify יאסוף מכאן אוטומטית
+  functions = "netlify/functions"
+
+  # תיקיית ה-publish (הקבצים הסטטיים שלך — index.html וכו')
+  publish = "."
+
+# ── Headers לאבטחה על כל הדפים ──────────────────────────
+[[headers]]
+  for = "/*"
+  [headers.values]
+    X-Frame-Options        = "DENY"
+    X-Content-Type-Options = "nosniff"
+    Referrer-Policy        = "strict-origin-when-cross-origin"
+
+# ── הגדרת timeout לפונקציה (מקסימום 26 שניות ב-Netlify Free) ──
+[functions]
+  node_bundler = "esbuild"
+
+  [functions.parse-exam]
+    timeout = 25
