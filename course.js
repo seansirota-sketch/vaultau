@@ -1,3 +1,4 @@
+function nl2br(html){if(!html)return '';return html.replace(/\n/g,'<br>');}
 /* ============================================================
    EXAM BANK  —  course.js  (Firebase edition)
    Requires: firebase-config.js loaded first (via script tag)
@@ -366,8 +367,8 @@ async function renderCourse() {
             📋 כל המבחנים
           </button>
           <button class="tab-btn ${STATE.tab === 'starred' ? 'active' : ''}" onclick="setTab('starred')">
-            שאלות מסומנות
-            ${starCount ? `<span class="badge">${starCount}</span>` : ''}
+            ⭐ שאלות מסומנות
+            ${starCount ? `<span class="badge b-orange">${starCount}</span>` : ''}
           </button>
         </div>
         <div id="tab-content"></div>
@@ -443,7 +444,7 @@ function applyFilters() {
   if (!el) return;
 
   if (!filtered.length) {
-    el.innerHTML = '<div class="empty"><h3>לא נמצאו מבחנים</h3><p>נסה לשנות את הפילטרים</p></div>';
+    el.innerHTML = '<div class="empty"><span class="ei">🔍</span><h3>לא נמצאו מבחנים</h3><p>נסה לשנות את הפילטרים</p></div>';
     return;
   }
 
@@ -451,12 +452,12 @@ function applyFilters() {
     <div class="exam-item" onclick="goExam('${STATE.courseId}','${e.id}')">
       <div style="flex:1">
         <div class="exam-title">${esc(e.title || e.id)}</div>
-        <div class="exam-meta-row">
-          ${e.year     ? `<span class="badge">${e.year}</span>` : ''}
-          ${e.semester ? `<span class="badge">סמסטר ${esc(e.semester)}</span>` : ''}
-          ${e.moed     ? `<span class="badge">מועד ${esc(e.moed)}</span>` : ''}
-          ${e.lecturer ? `<span class="badge">${esc(e.lecturer)}</span>` : ''}
-          <span class="badge">${(e.questions || []).length} שאלות</span>
+        <div class="exam-badges">
+          ${e.year     ? `<span class="badge b-blue">📅 ${e.year}</span>` : ''}
+          ${e.semester ? `<span class="badge b-green">📆 ${esc(e.semester)}</span>` : ''}
+          ${e.moed     ? `<span class="badge b-purple">📝 ${esc(e.moed)}</span>` : ''}
+          ${e.lecturer ? `<span class="badge b-orange">👨‍🏫 ${esc(e.lecturer)}</span>` : ''}
+          <span class="badge b-gray">${(e.questions || []).length} שאלות</span>
         </div>
       </div>
       <span class="exam-arrow">←</span>
@@ -490,7 +491,7 @@ function renderStarredTab(exams, starred) {
   });
 
   if (!items.length) {
-    tc.innerHTML = '<div class="empty"><h3>אין שאלות מסומנות</h3><p>סמן שאלות בתוך המבחנים</p></div>';
+    tc.innerHTML = '<div class="empty"><span class="ei">⭐</span><h3>אין שאלות מסומנות</h3><p>סמן שאלות בכוכבית בתוך המבחנים</p></div>';
     return;
   }
 
@@ -569,7 +570,7 @@ async function renderExam() {
         <div class="ev-topbar">
           <button class="ev-back" onclick="goCourse('${course.id}')">← חזרה</button>
           <div class="ev-topbar-meta">
-            ${exam.lecturer ? `<span>${esc(exam.lecturer)}</span>` : ''}
+            ${exam.lecturer ? `<span>👨‍🏫 ${esc(exam.lecturer)}</span>` : ''}
           </div>
         </div>
 
@@ -580,7 +581,7 @@ async function renderExam() {
 
         <div class="ev-body" id="ev-questions-body">
           ${!questions.length
-            ? `<div class="empty"><h3>אין שאלות עדיין</h3></div>`
+            ? `<div class="empty"><span class="ei">📝</span><h3>אין שאלות עדיין</h3></div>`
             : questions.map((q, qi) => renderQuestionCard(q, qi, starred)).join('')}
         </div>
       </div>`;
@@ -589,10 +590,10 @@ async function renderExam() {
     questions.forEach(q => {
       const subs   = q.subs || q.parts || [];
       const textEl = page.querySelector(`#qc-${q.id} .qv-text`);
-      if (textEl) textEl.innerHTML = q.text || '';
+      if (textEl) textEl.innerHTML = nl2br(q.text || '');
       subs.forEach(s => {
         const subEl = page.querySelector(`#si-${s.id} .qv-part-text`);
-        if (subEl) subEl.innerHTML = s.text || '';
+        if (subEl) subEl.innerHTML = nl2br(s.text || '');
       });
     });
 
@@ -674,7 +675,7 @@ async function toggleStar(id) {
   const idx     = starred.indexOf(id);
   const adding  = idx === -1;
 
-  if (adding) { starred.push(id); toast('נוסף לשאלות מסומנות', 'info'); }
+  if (adding) { starred.push(id); toast('⭐ נוסף לשאלות מסומנות', 'info'); }
   else        { starred.splice(idx, 1); toast('הוסר מהמסומנות'); }
 
   // Optimistic UI update

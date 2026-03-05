@@ -677,7 +677,7 @@ body {
 /* ── Preview cards ── */
 .preview-grid {
   display: flex; flex-direction: column; gap: .7rem;
-  max-height: 600px; overflow-y: auto;
+  max-height: none;
   padding: .1rem; scroll-behavior: smooth;
 }
 .pq-card {
@@ -699,9 +699,10 @@ body {
 .pq-actions { display: flex; gap: .35rem; }
 .pq-textarea {
   width: 100%; border: none; border-top: 1px solid var(--border-s);
-  padding: .7rem 1rem; font-size: .87rem; font-family: 'Courier New', monospace;
-  direction: ltr; text-align: left; resize: vertical; min-height: 60px;
+  padding: .85rem 1rem; font-size: .9rem; font-family: 'Courier New', monospace;
+  direction: ltr; text-align: left; resize: vertical; min-height: 120px;
   background: var(--card2); color: var(--text); transition: var(--ease); display: block;
+  line-height: 1.6;
 }
 .pq-textarea:focus { outline: none; background: #fff; }
 .sub-preview {
@@ -840,6 +841,7 @@ mjx-container { direction: ltr; }
 .qv-text {
   padding: 1rem 1.2rem; font-size: .975rem; line-height: 1.85;
   color: #1a2635; border-bottom: 1px solid #edf0f4; direction: rtl;
+  white-space: pre-wrap;
 }
 .qv-parts { padding: .45rem 1.2rem .7rem; }
 .qv-part { padding: .7rem 0; border-bottom: 1px solid #edf0f4; }
@@ -855,6 +857,7 @@ mjx-container { direction: ltr; }
 .qv-part-text {
   font-size: .95rem; line-height: 1.85;
   color: #1a2635; direction: rtl; padding-right: .2rem;
+  white-space: pre-wrap;
 }
 .qv-text .MathJax,
 .qv-part-text .MathJax { direction: ltr; display: inline-block; }
