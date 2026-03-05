@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>בנק מבחנים</title>
+<link rel="stylesheet" href="style.css">
+
+<!-- Firebase v9 compat SDK -->
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
+
+<!-- Shared Firebase config + helpers (must load before course.js) -->
+<script src="firebase-config.js"></script>
+
+<!-- MathJax -->
+<script>
+window.MathJax = {
+  tex: { inlineMath: [['$','$'],['\\(','\\)']], displayMath: [['$$','$$'],['\\[','\\]']] },
+  options: { skipHtmlTags: ['script','noscript','style','textarea','pre'] },
+  startup: { typeset: false }
+};
+</script>
+<script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js" async></script>
+</head>
+<body>
+<div id="app">
+  <!-- Initial loader shown while Firebase auth state resolves -->
+  <div style="min-height:100vh;display:flex;align-items:center;justify-content:center;
+              background:linear-gradient(135deg,#667eea,#764ba2)">
+    <div style="text-align:center;color:#fff">
+      <div class="spinner" style="border-color:rgba(255,255,255,.3);border-top-color:#fff;margin:0 auto 1rem"></div>
+      <p style="font-size:.95rem;opacity:.85">טוען...</p>
+    </div>
+  </div>
+</div>
+<script src="course.js"></script>
+</body>
+</html>

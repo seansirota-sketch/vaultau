@@ -1,0 +1,256 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>פאנל ניהול — בנק מבחנים</title>
+<link rel="stylesheet" href="style.css">
+
+<!-- Firebase v9 compat SDK -->
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
+
+<!-- Shared Firebase config + helpers (must load before admin.js) -->
+<script src="firebase-config.js"></script>
+
+<!-- PDF.js -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+
+<!-- MathJax -->
+<script>
+  window.MathJax = {
+    tex: { inlineMath: [['$','$'],['\\(','\\)']], displayMath: [['$$','$$'],['\\[','\\]']] },
+    options: { skipHtmlTags: ['script','noscript','style','textarea','pre'] },
+    startup: { typeset: false }
+  };
+</script>
+<script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js" async></script>
+</head>
+<body>
+
+<!-- ═══ LOGIN SCREEN ════════════════════════════════════════ -->
+<div id="adm-login">
+  <div class="auth-card" style="margin:auto;margin-top:10vh">
+    <div class="auth-logo">
+      <span class="icon">🔒</span>
+      <h1>פאנל ניהול</h1>
+      <p>כניסה מוגנת למנהלים בלבד</p>
+    </div>
+    <div id="adm-err" class="form-error"></div>
+    <div class="form-group">
+      <label>אימייל מנהל</label>
+      <input id="adm-email" type="email" placeholder="admin@example.com" autocomplete="email">
+    </div>
+    <div class="form-group">
+      <label>סיסמה</label>
+      <input id="adm-pass" type="password" placeholder="••••••••" autocomplete="current-password">
+    </div>
+    <button class="btn btn-primary" style="width:100%;justify-content:center" onclick="adminLogin()">
+      כניסה ←
+    </button>
+  </div>
+</div>
+
+<!-- ═══ ADMIN APP ════════════════════════════════════════════ -->
+<div id="adm-app" style="display:none;flex-direction:row">
+  <div class="admin-layout">
+
+    <!-- SIDEBAR -->
+    <aside class="admin-sidebar">
+      <div class="sidebar-logo">⚙️ ניהול מבחנים</div>
+      <nav class="admin-nav">
+        <a id="nav-dashboard" class="active" onclick="showSection('dashboard')">
+          📊 סטטיסטיקות
+        </a>
+        <a id="nav-add-exam" onclick="showSection('add-exam')">
+          ➕ הוסף מבחן
+        </a>
+        <a id="nav-manage" onclick="showSection('manage')">
+          📋 ניהול מבחנים
+        </a>
+        <a id="nav-courses" onclick="showSection('courses')">
+          📁 ניהול קורסים
+        </a>
+        <div style="margin-top:auto;border-top:1px solid rgba(255,255,255,.18);padding-top:1rem;margin-top:2rem">
+          <a href="index.html">🏠 אתר משתמש</a>
+          <a onclick="adminLogout()">🚪 יציאה</a>
+        </div>
+      </nav>
+    </aside>
+
+    <!-- MAIN -->
+    <main class="admin-main">
+
+      <!-- ── DASHBOARD ──────────────────────────────────────── -->
+      <div class="adm-section active" id="sec-dashboard">
+        <div class="sec-header">
+          <h2 class="sec-title">📊 סטטיסטיקות</h2>
+          <button class="btn btn-secondary btn-sm" onclick="refreshDashboard()">🔄 רענן</button>
+        </div>
+        <div class="stats-grid" id="stats-grid"></div>
+        <div class="ac">
+          <div class="ac-title">📚 קורסים במערכת</div>
+          <div id="dash-courses"></div>
+        </div>
+      </div>
+
+      <!-- ── ADD EXAM ───────────────────────────────────────── -->
+      <div class="adm-section" id="sec-add-exam">
+        <div class="sec-header">
+          <h2 class="sec-title">➕ הוספת מבחן חדש</h2>
+        </div>
+
+        <!-- Exam metadata -->
+        <div class="ac">
+          <div class="ac-title">📋 פרטי המבחן</div>
+          <div class="form-group">
+            <label>קורס</label>
+            <select id="ae-course">
+              <option value="">-- בחר קורס --</option>
+            </select>
+          </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label>כותרת / מזהה מבחן</label>
+              <input id="ae-title" type="text" placeholder="למשל: מבחן 2023א" oninput="onTitleChange()">
+            </div>
+            <div class="form-group">
+              <label>שנה <small style="color:var(--muted)">(מוסק אוטומטית)</small></label>
+              <input id="ae-year" type="number" placeholder="2024">
+            </div>
+          </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label>סמסטר</label>
+              <select id="ae-sem">
+                <option value="">--</option>
+                <option value="א">א</option>
+                <option value="ב">ב</option>
+                <option value="קיץ">קיץ</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label>מועד</label>
+              <select id="ae-moed">
+                <option value="">--</option>
+                <option value="א">א</option>
+                <option value="ב">ב</option>
+                <option value="ג">ג</option>
+              </select>
+            </div>
+          </div>
+          <div class="form-group">
+            <label>שם מרצה</label>
+            <input id="ae-lecturer" type="text" placeholder='ד"ר ישראלי'>
+          </div>
+          <div id="ae-error" class="form-error"></div>
+        </div>
+
+        <!-- PDF / Text import -->
+        <div class="ac">
+          <div class="ac-title">📄 ייבוא שאלות</div>
+
+          <div class="upload-zone" id="upload-zone">
+            <input type="file" id="pdf-input" accept=".pdf,.txt,.tex,.lyx">
+            <span class="uz-icon">📄</span>
+            <div class="uz-text">הגרר שילוב PDF לכאן</div>
+            <div class="uz-sub">או לחץ לבחירת קובץ &mdash; PDF / LaTeX / LyX / TXT</div>
+          </div>
+
+          <div id="upload-status" style="display:none;font-size:.85rem;color:var(--primary);margin:.5rem 0;text-align:center"></div>
+
+          <div id="progress-wrap" style="display:none;margin:.4rem 0">
+            <div class="progress-bar-wrap">
+              <div class="progress-bar" id="parse-progress" style="width:0%"></div>
+            </div>
+          </div>
+
+          <div style="text-align:center;color:var(--muted);font-size:.82rem;margin:.65rem 0">&#8213; או הדבק טקסט ידנית &#8213;</div>
+
+          <div class="import-area">
+            <textarea id="raw-text"
+              placeholder="הדבק כאן טקסט LaTeX / LyX / פשוט...&#10;&#10;שאלה 1: ...&#10;שאלה 2: ..."></textarea>
+          </div>
+
+          <div style="margin:.75rem 0;display:flex;gap:.75rem;align-items:center">
+            <button id="parse-btn" class="btn btn-primary" onclick="runParser()">
+              🤖 נתח עם AI
+            </button>
+            <button class="btn btn-secondary btn-sm" onclick="clearImport()">🗑️ נקה</button>
+            <small style="color:var(--muted)">AI יזהה שאלות וסעיפים אוטומטית</small>
+          </div>
+        </div>
+
+        <!-- Live Preview -->
+        <div id="preview-container" style="display:none">
+          <div class="ac">
+            <div class="ac-title" style="justify-content:space-between">
+              <span>👁 תצוגה מקדימה — <strong id="preview-count"></strong></span>
+              <small style="color:var(--muted);font-weight:400">ערוך ישירות בתאים</small>
+            </div>
+            <div class="preview-grid" id="preview-grid"></div>
+          </div>
+        </div>
+
+        <!-- Save button -->
+        <div style="display:flex;justify-content:flex-end;gap:.75rem;margin-top:1rem">
+          <button class="btn btn-secondary" onclick="resetForm()">🔄 איפוס</button>
+          <button class="btn btn-primary btn-lg" onclick="submitAddExam()">
+            💾 שמור מבחן
+          </button>
+        </div>
+      </div>
+
+      <!-- ── MANAGE EXAMS ────────────────────────────────────── -->
+      <div class="adm-section" id="sec-manage">
+        <div class="sec-header">
+          <h2 class="sec-title">📋 ניהול מבחנים</h2>
+        </div>
+        <div class="ac">
+          <div class="form-group" style="max-width:280px;margin-bottom:1rem">
+            <label>סנן לפי קורס</label>
+            <select id="manage-filter" onchange="renderManageTable()">
+              <option value="">כל הקורסים</option>
+            </select>
+          </div>
+          <div id="manage-table"></div>
+        </div>
+      </div>
+
+      <!-- ── MANAGE COURSES ─────────────────────────────────── -->
+      <div class="adm-section" id="sec-courses">
+        <div class="sec-header">
+          <h2 class="sec-title">📁 ניהול קורסים</h2>
+        </div>
+        <div class="ac">
+          <div class="ac-title">➕ קורס חדש</div>
+          <div class="form-row">
+            <div class="form-group">
+              <label>שם קורס</label>
+              <input id="c-name" type="text" placeholder="אנליזה 1">
+            </div>
+            <div class="form-group">
+              <label>קוד קורס</label>
+              <input id="c-code" type="text" placeholder="104031">
+            </div>
+          </div>
+          <div style="display:flex;justify-content:flex-end">
+            <button class="btn btn-primary" onclick="adminAddCourse()">➕ הוסף</button>
+          </div>
+        </div>
+        <div class="ac">
+          <div class="ac-title">רשימת קורסים</div>
+          <div id="courses-list"></div>
+        </div>
+      </div>
+
+    </main>
+  </div>
+</div>
+
+<div class="toast-wrap" id="toast-wrap"></div>
+
+<script src="admin.js"></script>
+</body>
+</html>
