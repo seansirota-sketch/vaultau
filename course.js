@@ -48,6 +48,10 @@ document.addEventListener('DOMContentLoaded', () => {
     if (user) {
       STATE.fireUser = user;
       STATE.userData = await fetchUserData(user.uid);
+      // זיהוי משתמש ב-Google Analytics
+      if (typeof gtag === 'function') {
+        gtag('config', 'G-SF9W1XBZZK', { user_id: user.uid });
+      }
       renderNavbar();
       renderPage();
     } else {
@@ -794,6 +798,14 @@ async function voteDifficulty(qid, level) {
 
   STATE.examVotes[qid] = localCounts;
   STATE.userData = { ...STATE.userData, difficultyVotes: userVotes };
+
+  // שליחת אירוע ל-Google Analytics
+  if (typeof gtag === 'function') {
+    gtag('event', 'rate_difficulty', {
+      level:   userVotes[qid] || 'removed',
+      exam_id: STATE.examId || 'unknown',
+    });
+  }
 
   // Re-render just the diff buttons inside the existing dw- container
   const container = document.getElementById('dw-' + qid);
