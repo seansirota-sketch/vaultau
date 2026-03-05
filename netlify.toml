@@ -9,6 +9,10 @@
   # תיקיית ה-publish (הקבצים הסטטיים שלך — index.html וכו')
   publish = "."
 
+  # ── ביטול סריקת סודות — מפתח Firebase הוא ציבורי ומוגן ע"י Security Rules ──
+  [build.environment]
+    SECRETS_SCAN_SMART_DETECTION_ENABLED = "false"
+
 # ── Headers לאבטחה על כל הדפים ──────────────────────────
 [[headers]]
   for = "/*"
