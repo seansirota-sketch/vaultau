@@ -347,7 +347,13 @@ async function renderCourse() {
     const years     = [...new Set(exams.map(e => e.year).filter(Boolean))].sort((a, b) => b - a);
     const semesters = [...new Set(exams.map(e => e.semester).filter(Boolean))];
     const moeds     = [...new Set(exams.map(e => e.moed).filter(Boolean))];
-    const lecturers = [...new Set(exams.map(e => e.lecturer).filter(Boolean))];
+    // Collect all unique lecturers — handle both array (new) and string (legacy)
+    const lecturers = [...new Set(
+      exams.flatMap(e =>
+        Array.isArray(e.lecturers) ? e.lecturers :
+        e.lecturer ? [e.lecturer] : []
+      )
+    )];
     const starCount = countStarred(exams, starred);
 
     page.innerHTML = `
@@ -437,7 +443,10 @@ function applyFilters() {
   if (fy) filtered = filtered.filter(e => String(e.year) === fy);
   if (fs) filtered = filtered.filter(e => e.semester === fs);
   if (fm) filtered = filtered.filter(e => e.moed === fm);
-  if (fl) filtered = filtered.filter(e => e.lecturer === fl);
+  if (fl) filtered = filtered.filter(e => {
+    const names = Array.isArray(e.lecturers) ? e.lecturers : (e.lecturer ? [e.lecturer] : []);
+    return names.includes(fl);
+  });
 
   const el = document.getElementById('exam-list');
   if (!el) return;
@@ -455,7 +464,7 @@ function applyFilters() {
           ${e.year     ? `<span class="badge b-blue">📅 ${e.year}</span>` : ''}
           ${e.semester ? `<span class="badge b-green">📆 ${esc(e.semester)}</span>` : ''}
           ${e.moed     ? `<span class="badge b-purple">📝 ${esc(e.moed)}</span>` : ''}
-          ${e.lecturer ? `<span class="badge b-orange">👨‍🏫 ${esc(e.lecturer)}</span>` : ''}
+          ${_examLecturersBadges(e)}
           <span class="badge b-gray">${(e.questions || []).length} שאלות</span>
         </div>
       </div>
@@ -536,6 +545,24 @@ function renderStarredTab(exams, starred) {
   if (window.MathJax) MathJax.typesetPromise([tc]);
 }
 
+/* ── Lecturer display helpers ────────────────────────────────
+   Both handle legacy (single string) and new (array) format  */
+
+/** Returns one badge per lecturer for exam cards */
+function _examLecturersBadges(exam) {
+  const names = Array.isArray(exam.lecturers) ? exam.lecturers
+              : exam.lecturer ? [exam.lecturer] : [];
+  return names.map(n => `<span class="badge b-orange">👨‍🏫 ${esc(n)}</span>`).join('');
+}
+
+/** Returns a text span for the exam viewer top-bar */
+function _examLecturersText(exam) {
+  const names = Array.isArray(exam.lecturers) ? exam.lecturers
+              : exam.lecturer ? [exam.lecturer] : [];
+  if (!names.length) return '';
+  return `<span>👨‍🏫 ${names.map(esc).join(' · ')}</span>`;
+}
+
 /* ══════════════════════════════════════════════════════════
    EXAM VIEWER
 ══════════════════════════════════════════════════════════ */
@@ -569,7 +596,7 @@ async function renderExam() {
         <div class="ev-topbar">
           <button class="ev-back" onclick="goCourse('${course.id}')">← חזרה</button>
           <div class="ev-topbar-meta">
-            ${exam.lecturer ? `<span>👨‍🏫 ${esc(exam.lecturer)}</span>` : ''}
+            ${_examLecturersText(exam)}
           </div>
         </div>
 

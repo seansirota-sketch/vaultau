@@ -333,6 +333,34 @@ body{font-family:'Segoe UI','Heebo',Arial,sans-serif;direction:rtl;
 .sub-preview-lbl{font-weight:700;color:var(--primary);font-size:.88rem;
   padding:.75rem .5rem .75rem 0;flex-shrink:0;min-width:32px;text-align:center}
 
+/* ── Multi-lecturer widget ── */
+.lecturers-list{
+  display:flex;flex-wrap:wrap;gap:.4rem;
+  min-height:36px;padding:.35rem .5rem;
+  background:var(--bg);border:1.5px solid var(--border);
+  border-radius:var(--r-s) var(--r-s) 0 0;
+  border-bottom:none}
+.lecturer-empty{font-size:.82rem;color:var(--light);align-self:center;padding:.1rem .3rem}
+.lecturer-tag{
+  display:inline-flex;align-items:center;gap:.3rem;
+  background:var(--primary-l);color:var(--primary);
+  border-radius:20px;padding:.22rem .65rem .22rem .55rem;
+  font-size:.82rem;font-weight:600;line-height:1}
+.lecturer-tag-name{white-space:nowrap}
+.lecturer-tag-rm{
+  background:none;border:none;cursor:pointer;
+  color:var(--primary);opacity:.6;font-size:.75rem;padding:0;
+  line-height:1;transition:opacity .12s}
+.lecturer-tag-rm:hover{opacity:1}
+.lecturer-add-row{
+  display:flex;gap:.5rem;align-items:stretch}
+.lecturer-add-row input{
+  flex:1;border-radius:0 0 var(--r-s) var(--r-s);
+  border-top:none}
+.lecturer-add-row .btn{
+  border-radius:0 0 var(--r-s) 0;
+  align-self:stretch;white-space:nowrap}
+
 /* ── MathJax ── */
 .MathJax{font-size:1em!important;direction:ltr;display:inline-block}
 mjx-container{direction:ltr}
