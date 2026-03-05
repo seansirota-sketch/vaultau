@@ -25,6 +25,54 @@ const ICONS = ['📐','📊','⚛️','🧮','🔬','🧬','💻','🌍','🏛�
                '🎓','🔭','📈','🧪','🔢','📜','🗓️','🖥️','🎯','⚙️'];
 function randIcon() { return ICONS[Math.floor(Math.random() * ICONS.length)]; }
 
+/* ── Multi-lecturer widget ─────────────────────────────── */
+let _lecturers = [];
+
+function addLecturer() {
+  const inp = document.getElementById('ae-lecturer-input');
+  if (!inp) return;
+  const name = inp.value.trim();
+  if (!name) return;
+  if (_lecturers.includes(name)) { toast('מרצה זה כבר נוסף', 'error'); inp.value = ''; return; }
+  _lecturers.push(name);
+  inp.value = '';
+  _renderLecturersWidget();
+}
+
+function removeLecturer(idx) {
+  _lecturers.splice(idx, 1);
+  _renderLecturersWidget();
+}
+
+function _renderLecturersWidget() {
+  const el = document.getElementById('lecturers-list');
+  if (!el) return;
+  el.innerHTML = _lecturers.length
+    ? _lecturers.map((n, i) => `<span class="lecturer-tag">
+        <span class="lecturer-tag-name">${esc(n)}</span>
+        <button class="lecturer-tag-rm" onclick="removeLecturer(${i})" title="הסר">✕</button>
+      </span>`).join('')
+    : '<span class="lecturer-empty">לא נוספו מרצים</span>';
+}
+
+function _setLecturers(val) {
+  _lecturers = Array.isArray(val) ? val.filter(Boolean)
+             : (val ? [val] : []);
+  _renderLecturersWidget();
+}
+
+function _fmtLecturers(val) {
+  if (!val) return '-';
+  return Array.isArray(val) ? val.map(esc).join(', ') : esc(val);
+}
+
+function _clearLecturers() {
+  _lecturers = [];
+  const inp = document.getElementById('ae-lecturer-input');
+  if (inp) inp.value = '';
+  _renderLecturersWidget();
+}
+
 /* ── FIREBASE AUTH (Admin login) ───────────────────────────── */
 let adminUser = null; // Firebase user object
 
@@ -114,6 +162,7 @@ async function initAdmin() {
     await renderManageTable();
     await renderCoursesList();
     setupUploadZone();
+    _renderLecturersWidget();
   } catch (e) {
     console.error('Init error:', e);
     toast('שגיאה בטעינה: ' + e.message, 'error');
@@ -683,7 +732,7 @@ async function submitAddExam() {
   const year     = document.getElementById('ae-year').value.trim();
   const sem      = document.getElementById('ae-sem').value;
   const moed     = document.getElementById('ae-moed').value;
-  const lecturer = document.getElementById('ae-lecturer').value.trim();
+  const lecturers = _lecturers.slice(); // snapshot of widget state
   const err      = document.getElementById('ae-error');
   err.classList.remove('show');
 
@@ -753,7 +802,7 @@ async function submitAddExam() {
       year:      year ? parseInt(year) : null,
       semester:  sem  || null,
       moed:      moed || null,
-      lecturer:  lecturer || null,
+      lecturers: lecturers.length ? lecturers : null,
       questions: questions.map(q => ({
         id:   q.id || genId(),
         text: q.text,
@@ -789,7 +838,8 @@ async function submitAddExam() {
 
 function resetForm() {
   ['ae-course','ae-sem','ae-moed'].forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
-  ['ae-title','ae-year','ae-lecturer'].forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
+  ['ae-title','ae-year'].forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
+  _clearLecturers();
   parsedQuestions = [];          // ← FIX: clear carry-over questions from previous exam
   _editingExamId  = null;        // ← FIX: clear edit context
   clearImport();
@@ -888,7 +938,7 @@ async function renderManageTable() {
         <td>${e.year || '-'}</td>
         <td>${esc(e.semester) || '-'}</td>
         <td>${esc(e.moed) || '-'}</td>
-        <td>${esc(e.lecturer) || '-'}</td>
+        <td>${_fmtLecturers(e.lecturers || e.lecturer)}</td>
         <td><span class="badge b-gray">${(e.questions || []).length}</span></td>
         <td>
           <button class="btn btn-sm btn-secondary" onclick="editExam('${e.courseId}','${e.id}')">✏️</button>
@@ -933,7 +983,7 @@ async function editExam(courseId, examId) {
     document.getElementById('ae-year').value     = exam.year      || '';
     document.getElementById('ae-sem').value      = exam.semester  || '';
     document.getElementById('ae-moed').value     = exam.moed      || '';
-    document.getElementById('ae-lecturer').value = exam.lecturer  || '';
+    _setLecturers(exam.lecturers || exam.lecturer || []);
 
     // ── FIX: deep-copy questions so edits don't mutate cached data ──
     parsedQuestions = (exam.questions || []).map(q => ({

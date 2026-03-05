@@ -156,8 +156,13 @@
             </div>
           </div>
           <div class="form-group">
-            <label>שם מרצה</label>
-            <input id="ae-lecturer" type="text" placeholder='ד"ר ישראלי'>
+            <label>מרצים</label>
+            <div id="lecturers-list" class="lecturers-list"></div>
+            <div class="lecturer-add-row">
+              <input id="ae-lecturer-input" type="text" placeholder='ד"ר ישראלי'
+                onkeydown="if(event.key==='Enter'){event.preventDefault();addLecturer()}">
+              <button type="button" class="btn btn-secondary btn-sm" onclick="addLecturer()">+ הוסף</button>
+            </div>
           </div>
           <div id="ae-error" class="form-error"></div>
         </div>
