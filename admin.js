@@ -181,6 +181,7 @@ function showSection(name) {
   if (name === 'dashboard') refreshDashboard();
   if (name === 'courses')   renderCoursesList();
   if (name === 'add-exam')  populateAllSelects();
+  if (name === 'analytics') renderAnalytics();
 }
 
 async function populateAllSelects() {
@@ -189,10 +190,10 @@ async function populateAllSelects() {
     const opts = courses.map(c =>
       `<option value="${c.id}">${esc(c.name)} (${esc(c.code)})</option>`
     ).join('');
-    ['ae-course', 'manage-filter'].forEach(id => {
+    ['ae-course', 'manage-filter', 'an-filter'].forEach(id => {
       const el = document.getElementById(id);
       if (el) el.innerHTML =
-        (id === 'manage-filter' ? '<option value="">כל הקורסים</option>' :
+        (id === 'manage-filter' || id === 'an-filter' ? '<option value="">כל הקורסים</option>' :
           '<option value="">-- בחר קורס --</option>') + opts;
     });
   } catch (e) {
@@ -939,6 +940,7 @@ async function renderManageTable() {
 
     const rows = sortedDocs.map(d => {
       const e = { ...d.data(), id: d.id };
+      const qIds = (e.questions || []).map(q => q.id).filter(Boolean).join(',');
       return `<tr>
         <td><strong>${esc(e.title)}</strong></td>
         <td>${esc(courseMap[e.courseId] || e.courseId)}</td>
@@ -947,6 +949,9 @@ async function renderManageTable() {
         <td>${esc(e.moed) || '-'}</td>
         <td>${_fmtLecturers(e.lecturers || e.lecturer)}</td>
         <td><span class="badge b-gray">${(e.questions || []).length}</span></td>
+        <td id="votes-${e.id}" class="votes-cell">
+          <button class="btn btn-sm btn-secondary" onclick="loadExamVoteStats('${e.id}','${qIds}',this)">הצג</button>
+        </td>
         <td>
           <button class="btn btn-sm btn-secondary" onclick="editExam('${e.courseId}','${e.id}')">✏️</button>
           <button class="btn btn-sm btn-danger" onclick="deleteExam('${e.id}')">🗑️</button>
@@ -956,7 +961,7 @@ async function renderManageTable() {
 
 
     container.innerHTML = `<table class="tbl">
-      <thead><tr><th>כותרת</th><th>קורס</th><th>שנה</th><th>סמסטר</th><th>מועד</th><th>מרצה</th><th>שאלות</th><th></th></tr></thead>
+      <thead><tr><th>כותרת</th><th>קורס</th><th>שנה</th><th>סמסטר</th><th>מועד</th><th>מרצה</th><th>שאלות</th><th>קושי</th><th></th></tr></thead>
       <tbody>${rows}</tbody></table>`;
   } catch (e) {
     container.innerHTML = `<p style="color:var(--danger)">שגיאה: ${e.message}</p>`;
@@ -1092,5 +1097,305 @@ async function deleteCourse(id) {
     toast('שגיאת מחיקה: ' + e.message, 'error');
   } finally {
     hideSpinner();
+  }
+}
+
+/* ══════════════════════════════════════════════════════════
+   DIFFICULTY VOTE STATS  (admin)
+══════════════════════════════════════════════════════════ */
+
+const DIFF_LABELS = { easy: 'קל', medium: 'בינוני', hard: 'קשה', unsolved: 'לא פתרתי' };
+
+async function loadExamVoteStats(examId, qIdsStr, btn) {
+  const cell = document.getElementById('votes-' + examId);
+  if (!cell) return;
+  cell.innerHTML = '<span style="color:var(--muted);font-size:.8rem">טוען...</span>';
+
+  try {
+    const qIds = qIdsStr ? qIdsStr.split(',').filter(Boolean) : [];
+    if (!qIds.length) { cell.innerHTML = '<span style="color:var(--muted);font-size:.8rem">אין שאלות</span>'; return; }
+
+    // Batch fetch in chunks of 30
+    const totals = { easy: 0, medium: 0, hard: 0, unsolved: 0 };
+    for (let i = 0; i < qIds.length; i += 30) {
+      const chunk = qIds.slice(i, i + 30);
+      const snap  = await db.collection('questionVotes')
+        .where(firebase.firestore.FieldPath.documentId(), 'in', chunk).get();
+      snap.docs.forEach(d => {
+        const data = d.data();
+        Object.keys(totals).forEach(k => { totals[k] += (data[k] || 0); });
+      });
+    }
+
+    const total = Object.values(totals).reduce((s, n) => s + n, 0);
+    if (total === 0) {
+      cell.innerHTML = '<span style="color:var(--light);font-size:.8rem">אין נתונים</span>';
+      return;
+    }
+
+    cell.innerHTML = Object.entries(DIFF_LABELS).map(([key, label]) => {
+      const n   = totals[key] || 0;
+      const pct = total > 0 ? Math.round(n / total * 100) : 0;
+      return n > 0
+        ? `<span class="diff-stat-badge">${label}: <strong>${n}</strong> <span style="color:var(--light)">(${pct}%)</span></span>`
+        : '';
+    }).filter(Boolean).join('');
+
+  } catch(e) {
+    cell.innerHTML = `<span style="color:var(--danger);font-size:.8rem">${e.message}</span>`;
+  }
+}
+
+/* ══════════════════════════════════════════════════════════
+   ANALYTICS — difficulty overview
+══════════════════════════════════════════════════════════ */
+
+// Difficulty score weights (unsolved excluded from avg)
+const DIFF_WEIGHTS = { easy: 1, medium: 2, hard: 3 };
+const DIFF_HE      = { easy: 'קל', medium: 'בינוני', hard: 'קשה', unsolved: 'לא פתרתי' };
+
+/**
+ * Fetch votes for a list of question IDs (batched).
+ * Returns { [qid]: { easy, medium, hard, unsolved } }
+ */
+async function _batchFetchVotes(qIds) {
+  const result = {};
+  for (let i = 0; i < qIds.length; i += 30) {
+    const chunk = qIds.slice(i, i + 30);
+    if (!chunk.length) continue;
+    try {
+      const snap = await db.collection('questionVotes')
+        .where(firebase.firestore.FieldPath.documentId(), 'in', chunk).get();
+      snap.docs.forEach(d => { result[d.id] = d.data(); });
+    } catch(e) { console.warn('_batchFetchVotes error:', e); }
+  }
+  return result;
+}
+
+/**
+ * Compute weighted difficulty average for a set of vote docs.
+ * Returns { avg: number|null, total: number, breakdown: {easy,medium,hard,unsolved} }
+ */
+function _computeAvg(voteDocs) {
+  const breakdown = { easy: 0, medium: 0, hard: 0, unsolved: 0 };
+  let weightedSum = 0, scoredVotes = 0;
+  for (const v of Object.values(voteDocs)) {
+    for (const key of Object.keys(breakdown)) {
+      breakdown[key] += (v[key] || 0);
+    }
+  }
+  for (const [key, w] of Object.entries(DIFF_WEIGHTS)) {
+    weightedSum  += breakdown[key] * w;
+    scoredVotes  += breakdown[key];
+  }
+  const total = Object.values(breakdown).reduce((s, n) => s + n, 0);
+  return {
+    avg:       scoredVotes > 0 ? weightedSum / scoredVotes : null,
+    total,
+    breakdown,
+  };
+}
+
+function _avgLabel(avg) {
+  if (avg === null) return '<span style="color:var(--light);font-size:.8rem">אין נתונים</span>';
+  const pct = (avg - 1) / 2; // 0‒1
+  let color, label;
+  if (avg < 1.5)      { color = '#16a34a'; label = 'קל'; }
+  else if (avg < 2.3) { color = '#d97706'; label = 'בינוני'; }
+  else                { color = '#dc2626'; label = 'קשה'; }
+  return `<span style="font-weight:700;color:${color}">${label}</span>
+    <span style="color:var(--muted);font-size:.78rem;margin-right:.3rem">(${avg.toFixed(1)})</span>`;
+}
+
+function _breakdownHtml(bd) {
+  return ['easy','medium','hard','unsolved']
+    .filter(k => bd[k] > 0)
+    .map(k => `<span class="diff-stat-badge">${DIFF_HE[k]}: <strong>${bd[k]}</strong></span>`)
+    .join('') || '<span style="color:var(--light);font-size:.8rem">—</span>';
+}
+
+/* ── Main analytics render ── */
+async function renderAnalytics() {
+  const tableEl = document.getElementById('analytics-table');
+  if (!tableEl) return;
+  tableEl.innerHTML = '<div class="spinner" style="margin:2rem auto"></div>';
+  document.getElementById('exam-detail-panel').style.display = 'none';
+  document.getElementById('hard-report').style.display = 'none';
+
+  try {
+    await populateAllSelects();
+    const courses  = await fetchCourses();
+    const courseMap = Object.fromEntries(courses.map(c => [c.id, c]));
+
+    const filter = document.getElementById('an-filter')?.value || '';
+    let q = db.collection('exams');
+    if (filter) q = q.where('courseId', '==', filter);
+    const snap = await q.get();
+
+    if (snap.empty) {
+      tableEl.innerHTML = '<div class="empty" style="padding:2rem"><span class="ei">📭</span><h3>אין מבחנים</h3></div>';
+      return;
+    }
+
+    // Sort newest first
+    const exams = snap.docs
+      .map(d => ({ ...d.data(), id: d.id }))
+      .sort((a, b) => (b.year || 0) - (a.year || 0) || (b.title || '').localeCompare(a.title || ''));
+
+    // Collect all question IDs
+    const allQIds = exams.flatMap(e => (e.questions || []).map(q => q.id).filter(Boolean));
+    const allVotes = await _batchFetchVotes(allQIds);
+
+    const rows = exams.map(e => {
+      const qIds      = (e.questions || []).map(q => q.id).filter(Boolean);
+      const examVotes = Object.fromEntries(qIds.filter(id => allVotes[id]).map(id => [id, allVotes[id]]));
+      const { avg, total, breakdown } = _computeAvg(examVotes);
+      const course    = courseMap[e.courseId];
+      const lecturers = Array.isArray(e.lecturers) ? e.lecturers.join(', ') : (e.lecturer || '—');
+
+      return `<tr>
+        <td><strong>${esc(e.title || e.id)}</strong></td>
+        <td>${esc(course?.name || e.courseId)}</td>
+        <td>${e.year || '—'}</td>
+        <td>${esc(e.semester || '—')}</td>
+        <td>${esc(e.moed || '—')}</td>
+        <td>${esc(lecturers)}</td>
+        <td><span class="badge b-gray">${qIds.length}</span></td>
+        <td>${_avgLabel(avg)}</td>
+        <td>${_breakdownHtml(breakdown)}</td>
+        <td>
+          <button class="btn btn-sm btn-secondary"
+            onclick="showExamDetail('${e.id}')">פירוט</button>
+        </td>
+      </tr>`;
+    }).join('');
+
+    tableEl.innerHTML = `<table class="tbl">
+      <thead><tr>
+        <th>מבחן</th><th>קורס</th><th>שנה</th><th>סמסטר</th><th>מועד</th>
+        <th>מרצה</th><th>שאלות</th><th>מדד קושי</th><th>פירוט הצבעות</th><th></th>
+      </tr></thead>
+      <tbody>${rows}</tbody>
+    </table>`;
+
+  } catch(e) {
+    tableEl.innerHTML = `<p style="color:var(--danger);padding:1rem">${e.message}</p>`;
+    console.error(e);
+  }
+}
+
+/* ── Per-exam question detail ── */
+async function showExamDetail(examId) {
+  const panel   = document.getElementById('exam-detail-panel');
+  const titleEl = document.getElementById('exam-detail-title');
+  const bodyEl  = document.getElementById('exam-detail-body');
+  panel.style.display = 'block';
+  panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  bodyEl.innerHTML = '<div class="spinner" style="margin:1.5rem auto"></div>';
+
+  try {
+    const exam  = await fetchExam(examId);
+    if (!exam)  { bodyEl.innerHTML = '<p>מבחן לא נמצא</p>'; return; }
+    titleEl.textContent = `פירוט שאלות — ${exam.title || examId}`;
+
+    const questions = exam.questions || [];
+    if (!questions.length) { bodyEl.innerHTML = '<p style="color:var(--muted)">אין שאלות</p>'; return; }
+
+    const qIds   = questions.map(q => q.id).filter(Boolean);
+    const votes  = await _batchFetchVotes(qIds);
+
+    const rows = questions.map((q, qi) => {
+      const v  = votes[q.id] || {};
+      const { avg, total, breakdown } = _computeAvg({ [q.id]: v });
+      const previewText = (q.text || '').replace(/<[^>]+>/g, '').slice(0, 80) + ((q.text || '').length > 80 ? '...' : '');
+      return `<tr>
+        <td style="color:var(--muted);font-size:.8rem;white-space:nowrap">שאלה ${qi + 1}</td>
+        <td style="font-size:.85rem;max-width:300px;overflow:hidden">${esc(previewText) || '<span style="color:var(--light)">ללא טקסט</span>'}</td>
+        <td>${_avgLabel(avg)}</td>
+        <td>${_breakdownHtml(breakdown)}</td>
+        <td style="color:var(--muted);font-size:.8rem">${total > 0 ? total + ' הצבעות' : '—'}</td>
+      </tr>`;
+    }).join('');
+
+    bodyEl.innerHTML = `<table class="tbl">
+      <thead><tr><th>#</th><th>שאלה</th><th>מדד קושי</th><th>הצבעות</th><th>סה"כ</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>`;
+
+  } catch(e) {
+    bodyEl.innerHTML = `<p style="color:var(--danger)">${e.message}</p>`;
+  }
+}
+
+/* ── Top 10 hardest questions report ── */
+async function showHardQuestionsReport() {
+  const panel  = document.getElementById('hard-report');
+  const bodyEl = document.getElementById('hard-report-body');
+  panel.style.display = 'block';
+  panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  bodyEl.innerHTML = '<div class="spinner" style="margin:1.5rem auto"></div>';
+
+  try {
+    const [examsSnap, courses] = await Promise.all([
+      db.collection('exams').get(),
+      fetchCourses(),
+    ]);
+    const courseMap = Object.fromEntries(courses.map(c => [c.id, c.name]));
+
+    // Build flat list of { qid, examTitle, courseName, qi, text }
+    const allQuestions = [];
+    examsSnap.docs.forEach(d => {
+      const e = d.data();
+      (e.questions || []).forEach((q, qi) => {
+        if (q.id) allQuestions.push({
+          qid:        q.id,
+          text:       (q.text || '').slice(0, 100),
+          qi,
+          examTitle:  e.title || d.id,
+          courseName: courseMap[e.courseId] || e.courseId,
+        });
+      });
+    });
+
+    if (!allQuestions.length) {
+      bodyEl.innerHTML = '<p style="color:var(--muted)">אין שאלות במערכת</p>'; return;
+    }
+
+    const qIds  = allQuestions.map(q => q.qid);
+    const votes = await _batchFetchVotes(qIds);
+
+    // Score each question: hard votes / total scored votes
+    const scored = allQuestions
+      .map(q => {
+        const v    = votes[q.qid] || {};
+        const hard = v.hard || 0;
+        const scored = (v.easy || 0) + (v.medium || 0) + hard;
+        return { ...q, hardVotes: hard, scored, ratio: scored > 0 ? hard / scored : 0 };
+      })
+      .filter(q => q.hardVotes > 0)
+      .sort((a, b) => b.ratio - a.ratio || b.hardVotes - a.hardVotes)
+      .slice(0, 10);
+
+    if (!scored.length) {
+      bodyEl.innerHTML = '<p style="color:var(--muted)">אין עדיין דירוגי "קשה" במערכת</p>'; return;
+    }
+
+    const rows = scored.map((q, i) => `<tr>
+      <td style="color:var(--muted);font-weight:700">${i + 1}</td>
+      <td style="font-size:.85rem;max-width:280px">${esc(q.text || '—')}${q.text?.length >= 100 ? '…' : ''}</td>
+      <td>${esc(q.examTitle)}</td>
+      <td>${esc(q.courseName)}</td>
+      <td style="color:#dc2626;font-weight:700">${q.hardVotes}</td>
+      <td style="color:var(--muted);font-size:.8rem">${q.scored} הצבעות (${Math.round(q.ratio * 100)}% קשה)</td>
+    </tr>`).join('');
+
+    bodyEl.innerHTML = `<table class="tbl">
+      <thead><tr><th>#</th><th>שאלה</th><th>מבחן</th><th>קורס</th><th>הצבעות "קשה"</th><th>יחס</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>`;
+
+  } catch(e) {
+    bodyEl.innerHTML = `<p style="color:var(--danger)">${e.message}</p>`;
+    console.error(e);
   }
 }

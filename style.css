@@ -759,6 +759,42 @@ body {
   margin: .4rem 1.25rem; text-align: center;
 }
 
+/* ── Difficulty rating buttons (inline in qv-head) ── */
+.diff-btn {
+  display: inline-flex; align-items: center;
+  padding: .22rem .58rem;
+  border: 1px solid #e2e5ea; border-radius: 3px;
+  background: #f4f5f7; color: #8a94a0;
+  font-size: .75rem; font-weight: 500;
+  cursor: pointer; transition: all .12s;
+  font-family: inherit; white-space: nowrap; line-height: 1.4;
+}
+.diff-btn:hover { border-color: #b8c0cc; color: #2c3e55; background: #eceef1; }
+
+/* Active states per level */
+.diff-btn.diff-easy.active    { background: #dcfce7; border-color: #86efac; color: #166534; font-weight: 700; }
+.diff-btn.diff-medium.active  { background: #fff7ed; border-color: #fdba74; color: #9a3412; font-weight: 700; }
+.diff-btn.diff-hard.active    { background: #fee2e2; border-color: #fca5a5; color: #991b1b; font-weight: 700; }
+.diff-btn.diff-unsolved.active { background: #1f2937; border-color: #1f2937; color: #fff; font-weight: 700; }
+
+/* Separator between diff buttons and star/copy */
+.qv-actions-sep {
+  width: 1px; height: 20px;
+  background: #e2e5ea; margin: 0 .2rem;
+  flex-shrink: 0;
+}
+
+/* ── Admin difficulty stats badge ── */
+.diff-stat-badge {
+  display: inline-flex; align-items: center;
+  background: #f3f4f6; border: 1px solid #e5e7eb;
+  border-radius: 3px; padding: .15rem .45rem;
+  font-size: .75rem; color: #4b5563;
+  margin-left: .25rem; white-space: nowrap;
+}
+.diff-stat-badge strong { color: #1f2937; margin-right: .2rem; }
+.votes-cell { font-size: .8rem; }
+
 /* ── MathJax ── */
 .MathJax { font-size: 1em !important; direction: ltr; display: inline-block; }
 mjx-container { direction: ltr; }
@@ -830,7 +866,7 @@ mjx-container { direction: ltr; }
 .qv-head-right { display: flex; align-items: center; gap: .7rem; }
 .qv-num { font-weight: 800; font-size: 1rem; color: #0f1923; letter-spacing: -.02em; }
 .qv-pts { font-size: .86rem; color: #5a6576; font-weight: 500; }
-.qv-actions { display: flex; gap: .3rem; align-items: center; }
+.qv-actions { display: flex; gap: .25rem; align-items: center; }
 .qv-btn {
   background: transparent; border: 1px solid #d8dde5; border-radius: 3px;
   width: 30px; height: 30px;

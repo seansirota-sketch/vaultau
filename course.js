@@ -39,6 +39,7 @@ let STATE = {
   // Local caches to avoid re-fetching
   courses:  null,     // Array<Course>
   exams:    {},       // { [courseId]: Array<Exam> }
+  examVotes: {},     // { [questionId]: { easy, medium, hard, unsolved } }
 };
 
 /* ── BOOTSTRAP ─────────────────────────────────────────────── */
@@ -217,7 +218,7 @@ async function doSignup() {
 async function doLogout() {
   await auth.signOut();
   STATE = { page: 'home', courseId: null, examId: null, tab: 'exams',
-            fireUser: null, userData: null, courses: null, exams: {} };
+            fireUser: null, userData: null, courses: null, exams: {}, examVotes: {} };
   renderAuth();
 }
 
@@ -575,6 +576,10 @@ async function renderExam() {
     const starred   = STATE.userData?.starredQuestions || [];
     const questions = exam.questions || [];
 
+    // Fetch difficulty votes in parallel
+    STATE.examVotes = await fetchExamVotes(questions);
+    const userVotes = STATE.userData?.difficultyVotes || {};
+
     const metaParts = [
       exam.year,
       exam.semester ? 'סמסטר ' + exam.semester : '',
@@ -601,7 +606,7 @@ async function renderExam() {
         <div class="ev-body" id="ev-questions-body">
           ${!questions.length
             ? `<div class="empty"><span class="ei">📝</span><h3>אין שאלות עדיין</h3></div>`
-            : questions.map((q, qi) => renderQuestionCard(q, qi, starred)).join('')}
+            : questions.map((q, qi) => renderQuestionCard(q, qi, starred, userVotes)).join('')}
         </div>
       </div>`;
 
@@ -628,7 +633,7 @@ async function renderExam() {
   }
 }
 
-function renderQuestionCard(q, qi, starred) {
+function renderQuestionCard(q, qi, starred, userVotes = {}) {
   const isStarredQ = starred.includes(q.id);
   const subs       = q.subs || q.parts || [];
   const hasSubs    = subs.length > 0;
@@ -671,7 +676,9 @@ function renderQuestionCard(q, qi, starred) {
         <span class="qv-num">שאלה ${qi + 1}</span>
         ${points}
       </div>
-      <div class="qv-actions">
+      <div class="qv-actions" id="dw-${q.id}">
+        ${renderDifficultyButtons(q.id, userVotes[q.id] || null)}
+        <div class="qv-actions-sep"></div>
         <button class="qv-btn ${isStarredQ ? 'on' : ''}" id="qb-${q.id}"
           onclick="toggleStar('${q.id}')" title="סמן שאלה">${starSVG(isStarredQ)}</button>
         <button class="qv-btn" onclick="copyById('${qCopyId}',event)" title="העתק LaTeX">${copySVG}</button>
@@ -720,6 +727,88 @@ async function toggleStar(id) {
   if (STATE.tab === 'starred') {
     const exams = STATE.exams[STATE.courseId] || [];
     renderStarredTab(exams, starred);
+  }
+}
+
+/* ── DIFFICULTY RATING ──────────────────────────────────────── */
+const DIFF_LEVELS = [
+  { key: 'easy',     label: 'קל' },
+  { key: 'medium',   label: 'בינוני' },
+  { key: 'hard',     label: 'קשה' },
+  { key: 'unsolved', label: 'לא פתרתי' },
+];
+
+function renderDifficultyButtons(qid, myVote) {
+  return DIFF_LEVELS.map(l => {
+    const active = myVote === l.key;
+    return `<button class="diff-btn diff-${l.key}${active ? ' active' : ''}"
+      onclick="voteDifficulty('${qid}','${l.key}')"
+      title="${l.label}">${l.label}</button>`;
+  }).join('');
+}
+
+// Keep renderDifficultyWidget as alias for starred tab (not used there anymore but safe)
+function renderDifficultyWidget(qid, myVote) { return ''; }
+
+async function fetchExamVotes(questions) {
+  const qIds = (questions || []).map(q => q.id).filter(Boolean);
+  if (!qIds.length) return {};
+  const votes = {};
+  for (let i = 0; i < qIds.length; i += 30) {
+    try {
+      const chunk = qIds.slice(i, i + 30);
+      const snap  = await db.collection('questionVotes')
+        .where(firebase.firestore.FieldPath.documentId(), 'in', chunk).get();
+      snap.docs.forEach(d => { votes[d.id] = d.data(); });
+    } catch(e) { console.warn('fetchExamVotes chunk error:', e); }
+  }
+  return votes;
+}
+
+async function voteDifficulty(qid, level) {
+  const uid = STATE.fireUser?.uid;
+  if (!uid) return;
+
+  const userVotes = { ...(STATE.userData?.difficultyVotes || {}) };
+  const prev      = userVotes[qid];
+
+  const localCounts = { ...(STATE.examVotes[qid] || {}) };
+
+  if (prev === level) {
+    localCounts[level] = Math.max(0, (localCounts[level] || 0) - 1);
+    delete userVotes[qid];
+  } else {
+    if (prev) localCounts[prev] = Math.max(0, (localCounts[prev] || 0) - 1);
+    localCounts[level] = (localCounts[level] || 0) + 1;
+    userVotes[qid] = level;
+  }
+
+  STATE.examVotes[qid] = localCounts;
+  STATE.userData = { ...STATE.userData, difficultyVotes: userVotes };
+
+  // Re-render just the diff buttons inside the existing dw- container
+  const container = document.getElementById('dw-' + qid);
+  if (container) {
+    container.querySelectorAll('.diff-btn').forEach(b => b.remove());
+    const sep = container.querySelector('.qv-actions-sep');
+    const newBtns = renderDifficultyButtons(qid, userVotes[qid] || null);
+    sep.insertAdjacentHTML('beforebegin', newBtns);
+  }
+
+  try {
+    const inc = firebase.firestore.FieldValue.increment;
+    const updates = {};
+    if (prev === level) {
+      updates[level] = inc(-1);
+    } else {
+      if (prev) updates[prev] = inc(-1);
+      updates[level] = inc(1);
+    }
+    await db.collection('questionVotes').doc(qid).set(updates, { merge: true });
+    await saveUserData(uid, { difficultyVotes: userVotes });
+  } catch(e) {
+    console.error('voteDifficulty error:', e);
+    toast('שגיאה בשמירת דירוג', 'error');
   }
 }
 
