@@ -1,6 +1,8 @@
 <!DOCTYPE html>
 <html lang="he" dir="rtl">
 <head>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
 <title>פאנל ניהול — בנק מבחנים</title>
@@ -58,23 +60,36 @@
 
     <!-- SIDEBAR -->
     <aside class="admin-sidebar">
-      <div class="sidebar-logo">⚙️ ניהול מבחנים</div>
+      <div class="sidebar-logo">
+  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>
+  בנק מבחנים
+</div>
       <nav class="admin-nav">
         <a id="nav-dashboard" class="active" onclick="showSection('dashboard')">
-          📊 סטטיסטיקות
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
+          סטטיסטיקות
         </a>
         <a id="nav-add-exam" onclick="showSection('add-exam')">
-          ➕ הוסף מבחן
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>
+          הוספת מבחן
         </a>
         <a id="nav-manage" onclick="showSection('manage')">
-          📋 ניהול מבחנים
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
+          מבחנים
         </a>
         <a id="nav-courses" onclick="showSection('courses')">
-          📁 ניהול קורסים
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+          קורסים
         </a>
-        <div style="margin-top:auto;border-top:1px solid rgba(255,255,255,.18);padding-top:1rem;margin-top:2rem">
-          <a href="index.html">🏠 אתר משתמש</a>
-          <a onclick="adminLogout()">🚪 יציאה</a>
+        <div class="nav-divider"></div>
+          <a href="index.html">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
+            אתר משתמש
+          </a>
+          <a onclick="adminLogout()">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+            יציאה
+          </a>
         </div>
       </nav>
     </aside>
@@ -85,12 +100,12 @@
       <!-- ── DASHBOARD ──────────────────────────────────────── -->
       <div class="adm-section active" id="sec-dashboard">
         <div class="sec-header">
-          <h2 class="sec-title">📊 סטטיסטיקות</h2>
-          <button class="btn btn-secondary btn-sm" onclick="refreshDashboard()">🔄 רענן</button>
+          <h2 class="sec-title">סטטיסטיקות</h2>
+          <button class="btn btn-secondary btn-sm" onclick="refreshDashboard()">רענן</button>
         </div>
         <div class="stats-grid" id="stats-grid"></div>
         <div class="ac">
-          <div class="ac-title">📚 קורסים במערכת</div>
+          <div class="ac-title">קורסים במערכת</div>
           <div id="dash-courses"></div>
         </div>
       </div>
@@ -98,12 +113,12 @@
       <!-- ── ADD EXAM ───────────────────────────────────────── -->
       <div class="adm-section" id="sec-add-exam">
         <div class="sec-header">
-          <h2 class="sec-title">➕ הוספת מבחן חדש</h2>
+          <h2 class="sec-title">הוספת מבחן חדש</h2>
         </div>
 
         <!-- Exam metadata -->
         <div class="ac">
-          <div class="ac-title">📋 פרטי המבחן</div>
+          <div class="ac-title">פרטי המבחן</div>
           <div class="form-group">
             <label>קורס</label>
             <select id="ae-course">
@@ -140,24 +155,16 @@
               </select>
             </div>
           </div>
-          <!-- ── Multi-lecturer widget ── -->
           <div class="form-group">
-            <label>מרצים</label>
-            <div id="lecturers-list" class="lecturers-list"></div>
-            <div class="lecturer-add-row">
-              <input id="ae-lecturer-input" type="text"
-                placeholder='ד"ר ישראלי'
-                onkeydown="if(event.key==='Enter'){event.preventDefault();addLecturer()}">
-              <button type="button" class="btn btn-secondary btn-sm"
-                onclick="addLecturer()">+ הוסף</button>
-            </div>
+            <label>שם מרצה</label>
+            <input id="ae-lecturer" type="text" placeholder='ד"ר ישראלי'>
           </div>
           <div id="ae-error" class="form-error"></div>
         </div>
 
         <!-- PDF / Text import -->
         <div class="ac">
-          <div class="ac-title">📄 ייבוא שאלות</div>
+          <div class="ac-title">ייבוא שאלות</div>
 
           <div class="upload-zone" id="upload-zone">
             <input type="file" id="pdf-input" accept=".pdf,.txt,.tex,.lyx">
@@ -166,7 +173,7 @@
             <div class="uz-sub">או לחץ לבחירת קובץ &mdash; PDF / LaTeX / LyX / TXT</div>
           </div>
 
-          <div id="upload-status" style="display:none;font-size:.85rem;color:var(--primary);margin:.5rem 0;text-align:center"></div>
+          <div id="upload-status" style="display:none"></div>
 
           <div id="progress-wrap" style="display:none;margin:.4rem 0">
             <div class="progress-bar-wrap">
@@ -174,18 +181,18 @@
             </div>
           </div>
 
-          <div style="text-align:center;color:var(--muted);font-size:.82rem;margin:.65rem 0">&#8213; או הדבק טקסט ידנית &#8213;</div>
+          <div class="or-divider">או הדבק טקסט ידנית</div>
 
           <div class="import-area">
             <textarea id="raw-text"
               placeholder="הדבק כאן טקסט LaTeX / LyX / פשוט...&#10;&#10;שאלה 1: ...&#10;שאלה 2: ..."></textarea>
           </div>
 
-          <div style="margin:.75rem 0;display:flex;gap:.75rem;align-items:center">
+          <div class="parse-row" style="">
             <button id="parse-btn" class="btn btn-primary" onclick="runParser()">
-              🤖 נתח עם AI
+              נתח עם AI
             </button>
-            <button class="btn btn-secondary btn-sm" onclick="clearImport()">🗑️ נקה</button>
+            <button class="btn btn-secondary btn-sm" onclick="clearImport()">נקה</button>
             <small style="color:var(--muted)">AI יזהה שאלות וסעיפים אוטומטית</small>
           </div>
         </div>
@@ -202,10 +209,10 @@
         </div>
 
         <!-- Save button -->
-        <div style="display:flex;justify-content:flex-end;gap:.75rem;margin-top:1rem">
-          <button class="btn btn-secondary" onclick="resetForm()">🔄 איפוס</button>
+        <div style="display:flex;justify-content:flex-end;gap:.75rem;padding:0 1.25rem 1.25rem;margin-top:.5rem">
+          <button class="btn btn-secondary" onclick="resetForm()">איפוס</button>
           <button class="btn btn-primary btn-lg" onclick="submitAddExam()">
-            💾 שמור מבחן
+            שמור מבחן
           </button>
         </div>
       </div>
@@ -213,7 +220,7 @@
       <!-- ── MANAGE EXAMS ────────────────────────────────────── -->
       <div class="adm-section" id="sec-manage">
         <div class="sec-header">
-          <h2 class="sec-title">📋 ניהול מבחנים</h2>
+          <h2 class="sec-title">ניהול מבחנים</h2>
         </div>
         <div class="ac">
           <div class="form-group" style="max-width:280px;margin-bottom:1rem">
@@ -229,10 +236,10 @@
       <!-- ── MANAGE COURSES ─────────────────────────────────── -->
       <div class="adm-section" id="sec-courses">
         <div class="sec-header">
-          <h2 class="sec-title">📁 ניהול קורסים</h2>
+          <h2 class="sec-title">ניהול קורסים</h2>
         </div>
         <div class="ac">
-          <div class="ac-title">➕ קורס חדש</div>
+          <div class="ac-title">קורס חדש</div>
           <div class="form-row">
             <div class="form-group">
               <label>שם קורס</label>
@@ -244,11 +251,11 @@
             </div>
           </div>
           <div style="display:flex;justify-content:flex-end">
-            <button class="btn btn-primary" onclick="adminAddCourse()">➕ הוסף</button>
+            <button class="btn btn-primary" onclick="adminAddCourse()">הוסף</button>
           </div>
         </div>
         <div class="ac">
-          <div class="ac-title">רשימת קורסים</div>
+          <div class="ac-title">קורסים קיימים</div>
           <div id="courses-list"></div>
         </div>
       </div>
