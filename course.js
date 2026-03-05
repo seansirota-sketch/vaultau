@@ -347,7 +347,6 @@ async function renderCourse() {
     const years     = [...new Set(exams.map(e => e.year).filter(Boolean))].sort((a, b) => b - a);
     const semesters = [...new Set(exams.map(e => e.semester).filter(Boolean))];
     const moeds     = [...new Set(exams.map(e => e.moed).filter(Boolean))];
-    // Collect all unique lecturers — handle both array (new) and string (legacy)
     const lecturers = [...new Set(
       exams.flatMap(e =>
         Array.isArray(e.lecturers) ? e.lecturers :
@@ -545,17 +544,12 @@ function renderStarredTab(exams, starred) {
   if (window.MathJax) MathJax.typesetPromise([tc]);
 }
 
-/* ── Lecturer display helpers ────────────────────────────────
-   Both handle legacy (single string) and new (array) format  */
-
-/** Returns one badge per lecturer for exam cards */
+/* ── Lecturer display helpers ─────────────────────────────── */
 function _examLecturersBadges(exam) {
   const names = Array.isArray(exam.lecturers) ? exam.lecturers
               : exam.lecturer ? [exam.lecturer] : [];
   return names.map(n => `<span class="badge b-orange">👨‍🏫 ${esc(n)}</span>`).join('');
 }
-
-/** Returns a text span for the exam viewer top-bar */
 function _examLecturersText(exam) {
   const names = Array.isArray(exam.lecturers) ? exam.lecturers
               : exam.lecturer ? [exam.lecturer] : [];
