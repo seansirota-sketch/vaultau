@@ -347,12 +347,7 @@ async function renderCourse() {
     const years     = [...new Set(exams.map(e => e.year).filter(Boolean))].sort((a, b) => b - a);
     const semesters = [...new Set(exams.map(e => e.semester).filter(Boolean))];
     const moeds     = [...new Set(exams.map(e => e.moed).filter(Boolean))];
-    const lecturers = [...new Set(
-      exams.flatMap(e =>
-        Array.isArray(e.lecturers) ? e.lecturers :
-        e.lecturer ? [e.lecturer] : []
-      )
-    )];
+    const lecturers = [...new Set(exams.map(e => e.lecturer).filter(Boolean))];
     const starCount = countStarred(exams, starred);
 
     page.innerHTML = `
@@ -371,8 +366,8 @@ async function renderCourse() {
             📋 כל המבחנים
           </button>
           <button class="tab-btn ${STATE.tab === 'starred' ? 'active' : ''}" onclick="setTab('starred')">
-            ⭐ שאלות מסומנות
-            ${starCount ? `<span class="badge b-orange">${starCount}</span>` : ''}
+            שאלות מסומנות
+            ${starCount ? `<span class="badge">${starCount}</span>` : ''}
           </button>
         </div>
         <div id="tab-content"></div>
@@ -442,16 +437,13 @@ function applyFilters() {
   if (fy) filtered = filtered.filter(e => String(e.year) === fy);
   if (fs) filtered = filtered.filter(e => e.semester === fs);
   if (fm) filtered = filtered.filter(e => e.moed === fm);
-  if (fl) filtered = filtered.filter(e => {
-    const names = Array.isArray(e.lecturers) ? e.lecturers : (e.lecturer ? [e.lecturer] : []);
-    return names.includes(fl);
-  });
+  if (fl) filtered = filtered.filter(e => e.lecturer === fl);
 
   const el = document.getElementById('exam-list');
   if (!el) return;
 
   if (!filtered.length) {
-    el.innerHTML = '<div class="empty"><span class="ei">🔍</span><h3>לא נמצאו מבחנים</h3><p>נסה לשנות את הפילטרים</p></div>';
+    el.innerHTML = '<div class="empty"><h3>לא נמצאו מבחנים</h3><p>נסה לשנות את הפילטרים</p></div>';
     return;
   }
 
@@ -459,12 +451,12 @@ function applyFilters() {
     <div class="exam-item" onclick="goExam('${STATE.courseId}','${e.id}')">
       <div style="flex:1">
         <div class="exam-title">${esc(e.title || e.id)}</div>
-        <div class="exam-badges">
-          ${e.year     ? `<span class="badge b-blue">📅 ${e.year}</span>` : ''}
-          ${e.semester ? `<span class="badge b-green">📆 ${esc(e.semester)}</span>` : ''}
-          ${e.moed     ? `<span class="badge b-purple">📝 ${esc(e.moed)}</span>` : ''}
-          ${_examLecturersBadges(e)}
-          <span class="badge b-gray">${(e.questions || []).length} שאלות</span>
+        <div class="exam-meta-row">
+          ${e.year     ? `<span class="badge">${e.year}</span>` : ''}
+          ${e.semester ? `<span class="badge">סמסטר ${esc(e.semester)}</span>` : ''}
+          ${e.moed     ? `<span class="badge">מועד ${esc(e.moed)}</span>` : ''}
+          ${e.lecturer ? `<span class="badge">${esc(e.lecturer)}</span>` : ''}
+          <span class="badge">${(e.questions || []).length} שאלות</span>
         </div>
       </div>
       <span class="exam-arrow">←</span>
@@ -498,7 +490,7 @@ function renderStarredTab(exams, starred) {
   });
 
   if (!items.length) {
-    tc.innerHTML = '<div class="empty"><span class="ei">⭐</span><h3>אין שאלות מסומנות</h3><p>סמן שאלות בכוכבית בתוך המבחנים</p></div>';
+    tc.innerHTML = '<div class="empty"><h3>אין שאלות מסומנות</h3><p>סמן שאלות בתוך המבחנים</p></div>';
     return;
   }
 
@@ -544,19 +536,6 @@ function renderStarredTab(exams, starred) {
   if (window.MathJax) MathJax.typesetPromise([tc]);
 }
 
-/* ── Lecturer display helpers ─────────────────────────────── */
-function _examLecturersBadges(exam) {
-  const names = Array.isArray(exam.lecturers) ? exam.lecturers
-              : exam.lecturer ? [exam.lecturer] : [];
-  return names.map(n => `<span class="badge b-orange">👨‍🏫 ${esc(n)}</span>`).join('');
-}
-function _examLecturersText(exam) {
-  const names = Array.isArray(exam.lecturers) ? exam.lecturers
-              : exam.lecturer ? [exam.lecturer] : [];
-  if (!names.length) return '';
-  return `<span>👨‍🏫 ${names.map(esc).join(' · ')}</span>`;
-}
-
 /* ══════════════════════════════════════════════════════════
    EXAM VIEWER
 ══════════════════════════════════════════════════════════ */
@@ -590,7 +569,7 @@ async function renderExam() {
         <div class="ev-topbar">
           <button class="ev-back" onclick="goCourse('${course.id}')">← חזרה</button>
           <div class="ev-topbar-meta">
-            ${_examLecturersText(exam)}
+            ${exam.lecturer ? `<span>${esc(exam.lecturer)}</span>` : ''}
           </div>
         </div>
 
@@ -601,7 +580,7 @@ async function renderExam() {
 
         <div class="ev-body" id="ev-questions-body">
           ${!questions.length
-            ? `<div class="empty"><span class="ei">📝</span><h3>אין שאלות עדיין</h3></div>`
+            ? `<div class="empty"><h3>אין שאלות עדיין</h3></div>`
             : questions.map((q, qi) => renderQuestionCard(q, qi, starred)).join('')}
         </div>
       </div>`;
@@ -695,7 +674,7 @@ async function toggleStar(id) {
   const idx     = starred.indexOf(id);
   const adding  = idx === -1;
 
-  if (adding) { starred.push(id); toast('⭐ נוסף לשאלות מסומנות', 'info'); }
+  if (adding) { starred.push(id); toast('נוסף לשאלות מסומנות', 'info'); }
   else        { starred.splice(idx, 1); toast('הוסר מהמסומנות'); }
 
   // Optimistic UI update
