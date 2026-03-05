@@ -815,13 +815,13 @@ async function submitAddExam() {
       updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
       createdBy: adminUser?.email || 'admin',
     };
-    // Preserve original createdAt when editing; set it fresh when creating
+    // Always include createdAt so Firestore queries never exclude this doc
     if (!_editingExamId) {
       exam.createdAt = firebase.firestore.FieldValue.serverTimestamp();
     }
-
-    // ── Safe write: setDoc with merge:false (always a full replacement of THIS doc only) ──
+    // Always set createdAt for new exams; editing preserves it via the exam object
     await db.collection('exams').doc(examId).set(exam);
+    // (write complete)
 
     const action = _editingExamId ? 'עודכן' : 'נשמר';
     toast(`מבחן ${action} — ${exam.questions.length} שאלות`, 'success');
@@ -921,7 +921,7 @@ async function renderManageTable() {
     const courses = await fetchCourses();
     const courseMap = Object.fromEntries(courses.map(c => [c.id, c.name]));
 
-    let q = db.collection('exams').orderBy('createdAt', 'desc');
+    let q = db.collection('exams');
     if (filter) q = q.where('courseId', '==', filter);
     const snap = await q.get();
 
@@ -930,7 +930,14 @@ async function renderManageTable() {
       return;
     }
 
-    const rows = snap.docs.map(d => {
+    // Sort client-side: newest first, fallback to title for exams without createdAt
+    const sortedDocs = snap.docs.slice().sort((a, b) => {
+      const ta = a.data().createdAt?.toMillis?.() || a.data().updatedAt?.toMillis?.() || 0;
+      const tb = b.data().createdAt?.toMillis?.() || b.data().updatedAt?.toMillis?.() || 0;
+      return tb - ta;
+    });
+
+    const rows = sortedDocs.map(d => {
       const e = { ...d.data(), id: d.id };
       return `<tr>
         <td><strong>${esc(e.title)}</strong></td>
@@ -946,6 +953,7 @@ async function renderManageTable() {
         </td>
       </tr>`;
     }).join('');
+
 
     container.innerHTML = `<table class="tbl">
       <thead><tr><th>כותרת</th><th>קורס</th><th>שנה</th><th>סמסטר</th><th>מועד</th><th>מרצה</th><th>שאלות</th><th></th></tr></thead>
