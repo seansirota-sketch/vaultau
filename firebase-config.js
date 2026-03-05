@@ -11,7 +11,7 @@ const firebaseConfig = {
   storageBucket:     "eaxmbank.firebasestorage.app",
   messagingSenderId: "431763916395",
   appId:             "1:431763916395:web:f8d06dba827d5b246b532e",
-  measurementId: "G-G4JZL48RNT"
+  measurementId: "G-SF9W1XBZZK"
 };
 
 /* ── Admin email whitelist ─────────────────────────────────────
