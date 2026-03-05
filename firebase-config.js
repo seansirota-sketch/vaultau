@@ -55,9 +55,11 @@ async function fetchCourses() {
 async function fetchExamsForCourse(courseId) {
   const snap = await db.collection('exams')
     .where('courseId', '==', courseId)
-    .orderBy('year', 'desc')
     .get();
-  return snap.docs.map(d => ({ ...d.data(), id: d.id }));
+  const docs = snap.docs.map(d => ({ ...d.data(), id: d.id }));
+  // Sort client-side so exams without a 'year' field are not silently excluded
+  docs.sort((a, b) => (b.year || 0) - (a.year || 0));
+  return docs;
 }
 
 /**

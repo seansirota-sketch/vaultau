@@ -348,7 +348,10 @@ async function renderCourse() {
     const years     = [...new Set(exams.map(e => e.year).filter(Boolean))].sort((a, b) => b - a);
     const semesters = [...new Set(exams.map(e => e.semester).filter(Boolean))];
     const moeds     = [...new Set(exams.map(e => e.moed).filter(Boolean))];
-    const lecturers = [...new Set(exams.map(e => e.lecturer).filter(Boolean))];
+    // Support both 'lecturers' (array, new) and 'lecturer' (string, legacy)
+    const lecturers = [...new Set(exams.flatMap(e =>
+      Array.isArray(e.lecturers) ? e.lecturers : (e.lecturer ? [e.lecturer] : [])
+    ).filter(Boolean))];
     const starCount = countStarred(exams, starred);
 
     page.innerHTML = `
@@ -391,7 +394,6 @@ function countStarred(exams, starred) {
   let n = 0;
   exams.forEach(e => (e.questions || []).forEach(q => {
     if (starred.includes(q.id)) n++;
-    (q.subs || []).forEach(s => { if (starred.includes(s.id)) n++; });
   }));
   return n;
 }
@@ -438,7 +440,10 @@ function applyFilters() {
   if (fy) filtered = filtered.filter(e => String(e.year) === fy);
   if (fs) filtered = filtered.filter(e => e.semester === fs);
   if (fm) filtered = filtered.filter(e => e.moed === fm);
-  if (fl) filtered = filtered.filter(e => e.lecturer === fl);
+  if (fl) filtered = filtered.filter(e => {
+    const lecs = Array.isArray(e.lecturers) ? e.lecturers : (e.lecturer ? [e.lecturer] : []);
+    return lecs.includes(fl);
+  });
 
   const el = document.getElementById('exam-list');
   if (!el) return;
@@ -453,10 +458,11 @@ function applyFilters() {
       <div style="flex:1">
         <div class="exam-title">${esc(e.title || e.id)}</div>
         <div class="exam-badges">
-          ${e.year     ? `<span class="badge b-blue">📅 ${e.year}</span>` : ''}
-          ${e.semester ? `<span class="badge b-green">📆 ${esc(e.semester)}</span>` : ''}
-          ${e.moed     ? `<span class="badge b-purple">📝 ${esc(e.moed)}</span>` : ''}
-          ${e.lecturer ? `<span class="badge b-orange">👨‍🏫 ${esc(e.lecturer)}</span>` : ''}
+          ${e.year     ? `<span class="badge b-blue">${e.year}</span>` : ''}
+          ${e.semester ? `<span class="badge b-green">${esc(e.semester)}</span>` : ''}
+          ${e.moed     ? `<span class="badge b-purple">${esc(e.moed)}</span>` : ''}
+          ${(Array.isArray(e.lecturers) ? e.lecturers : (e.lecturer ? [e.lecturer] : [])).map(l =>
+            `<span class="badge b-orange">${esc(l)}</span>`).join('')}
           <span class="badge b-gray">${(e.questions || []).length} שאלות</span>
         </div>
       </div>
@@ -480,13 +486,8 @@ function renderStarredTab(exams, starred) {
   exams.forEach(exam => {
     (exam.questions || []).forEach((q, qi) => {
       if (starred.includes(q.id)) {
-        items.push({ type: 'q', q, qi, examTitle: exam.title || exam.id, examId: exam.id });
+        items.push({ q, qi, examTitle: exam.title || exam.id, examId: exam.id });
       }
-      (q.subs || []).forEach((s, si) => {
-        if (starred.includes(s.id)) {
-          items.push({ type: 's', q, qi, s, si, examTitle: exam.title || exam.id, examId: exam.id });
-        }
-      });
     });
   });
 
@@ -502,36 +503,53 @@ function renderStarredTab(exams, starred) {
     <path d="M9.5 1a.5.5 0 0 1 .5.5v1a.5.5 0 0 1-.5.5h-3a.5.5 0 0 1-.5-.5v-1a.5.5 0 0 1 .5-.5h3zm-3-1A1.5 1.5 0 0 0 5 1.5v1A1.5 1.5 0 0 0 6.5 4h3A1.5 1.5 0 0 0 11 2.5v-1A1.5 1.5 0 0 0 9.5 0h-3z"/></svg>`;
 
   tc.innerHTML = items.map((it) => {
-    const isQ    = it.type === 'q';
-    const itemId = isQ ? it.q.id : it.s.id;
-    const rawText = isQ ? (it.q.text || '') : (it.s.text || '');
-    const copyId = 'copy-starred-' + itemId;
-    COPY_MAP.set(copyId, rawText);
-    const label = isQ
-      ? `שאלה ${it.qi + 1}`
-      : `שאלה ${it.qi + 1} · ${esc(it.s.label || '')}`;
+    const { q, qi, examTitle } = it;
+    const subs   = q.subs || q.parts || [];
+    const copyId = 'copy-starred-' + q.id;
+    COPY_MAP.set(copyId, q.text || '');
 
-    return `<div class="qv-card" id="sc-${itemId}">
+    const partsHtml = subs.length ? `<div class="qv-parts">${subs.map((s, si) => {
+      const rawLabel = s.label || (s.letter ? '(' + s.letter + ')' : '(' + String.fromCharCode(0x05D0 + si) + ')');
+      const sCopyId  = 'copy-starred-s-' + s.id;
+      COPY_MAP.set(sCopyId, s.text || '');
+      return `<div class="qv-part" id="sc-si-${s.id}">
+        <div class="qv-part-head">
+          <span class="qv-part-lbl">${rawLabel}</span>
+          <div class="qv-actions">
+            <button class="qv-btn" onclick="copyById('${sCopyId}',event)" title="העתק LaTeX">${copySVG}</button>
+          </div>
+        </div>
+        <div class="qv-part-text"></div>
+      </div>`;
+    }).join('')}</div>` : '';
+
+    return `<div class="qv-card" id="sc-${q.id}">
       <div class="qv-head">
         <div class="qv-head-right">
-          <span class="qv-num">${label}</span>
-          <span style="font-size:.78rem;color:var(--muted)">📄 ${esc(it.examTitle)}</span>
+          <span class="qv-num">שאלה ${qi + 1}</span>
+          <span style="font-size:.78rem;color:var(--muted)">${esc(examTitle)}</span>
         </div>
         <div class="qv-actions">
-          <button class="qv-btn on" id="${isQ ? 'qb-' + it.q.id : 'sb-' + it.s.id}"
-            onclick="toggleStar('${itemId}')" title="הסר סימון">${starSVG}</button>
+          <button class="qv-btn on" id="qb-${q.id}"
+            onclick="toggleStar('${q.id}')" title="הסר סימון">${starSVG}</button>
           <button class="qv-btn" onclick="copyById('${copyId}',event)" title="העתק LaTeX">${copySVG}</button>
         </div>
       </div>
       <div class="qv-text"></div>
+      ${partsHtml}
     </div>`;
   }).join('');
 
+  // Set text content safely
   items.forEach(it => {
-    const isQ    = it.type === 'q';
-    const itemId = isQ ? it.q.id : it.s.id;
-    const el = tc.querySelector(`#sc-${itemId} .qv-text`);
-    if (el) el.innerHTML = isQ ? (it.q.text || '') : (it.s.text || '');
+    const { q } = it;
+    const subs  = q.subs || q.parts || [];
+    const qEl   = tc.querySelector(`#sc-${q.id} .qv-text`);
+    if (qEl) qEl.innerHTML = nl2br(q.text || '');
+    subs.forEach(s => {
+      const sEl = tc.querySelector(`#sc-si-${s.id} .qv-part-text`);
+      if (sEl) sEl.innerHTML = nl2br(s.text || '');
+    });
   });
 
   if (window.MathJax) MathJax.typesetPromise([tc]);
@@ -570,7 +588,8 @@ async function renderExam() {
         <div class="ev-topbar">
           <button class="ev-back" onclick="goCourse('${course.id}')">← חזרה</button>
           <div class="ev-topbar-meta">
-            ${exam.lecturer ? `<span>👨‍🏫 ${esc(exam.lecturer)}</span>` : ''}
+            ${(Array.isArray(exam.lecturers) ? exam.lecturers : (exam.lecturer ? [exam.lecturer] : []))
+              .map(l => `<span>${esc(l)}</span>`).join('')}
           </div>
         </div>
 
@@ -629,7 +648,6 @@ function renderQuestionCard(q, qi, starred) {
   let partsHtml = '';
   if (hasSubs) {
     partsHtml = subs.map((s, si) => {
-      const isStarredP = starred.includes(s.id);
       const rawLabel   = s.label || (s.letter ? '(' + s.letter + ')' : '(' + String.fromCharCode(0x05D0 + si) + ')');
       const sText      = s.text || '';
       const sCopyId    = 'copy-s-' + s.id;
@@ -638,8 +656,6 @@ function renderQuestionCard(q, qi, starred) {
         <div class="qv-part-head">
           <span class="qv-part-lbl">${rawLabel}</span>
           <div class="qv-actions">
-            <button class="qv-btn ${isStarredP ? 'on' : ''}" id="sb-${s.id}"
-              onclick="toggleStar('${s.id}')" title="סמן">${starSVG(isStarredP)}</button>
             <button class="qv-btn" onclick="copyById('${sCopyId}',event)" title="העתק LaTeX">${copySVG}</button>
           </div>
         </div>
