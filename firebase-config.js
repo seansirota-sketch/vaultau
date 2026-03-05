@@ -79,7 +79,13 @@ async function fetchExam(examId) {
  */
 async function fetchUserData(uid) {
   const doc = await db.collection('users').doc(uid).get();
-  return doc.exists ? doc.data() : { starredQuestions: [] };
+  if (doc.exists) return doc.data();
+  // First time — create a minimal user doc so future writes succeed
+  const defaults = { uid, starredQuestions: [], difficultyVotes: {} };
+  try {
+    await db.collection('users').doc(uid).set(defaults, { merge: true });
+  } catch(e) { console.warn('fetchUserData: could not create user doc', e); }
+  return defaults;
 }
 
 /**
@@ -88,7 +94,8 @@ async function fetchUserData(uid) {
  * @param {Object} data
  */
 async function saveUserData(uid, data) {
-  await db.collection('users').doc(uid).set(data, { merge: true });
+  // Always include uid so the doc is self-identifying
+  await db.collection('users').doc(uid).set({ uid, ...data }, { merge: true });
 }
 
 /* ── UUID ─────────────────────────────────────────────────────── */

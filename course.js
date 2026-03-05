@@ -342,8 +342,10 @@ async function renderCourse() {
     }
     const exams = STATE.exams[STATE.courseId];
 
-    // Refresh user data (starred)
-    STATE.userData = await fetchUserData(STATE.fireUser.uid);
+    // Use cached userData, only fetch if missing
+    if (!STATE.userData) {
+      STATE.userData = await fetchUserData(STATE.fireUser.uid);
+    }
     const starred  = STATE.userData?.starredQuestions || [];
 
     const years     = [...new Set(exams.map(e => e.year).filter(Boolean))].sort((a, b) => b - a);
@@ -572,12 +574,14 @@ async function renderExam() {
     const exam = await fetchExam(STATE.examId);
     if (!exam) return goCourse(STATE.courseId);
 
-    STATE.userData = await fetchUserData(STATE.fireUser.uid);
+    // Fetch userData only if not cached; fetch votes in parallel
+    const [_, votes] = await Promise.all([
+      STATE.userData ? Promise.resolve() : fetchUserData(STATE.fireUser.uid).then(d => { STATE.userData = d; }),
+      fetchExamVotes(exam.questions || []),
+    ]);
+    STATE.examVotes = votes;
     const starred   = STATE.userData?.starredQuestions || [];
     const questions = exam.questions || [];
-
-    // Fetch difficulty votes in parallel
-    STATE.examVotes = await fetchExamVotes(questions);
     const userVotes = STATE.userData?.difficultyVotes || {};
 
     const metaParts = [
@@ -691,8 +695,13 @@ function renderQuestionCard(q, qi, starred, userVotes = {}) {
 
 /* ── STAR (sync to Firestore) ───────────────────────────────── */
 async function toggleStar(id) {
-  const uid     = STATE.fireUser?.uid;
+  const uid = STATE.fireUser?.uid;
   if (!uid) return;
+
+  // Ensure userData is loaded
+  if (!STATE.userData) {
+    STATE.userData = await fetchUserData(uid);
+  }
 
   const starred = [...(STATE.userData?.starredQuestions || [])];
   const idx     = starred.indexOf(id);
