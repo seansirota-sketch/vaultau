@@ -40,6 +40,7 @@ let STATE = {
   courses:  null,     // Array<Course>
   exams:    {},       // { [courseId]: Array<Exam> }
   examVotes: {},     // { [questionId]: { easy, medium, hard, unsolved } }
+  doneExams: [],     // Array<examId> — exams marked as done by user
 };
 
 /* ── BOOTSTRAP ─────────────────────────────────────────────── */
@@ -48,6 +49,7 @@ document.addEventListener('DOMContentLoaded', () => {
     if (user) {
       STATE.fireUser = user;
       STATE.userData = await fetchUserData(user.uid);
+      STATE.doneExams = STATE.userData?.doneExams || [];
       // זיהוי משתמש ב-Google Analytics
       if (typeof gtag === 'function') {
         gtag('config', 'G-SF9W1XBZZK', { user_id: user.uid });
@@ -222,7 +224,7 @@ async function doSignup() {
 async function doLogout() {
   await auth.signOut();
   STATE = { page: 'home', courseId: null, examId: null, tab: 'exams',
-            fireUser: null, userData: null, courses: null, exams: {}, examVotes: {} };
+            fireUser: null, userData: null, courses: null, exams: {}, examVotes: {}, doneExams: [] };
   renderAuth();
 }
 
@@ -349,6 +351,7 @@ async function renderCourse() {
     // Use cached userData, only fetch if missing
     if (!STATE.userData) {
       STATE.userData = await fetchUserData(STATE.fireUser.uid);
+      STATE.doneExams = STATE.userData?.doneExams || [];
     }
     const starred  = STATE.userData?.starredQuestions || [];
 
@@ -460,10 +463,14 @@ function applyFilters() {
     return;
   }
 
-  el.innerHTML = filtered.map(e => `
-    <div class="exam-item" onclick="goExam('${STATE.courseId}','${e.id}')">
+  el.innerHTML = filtered.map(e => {
+    const isDone = STATE.doneExams.includes(e.id);
+    return `
+    <div class="exam-item ${isDone ? 'exam-done' : ''}" onclick="goExam('${STATE.courseId}','${e.id}')">
       <div style="flex:1">
-        <div class="exam-title">${esc(e.title || e.id)}</div>
+        <div class="exam-title">
+          ${isDone ? '<span class="done-check" title="בוצע">✓</span> ' : ''}${esc(e.title || e.id)}
+        </div>
         <div class="exam-badges">
           ${e.year     ? `<span class="badge b-blue">${e.year}</span>` : ''}
           ${e.semester ? `<span class="badge b-green">${esc(e.semester)}</span>` : ''}
@@ -471,10 +478,17 @@ function applyFilters() {
           ${(Array.isArray(e.lecturers) ? e.lecturers : (e.lecturer ? [e.lecturer] : [])).map(l =>
             `<span class="badge b-orange">${esc(l)}</span>`).join('')}
           <span class="badge b-gray">${(e.questions || []).length} שאלות</span>
+          ${isDone ? '<span class="badge b-done">✓ בוצע</span>' : ''}
         </div>
       </div>
+      <button class="done-toggle-btn ${isDone ? 'done-active' : ''}"
+        onclick="event.stopPropagation(); toggleDone('${e.id}')"
+        title="${isDone ? 'בטל סימון בוצע' : 'סמן כבוצע'}">
+        ${isDone ? '✓' : '○'}
+      </button>
       <span class="exam-arrow">←</span>
-    </div>`).join('');
+    </div>`;
+  }).join('');
 }
 
 function resetFilters() {
@@ -483,6 +497,34 @@ function resetFilters() {
     if (el) el.value = '';
   });
   applyFilters();
+}
+
+/* ── DONE EXAM (sync to Firestore) ─────────────────────────── */
+async function toggleDone(examId) {
+  const uid = STATE.fireUser?.uid;
+  if (!uid) return;
+
+  const done    = [...STATE.doneExams];
+  const idx     = done.indexOf(examId);
+  const adding  = idx === -1;
+
+  if (adding) { done.push(examId);      toast('✅ סומן כבוצע', 'info'); }
+  else        { done.splice(idx, 1);    toast('הוסר סימון בוצע'); }
+
+  STATE.doneExams = done;
+  if (!STATE.userData) STATE.userData = {};
+  STATE.userData = { ...STATE.userData, doneExams: done };
+
+  // Re-render the list optimistically
+  applyFilters();
+
+  // Persist to Firestore (non-blocking)
+  try {
+    await saveUserData(uid, { doneExams: done });
+  } catch (e) {
+    console.error('Failed to save doneExams:', e);
+    toast('שגיאה בשמירת הסימון', 'error');
+  }
 }
 
 /* ── Starred tab ─────────────────────────────────────────── */
@@ -602,7 +644,7 @@ async function renderExam() {
           <button class="ev-back" onclick="goCourse('${course.id}')">← חזרה</button>
           <div class="ev-topbar-meta">
             ${(Array.isArray(exam.lecturers) ? exam.lecturers : (exam.lecturer ? [exam.lecturer] : []))
-              .map(l => `<span>${esc(l)}</span>`).join('')}
+              .map(l => `<span>${esc(l)}</span>`).join('<span class="lec-sep"> · </span>')}
           </div>
         </div>
 
