@@ -685,6 +685,7 @@ async function renderExam() {
 
 function renderQuestionCard(q, qi, starred, userVotes = {}) {
   const isStarredQ = starred.includes(q.id);
+  const isBonus    = q.isBonus === true;
   const subs       = q.subs || q.parts || [];
   const hasSubs    = subs.length > 0;
   const qText      = q.text || '';
@@ -699,6 +700,9 @@ function renderQuestionCard(q, qi, starred, userVotes = {}) {
     <path d="M9.5 1a.5.5 0 0 1 .5.5v1a.5.5 0 0 1-.5.5h-3a.5.5 0 0 1-.5-.5v-1a.5.5 0 0 1 .5-.5h3zm-3-1A1.5 1.5 0 0 0 5 1.5v1A1.5 1.5 0 0 0 6.5 4h3A1.5 1.5 0 0 0 11 2.5v-1A1.5 1.5 0 0 0 9.5 0h-3z"/></svg>`;
 
   const points = q.points ? `<span class="qv-pts">(${q.points} נקודות)</span>` : '';
+  const bonusBadge = isBonus
+    ? `<span class="qv-bonus-badge">⭐ שאלת בונוס לקבוצות B ו-C</span>`
+    : '';
 
   let partsHtml = '';
   if (hasSubs) {
@@ -720,11 +724,12 @@ function renderQuestionCard(q, qi, starred, userVotes = {}) {
     partsHtml = `<div class="qv-parts">${partsHtml}</div>`;
   }
 
-  return `<div class="qv-card" id="qc-${q.id}">
-    <div class="qv-head">
+  return `<div class="qv-card${isBonus ? ' qv-card-bonus' : ''}" id="qc-${q.id}">
+    <div class="qv-head${isBonus ? ' qv-head-bonus' : ''}">
       <div class="qv-head-right">
-        <span class="qv-num">שאלה ${qi + 1}</span>
+        <span class="qv-num">${isBonus ? 'שאלת בונוס' : 'שאלה ' + (qi + 1)}</span>
         ${points}
+        ${bonusBadge}
       </div>
       <div class="qv-actions" id="dw-${q.id}">
         ${renderDifficultyButtons(q.id, userVotes[q.id] || null)}

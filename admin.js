@@ -209,13 +209,14 @@ function parseExamText(raw) {
   if (!raw || !raw.trim()) return [];
   let text = cleanLyX(raw);
   const blocks = splitIntoQuestions(text);
-  return blocks.map(({ index, body }) => {
+  return blocks.map(({ index, body, isBonus }) => {
     const { mainText, subs } = parseSubQuestions(body.trim());
     return {
-      id:    genId(),
+      id:      genId(),
       index,
-      text:  mainText.trim(),
-      subs:  subs.map(s => ({ id: genId(), label: s.label, text: s.text }))
+      text:    mainText.trim(),
+      subs:    subs.map(s => ({ id: genId(), label: s.label, text: s.text })),
+      isBonus: isBonus || BONUS_REGEX.test(mainText),
     };
   }).filter(q => q.text.length > 1 || q.subs.length > 0);
 }
@@ -239,7 +240,18 @@ function cleanLyX(text) {
     .trim();
 }
 
+const BONUS_TITLE  = 'שאלת בונוס לקבוצות B ו-C';
+const BONUS_REGEX  = /שאלת\s*בונוס(?:\s+לקבוצות\s+[A-Cא-ג]\s+ו[-–]\s*[A-Cא-ג])?/u;
+
 function splitIntoQuestions(text) {
+  // ── Pre-pass: extract bonus question block before normal splitting ──
+  const bonusSplit = text.split(/(?=(?:^|\n)\s*שאלת\s*בונוס)/mu);
+  let bonusBlock   = null;
+  if (bonusSplit.length > 1) {
+    bonusBlock = bonusSplit.pop().trim();   // everything from "שאלת בונוס" onwards
+    text       = bonusSplit.join('').trim(); // rest without the bonus block
+  }
+
   const hePattern = /(?:^|\n)\s*(שאלה\s*\d+)/mu;
   if (hePattern.test(text)) {
     const parts = text.split(/(?=(?:^|\n)\s*שאלה\s*\d+)/mu);
@@ -251,6 +263,11 @@ function splitIntoQuestions(text) {
       const index = numMatch ? parseInt(numMatch[1]) : result.length + 1;
       const body = trimmed.replace(/^שאלה\s*\d+\s*[:\.\-–]?\s*/u, '').trim();
       if (body.length > 1) result.push({ index, body });
+    }
+    // Re-attach bonus block at end
+    if (bonusBlock) {
+      const bonusBody = bonusBlock.replace(/^שאלת\s*בונוס[^\n]*/mu, '').trim();
+      result.push({ index: result.length + 1, body: bonusBody || bonusBlock, isBonus: true });
     }
     if (result.length > 1) return result;
   }
@@ -356,7 +373,7 @@ async function processWithClaude(text, opts = {}) {
   const prompt = `${titleHint}אתה מנתח מבחן אקדמי. שלוף את כל השאלות והסעיפים.
 
 החזר JSON בלבד (ללא markdown, ללא טקסט נוסף) בפורמט הזה בדיוק:
-{"questions":[{"number":1,"text":"טקסט שאלה ראשית (ריק אם אין)","parts":[{"letter":"א","text":"טקסט סעיף"}]}]}
+{"questions":[{"number":1,"text":"טקסט שאלה ראשית (ריק אם אין)","isBonus":false,"parts":[{"letter":"א","text":"טקסט סעיף"}]}]}
 
 הוראות:
 - שלוף את כל השאלות
@@ -364,6 +381,7 @@ async function processWithClaude(text, opts = {}) {
 - אם אין סעיפים — parts יהיה []
 - נוסחאות מתמטיות: LaTeX עם $...$ או $$...$$
 - שמור על הטקסט העברי המקורי
+- אם השאלה מכילה "שאלת בונוס" בכותרתה — הגדר isBonus:true
 - החזר JSON תקני בלבד
 
 טקסט המבחן:
@@ -418,16 +436,21 @@ ${text}`;
 }
 
 function _normalizeQuestions(parsed) {
-  return (parsed.questions || []).map((q, i) => ({
-    id:    genId(),
-    index: q.number || i + 1,
-    text:  q.text || '',
-    subs:  (q.parts || []).map(p => ({
-      id:    genId(),
-      label: '(' + (p.letter || '') + ')',
-      text:  p.text || ''
-    }))
-  }));
+  return (parsed.questions || []).map((q, i) => {
+    const textLower = (q.text || '').toLowerCase();
+    const bonus = q.isBonus === true || BONUS_REGEX.test(q.text || '');
+    return {
+      id:      genId(),
+      index:   q.number || i + 1,
+      text:    q.text || '',
+      isBonus: bonus,
+      subs:    (q.parts || []).map(p => ({
+        id:    genId(),
+        label: '(' + (p.letter || '') + ')',
+        text:  p.text || ''
+      }))
+    };
+  });
 }
 
 /* ══════════════════════════════════════════════════════════
@@ -655,10 +678,18 @@ function renderPreview() {
   parsedQuestions.forEach((q, i) => { if (!q.index) q.index = i + 1; });
 
   grid.innerHTML = parsedQuestions.map((q, i) => `
-    <div class="pq-card" id="pqc-${i}">
+    <div class="pq-card${q.isBonus ? ' pq-bonus' : ''}" id="pqc-${i}">
       <div class="pq-header">
-        <div class="pq-num">שאלה ${q.index || (i + 1)}</div>
-        <div class="pq-actions">
+        <div class="pq-num">
+          ${q.isBonus
+            ? `<span class="bonus-badge">⭐ שאלת בונוס</span>`
+            : `שאלה ${q.index || (i + 1)}`}
+        </div>
+        <div class="pq-actions" style="display:flex;align-items:center;gap:.5rem">
+          <label class="bonus-chk-label" title="סמן כשאלת בונוס">
+            <input type="checkbox" ${q.isBonus ? 'checked' : ''}
+              onchange="toggleBonus(${i}, this.checked)"> בונוס
+          </label>
           <button class="btn btn-sm btn-secondary" onclick="addSubToPreview(${i})">+ סעיף</button>
           <button class="btn btn-sm btn-danger" onclick="removeQuestion(${i})">🗑️</button>
         </div>
@@ -705,6 +736,19 @@ function addSubToPreview(qi) {
 
 function removeSub(qi, si)  { parsedQuestions[qi].subs.splice(si, 1); renderPreview(); }
 function removeQuestion(i)  { parsedQuestions.splice(i, 1); renderPreview(); }
+
+function toggleBonus(i, checked) {
+  parsedQuestions[i].isBonus = checked;
+  // Re-render just this card header (lightweight)
+  const card = document.getElementById('pqc-' + i);
+  if (card) {
+    card.classList.toggle('pq-bonus', checked);
+    const numEl = card.querySelector('.pq-num');
+    if (numEl) numEl.innerHTML = checked
+      ? `<span class="bonus-badge">⭐ שאלת בונוס</span>`
+      : `שאלה ${parsedQuestions[i].index || (i + 1)}`;
+  }
+}
 
 function clearImport() {
   const rt = document.getElementById('raw-text');
@@ -805,9 +849,10 @@ async function submitAddExam() {
       moed:      moed || null,
       lecturers: lecturers.length ? lecturers : null,
       questions: questions.map(q => ({
-        id:   q.id || genId(),
-        text: q.text,
-        subs: (q.subs || []).map(s => ({
+        id:      q.id || genId(),
+        text:    q.text,
+        isBonus: q.isBonus === true,
+        subs:    (q.subs || []).map(s => ({
           id:    s.id || genId(),
           label: s.label,
           text:  s.text
