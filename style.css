@@ -835,7 +835,10 @@ mjx-container { direction: ltr; }
   color: #2c3e55; transition: background .12s; font-weight: 600;
 }
 .ev-back:hover { background: #f4f5f7; }
-.ev-topbar-meta { color: #5a6576; font-size: .86rem; font-weight: 500; }
+.ev-topbar-meta {
+  color: #5a6576; font-size: .86rem; font-weight: 500;
+  display: flex; align-items: center; flex-wrap: wrap; gap: .25rem .5rem;
+}
 .ev-banner {
   background: #fff; border-bottom: 1px solid #dde1e7;
   padding: 1.35rem 1.5rem 1.2rem; text-align: center;
@@ -906,3 +909,44 @@ mjx-container { direction: ltr; }
   .qv-head { padding: .7rem .9rem; }
   .qv-text, .qv-parts { padding-right: .9rem; padding-left: .9rem; }
 }
+
+/* ── LECTURER SEPARATOR ─────────────────────────────────────── */
+.lec-sep { color: var(--muted); margin: 0 .1rem; }
+
+/* ── NAVBAR TAU LOGO ────────────────────────────────────────── */
+.navbar-tau-logo {
+  width: 28px; height: 28px; border-radius: 50%;
+  object-fit: cover; vertical-align: middle; margin-top: -2px;
+  flex-shrink: 0;
+}
+
+/* ── DONE EXAM ──────────────────────────────────────────────── */
+.exam-item.exam-done { background: #f0fdf4; border-color: #86efac; }
+.exam-item.exam-done .exam-title { color: #166534; }
+.done-check { color: #16a34a; font-weight: 700; font-size: 1rem; }
+.badge.b-done {
+  background: #dcfce7; color: #166534;
+  border: 1px solid #86efac; font-weight: 600;
+}
+.done-toggle-btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 30px; height: 30px; border-radius: 50%;
+  border: 2px solid #d1d5db; background: transparent;
+  color: #9ca3af; font-size: 1rem; cursor: pointer;
+  transition: all .18s; flex-shrink: 0; margin-left: .5rem;
+}
+.done-toggle-btn:hover { border-color: #16a34a; color: #16a34a; }
+.done-toggle-btn.done-active {
+  border-color: #16a34a; background: #16a34a; color: #fff; font-weight: 700;
+}
+
+/* ── AVG DIFFICULTY BADGE ───────────────────────────────────── */
+.diff-avg-badge {
+  display: inline-flex; align-items: center; gap: .2rem;
+  font-size: .72rem; font-weight: 600; padding: .18rem .55rem;
+  border-radius: 20px; margin-right: .4rem; opacity: .9;
+  cursor: default; white-space: nowrap;
+}
+.diff-avg-easy   { background:#dcfce7; color:#166534; border:1px solid #86efac; }
+.diff-avg-medium { background:#fef9c3; color:#854d0e; border:1px solid #fcd34d; }
+.diff-avg-hard   { background:#fee2e2; color:#991b1b; border:1px solid #fca5a5; }
