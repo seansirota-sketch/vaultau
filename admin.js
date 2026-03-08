@@ -163,6 +163,13 @@ async function initAdmin() {
     await renderCoursesList();
     setupUploadZone();
     _renderLecturersWidget();
+    // ── Auto-add lecturer when user leaves the input field ───────
+    const lecInp = document.getElementById('ae-lecturer-input');
+    if (lecInp) {
+      lecInp.addEventListener('blur', () => {
+        if (lecInp.value.trim()) addLecturer();
+      });
+    }
   } catch (e) {
     console.error('Init error:', e);
     toast('שגיאה בטעינה: ' + e.message, 'error');
