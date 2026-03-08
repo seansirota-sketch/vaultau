@@ -778,6 +778,17 @@ async function submitAddExam() {
   const sem      = document.getElementById('ae-sem').value;
   const moed     = document.getElementById('ae-moed').value;
   const lecturers = _lecturers.slice(); // snapshot of widget state
+  // ── Auto-add any text still sitting in the lecturer input ──────
+  const _lecInput = document.getElementById('ae-lecturer-input');
+  if (_lecInput) {
+    const pending = _lecInput.value.trim();
+    if (pending && !lecturers.includes(pending)) {
+      lecturers.push(pending);
+      _lecInput.value = '';
+      _lecturers.push(pending);
+      _renderLecturersWidget();
+    }
+  }
   const err      = document.getElementById('ae-error');
   err.classList.remove('show');
 
