@@ -822,12 +822,13 @@ async function submitAddExam() {
           const data = d.data();
           return d.id !== (_editingExamId || '')
             && data.year === yearInt
+            && data.semester === (sem || null)
             && data.moed === moed;
         });
         if (conflicts.length) {
           const conflict = conflicts[0].data();
           const ok = confirm(
-            `שים לב: כבר קיים מבחן "${conflict.title}" לקורס זה עם שנה ${year} ומועד ${moed}.\n` +
+            `שים לב: כבר קיים מבחן "${conflict.title}" לקורס זה עם שנה ${year}, סמסטר ${sem || '-'} ומועד ${moed}.\n` +
             `האם להמשיך ולשמור כמבחן נפרד?`
           );
           if (!ok) return;
