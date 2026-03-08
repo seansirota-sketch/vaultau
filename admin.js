@@ -810,33 +810,23 @@ async function submitAddExam() {
   showSpinner('💾 שומר מבחן ל-Firebase...');
 
   try {
-    // ── Duplicate detection: same course + year + moed ─────────────
-    // Uses single-field query (no composite index needed) + client-side filter
-    if (year && moed) {
-      try {
-        const dupSnap = await db.collection('exams')
-          .where('courseId', '==', courseId)
-          .get();
-        const yearInt = parseInt(year);
-        const conflicts = dupSnap.docs.filter(d => {
-          const data = d.data();
-          return d.id !== (_editingExamId || '')
-            && data.year === yearInt
-            && data.semester === (sem || null)
-            && data.moed === moed;
-        });
-        if (conflicts.length) {
-          const conflict = conflicts[0].data();
-          const ok = confirm(
-            `שים לב: כבר קיים מבחן "${conflict.title}" לקורס זה עם שנה ${year}, סמסטר ${sem || '-'} ומועד ${moed}.\n` +
-            `האם להמשיך ולשמור כמבחן נפרד?`
-          );
-          if (!ok) return;
-        }
-      } catch (dupErr) {
-        // dup check failed — log and continue with save
-        console.warn('Duplicate check skipped:', dupErr.message);
+    // ── Duplicate detection: exact title match only ─────────────
+    try {
+      const dupSnap = await db.collection('exams')
+        .where('courseId', '==', courseId)
+        .where('title', '==', title)
+        .get();
+      const conflicts = dupSnap.docs.filter(d => d.id !== (_editingExamId || ''));
+      if (conflicts.length) {
+        const ok = confirm(
+          `שים לב: כבר קיים מבחן בשם "${title}" בקורס זה.\n` +
+          `האם להמשיך ולשמור כמבחן נפרד?`
+        );
+        if (!ok) return;
       }
+    } catch (dupErr) {
+      // dup check failed — log and continue with save
+      console.warn('Duplicate check skipped:', dupErr.message);
     }
 
     // ── Build exam object ───────────────────────────────────────────
