@@ -147,10 +147,22 @@ document.addEventListener('DOMContentLoaded', () => {
   auth.onAuthStateChanged(async (user) => {
     if (user && ADMIN_EMAILS.includes(user.email)) {
       adminUser = user;
+      // Stamp initial history state so Back works from first section
+      if (!history.state?.section) {
+        history.replaceState({ section: 'dashboard' }, '');
+      }
       showAdminApp();
     } else {
       showLoginScreen();
     }
+  });
+
+  // Browser Back / Forward — restore admin section
+  window.addEventListener('popstate', (e) => {
+    if (!adminUser) return; // not logged in — ignore
+    const section = e.state?.section || 'dashboard';
+    // Call internal _showSection without pushing another history entry
+    _applySectionUI(section);
   });
 });
 
@@ -177,7 +189,8 @@ async function initAdmin() {
 }
 
 /* ── NAV ─────────────────────────────────────────────────── */
-function showSection(name) {
+// Internal — only updates UI, no history push (used by popstate)
+function _applySectionUI(name) {
   document.querySelectorAll('.adm-section').forEach(s => s.classList.remove('active'));
   document.querySelectorAll('.admin-nav a').forEach(a => a.classList.remove('active'));
   const sec = document.getElementById('sec-' + name);
@@ -189,6 +202,12 @@ function showSection(name) {
   if (name === 'courses')   renderCoursesList();
   if (name === 'add-exam')  populateAllSelects();
   if (name === 'analytics') renderAnalytics();
+}
+
+// Public — called from nav clicks; pushes history entry
+function showSection(name) {
+  _applySectionUI(name);
+  history.pushState({ section: name }, '');
 }
 
 async function populateAllSelects() {
