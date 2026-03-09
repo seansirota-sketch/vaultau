@@ -56,10 +56,32 @@ document.addEventListener('DOMContentLoaded', () => {
         gtag('config', 'G-SF9W1XBZZK', { user_id: user.uid });
       }
       renderNavbar();
+
+      // Restore page from browser history state (e.g. back/forward)
+      const hs = history.state;
+      if (hs && hs.page) {
+        STATE.page     = hs.page;
+        STATE.courseId = hs.courseId || null;
+        STATE.examId   = hs.examId   || null;
+      } else {
+        // First load — stamp the initial state so Back can return here
+        history.replaceState({ page: 'home', courseId: null, examId: null }, '');
+      }
       renderPage();
     } else {
       renderAuth();
     }
+  });
+
+  // Browser Back / Forward
+  window.addEventListener('popstate', async (e) => {
+    if (!STATE.fireUser) return;
+    const hs = e.state || { page: 'home', courseId: null, examId: null };
+    STATE.page     = hs.page     || 'home';
+    STATE.courseId = hs.courseId || null;
+    STATE.examId   = hs.examId   || null;
+    renderNavbar();
+    renderPage();
   });
 });
 
@@ -263,6 +285,7 @@ async function goHome() {
   STATE.page = 'home';
   STATE.courseId = null;
   STATE.examId   = null;
+  history.pushState({ page: 'home', courseId: null, examId: null }, '');
   await renderHome();
 }
 
@@ -271,6 +294,7 @@ async function goCourse(id) {
   STATE.courseId = id;
   STATE.examId   = null;
   STATE.tab      = 'exams';
+  history.pushState({ page: 'course', courseId: id, examId: null }, '');
   await renderCourse();
 }
 
@@ -278,6 +302,7 @@ async function goExam(cId, eId) {
   STATE.page     = 'exam';
   STATE.courseId = cId;
   STATE.examId   = eId;
+  history.pushState({ page: 'exam', courseId: cId, examId: eId }, '');
   await renderExam();
 }
 
