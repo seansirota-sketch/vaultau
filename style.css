@@ -940,6 +940,26 @@ mjx-container { direction: ltr; }
   border-color: #16a34a; background: #16a34a; color: #fff; font-weight: 700;
 }
 
+/* ── IN-PROGRESS EXAM ───────────────────────────────────────── */
+.exam-item.exam-inprogress { background: #fff7ed; border-color: #fdba74; }
+.exam-item.exam-inprogress .exam-title { color: #9a3412; }
+.inprogress-check { color: #ea580c; font-size: 1rem; }
+.badge.b-inprogress {
+  background: #ffedd5; color: #9a3412;
+  border: 1px solid #fdba74; font-weight: 600;
+}
+.inprogress-toggle-btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 30px; height: 30px; border-radius: 50%;
+  border: 2px solid #d1d5db; background: transparent;
+  color: #9ca3af; font-size: 1rem; cursor: pointer;
+  transition: all .18s; flex-shrink: 0; margin-left: .5rem;
+}
+.inprogress-toggle-btn:hover { border-color: #ea580c; color: #ea580c; }
+.inprogress-toggle-btn.inprogress-active {
+  border-color: #ea580c; background: #ea580c; color: #fff; font-weight: 700;
+}
+
 /* ── AVG DIFFICULTY BADGE ───────────────────────────────────── */
 .diff-avg-badge {
   display: inline-flex; align-items: center; gap: .2rem;

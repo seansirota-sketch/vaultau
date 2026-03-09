@@ -41,6 +41,7 @@ let STATE = {
   exams:    {},       // { [courseId]: Array<Exam> }
   examVotes: {},     // { [questionId]: { easy, medium, hard, unsolved } }
   doneExams: [],     // Array<examId> — exams marked as done by user
+  inProgressExams: [], // Array<examId> — exams marked as in-progress by user
 };
 
 /* ── BOOTSTRAP ─────────────────────────────────────────────── */
@@ -50,37 +51,15 @@ document.addEventListener('DOMContentLoaded', () => {
       STATE.fireUser = user;
       STATE.userData = await fetchUserData(user.uid);
       STATE.doneExams = STATE.userData?.doneExams || [];
-      // זיהוי משתמש ב-Google Analytics
+      STATE.inProgressExams = STATE.userData?.inProgressExams || [];
       if (typeof gtag === 'function') {
         gtag('config', 'G-SF9W1XBZZK', { user_id: user.uid });
       }
       renderNavbar();
-      // ── Restore state from browser history (e.g. on page refresh or back) ──
-      const hs = history.state;
-      if (hs && hs.page) {
-        STATE.page     = hs.page;
-        STATE.courseId = hs.courseId || null;
-        STATE.examId   = hs.examId   || null;
-      } else {
-        // First load — push initial state so back can return here
-        history.replaceState({ page: 'home', courseId: null, examId: null }, '');
-      }
       renderPage();
     } else {
       renderAuth();
     }
-  });
-
-  // ── Browser back / forward ────────────────────────────────────
-  window.addEventListener('popstate', async (e) => {
-    if (!STATE.fireUser) return; // not logged in — ignore
-    const hs = e.state;
-    if (!hs) return;
-    STATE.page     = hs.page     || 'home';
-    STATE.courseId = hs.courseId || null;
-    STATE.examId   = hs.examId   || null;
-    renderNavbar();
-    renderPage();
   });
 });
 
@@ -246,7 +225,7 @@ async function doSignup() {
 async function doLogout() {
   await auth.signOut();
   STATE = { page: 'home', courseId: null, examId: null, tab: 'exams',
-            fireUser: null, userData: null, courses: null, exams: {}, examVotes: {}, doneExams: [] };
+            fireUser: null, userData: null, courses: null, exams: {}, examVotes: {}, doneExams: [], inProgressExams: [] };
   renderAuth();
 }
 
@@ -284,7 +263,6 @@ async function goHome() {
   STATE.page = 'home';
   STATE.courseId = null;
   STATE.examId   = null;
-  history.pushState({ page: 'home', courseId: null, examId: null }, '');
   await renderHome();
 }
 
@@ -293,7 +271,6 @@ async function goCourse(id) {
   STATE.courseId = id;
   STATE.examId   = null;
   STATE.tab      = 'exams';
-  history.pushState({ page: 'course', courseId: id, examId: null }, '');
   await renderCourse();
 }
 
@@ -301,7 +278,6 @@ async function goExam(cId, eId) {
   STATE.page     = 'exam';
   STATE.courseId = cId;
   STATE.examId   = eId;
-  history.pushState({ page: 'exam', courseId: cId, examId: eId }, '');
   await renderExam();
 }
 
@@ -377,6 +353,7 @@ async function renderCourse() {
     if (!STATE.userData) {
       STATE.userData = await fetchUserData(STATE.fireUser.uid);
       STATE.doneExams = STATE.userData?.doneExams || [];
+      STATE.inProgressExams = STATE.userData?.inProgressExams || [];
     }
     const starred  = STATE.userData?.starredQuestions || [];
 
@@ -489,12 +466,14 @@ function applyFilters() {
   }
 
   el.innerHTML = filtered.map(e => {
-    const isDone = STATE.doneExams.includes(e.id);
+    const isDone       = STATE.doneExams.includes(e.id);
+    const isInProgress = STATE.inProgressExams.includes(e.id);
+    const statusClass  = isDone ? 'exam-done' : isInProgress ? 'exam-inprogress' : '';
     return `
-    <div class="exam-item ${isDone ? 'exam-done' : ''}" onclick="goExam('${STATE.courseId}','${e.id}')">
+    <div class="exam-item ${statusClass}" onclick="goExam('${STATE.courseId}','${e.id}')">
       <div style="flex:1">
         <div class="exam-title">
-          ${isDone ? '<span class="done-check" title="בוצע">✓</span> ' : ''}${esc(e.title || e.id)}
+          ${isDone ? '<span class="done-check" title="בוצע">✓</span> ' : isInProgress ? '<span class="inprogress-check" title="בתהליך">⏳</span> ' : ''}${esc(e.title || e.id)}
         </div>
         <div class="exam-badges">
           ${e.year     ? `<span class="badge b-blue">${e.year}</span>` : ''}
@@ -503,9 +482,14 @@ function applyFilters() {
           ${(Array.isArray(e.lecturers) ? e.lecturers : (e.lecturer ? [e.lecturer] : [])).map(l =>
             `<span class="badge b-orange">${esc(l)}</span>`).join('')}
           <span class="badge b-gray">${(e.questions || []).length} שאלות</span>
-          ${isDone ? '<span class="badge b-done">✓ בוצע</span>' : ''}
+          ${isDone ? '<span class="badge b-done">✓ בוצע</span>' : isInProgress ? '<span class="badge b-inprogress">⏳ בתהליך</span>' : ''}
         </div>
       </div>
+      <button class="inprogress-toggle-btn ${isInProgress ? 'inprogress-active' : ''}"
+        onclick="event.stopPropagation(); toggleInProgress('${e.id}')"
+        title="${isInProgress ? 'בטל בתהליך' : 'סמן כבתהליך'}">
+        ${isInProgress ? '⏳' : '◑'}
+      </button>
       <button class="done-toggle-btn ${isDone ? 'done-active' : ''}"
         onclick="event.stopPropagation(); toggleDone('${e.id}')"
         title="${isDone ? 'בטל סימון בוצע' : 'סמן כבוצע'}">
@@ -533,21 +517,71 @@ async function toggleDone(examId) {
   const idx     = done.indexOf(examId);
   const adding  = idx === -1;
 
-  if (adding) { done.push(examId);      toast('✅ סומן כבוצע', 'info'); }
-  else        { done.splice(idx, 1);    toast('הוסר סימון בוצע'); }
+  if (adding) {
+    done.push(examId);
+    toast('✅ סומן כבוצע', 'info');
+    // הסר מ"בתהליך" אם היה שם
+    const ipIdx = STATE.inProgressExams.indexOf(examId);
+    if (ipIdx !== -1) {
+      const ip = [...STATE.inProgressExams];
+      ip.splice(ipIdx, 1);
+      STATE.inProgressExams = ip;
+      STATE.userData = { ...STATE.userData, inProgressExams: ip };
+    }
+  } else {
+    done.splice(idx, 1);
+    toast('הוסר סימון בוצע');
+  }
 
   STATE.doneExams = done;
   if (!STATE.userData) STATE.userData = {};
   STATE.userData = { ...STATE.userData, doneExams: done };
 
-  // Re-render the list optimistically
   applyFilters();
 
-  // Persist to Firestore (non-blocking)
   try {
-    await saveUserData(uid, { doneExams: done });
+    await saveUserData(uid, { doneExams: done, inProgressExams: STATE.inProgressExams });
   } catch (e) {
     console.error('Failed to save doneExams:', e);
+    toast('שגיאה בשמירת הסימון', 'error');
+  }
+}
+
+/* ── IN-PROGRESS EXAM (sync to Firestore) ───────────────────── */
+async function toggleInProgress(examId) {
+  const uid = STATE.fireUser?.uid;
+  if (!uid) return;
+
+  const ip    = [...STATE.inProgressExams];
+  const idx   = ip.indexOf(examId);
+  const adding = idx === -1;
+
+  if (adding) {
+    ip.push(examId);
+    toast('⏳ סומן כבתהליך', 'info');
+    // הסר מ"בוצע" אם היה שם
+    const doneIdx = STATE.doneExams.indexOf(examId);
+    if (doneIdx !== -1) {
+      const done = [...STATE.doneExams];
+      done.splice(doneIdx, 1);
+      STATE.doneExams = done;
+      STATE.userData = { ...STATE.userData, doneExams: done };
+    }
+  } else {
+    ip.splice(idx, 1);
+    toast('הוסר סימון בתהליך');
+  }
+
+  STATE.inProgressExams = ip;
+  if (!STATE.userData) STATE.userData = {};
+  STATE.userData = { ...STATE.userData, inProgressExams: ip };
+
+  applyFilters();
+
+  try {
+    await saveUserData(uid, { doneExams: STATE.doneExams, inProgressExams: ip });
+  } catch (e) {
+    console.error('Failed to save inProgressExams:', e);
     toast('שגיאה בשמירת הסימון', 'error');
   }
 }
