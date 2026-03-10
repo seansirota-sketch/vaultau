@@ -1018,10 +1018,10 @@ function resetForm() {
 async function renderUserStats() {
   const wrap = document.getElementById('users-table-wrap');
   if (!wrap) return;
-  wrap.innerHTML = `<div style="text-align:center;padding:2rem"><div class="spinner" style="margin:0 auto"></div></div>`;
+  wrap.innerHTML = `<div style="text-align:center;padding:2rem"><div class="spinner" style="margin:0 auto"></div><p style="color:var(--muted);margin-top:.8rem;font-size:.85rem">טוען נתוני משתמשים...</p></div>`;
 
   try {
-    // Fetch all user docs (Firestore limit is 1M docs — fine for a course pilot)
+    // Fetch all user docs
     const snap = await db.collection('users').get();
     if (snap.empty) {
       wrap.innerHTML = `<div style="text-align:center;padding:2rem;color:var(--light)">אין משתמשים במערכת</div>`;
@@ -1030,93 +1030,160 @@ async function renderUserStats() {
 
     const allDocs = snap.docs.map(d => ({ _docId: d.id, ...d.data() }));
 
-    // ── Deduplicate by email ──────────────────────────────────
-    // If the same email appears in multiple docs (user was deleted & re-registered,
-    // getting a new UID each time), keep the doc with the most data (highest score).
-    const byEmail = new Map();   // email → best doc
-    const noEmail  = [];         // docs with no email field at all
+    // ── Deduplicate by email — keep richest doc ───────────────
+    const scoreDoc = d =>
+      (d.starredQuestions || []).length +
+      (d.completedExams || d.doneExams || []).length * 2 +
+      (d.inProgressExams || []).length +
+      (d.copyCount || 0) / 10 +
+      (d.acceptedTerms ? 5 : 0) +
+      (d.displayName   ? 3 : 0);
+
+    const byEmail = new Map();
+    const noEmail = [];
 
     for (const doc of allDocs) {
       const email = (doc.email || '').toLowerCase().trim();
       if (!email) {
-        // Only keep uid-only docs if they have real user data
+        // Always keep docs that have ANY real user data, OR a known UID
         const hasData = (doc.starredQuestions || []).length > 0 ||
-                        (doc.completedExams   || doc.doneExams || []).length > 0 ||
-                        doc.acceptedTerms === true || doc.displayName;
+                        (doc.completedExams || doc.doneExams || []).length > 0 ||
+                        (doc.inProgressExams || []).length > 0 ||
+                        (doc.copyCount || 0) > 0 ||
+                        doc.acceptedTerms === true ||
+                        doc.displayName ||
+                        doc.uid;
         if (hasData) noEmail.push(doc);
-        // Otherwise it's a ghost doc created by fetchUserData before email was added — skip
         continue;
       }
       if (!byEmail.has(email)) {
         byEmail.set(email, doc);
       } else {
-        // Keep the doc with more meaningful data
         const existing = byEmail.get(email);
-        const scoreDoc = d =>
-          (d.starredQuestions || []).length +
-          (d.completedExams || d.doneExams || []).length * 2 +
-          (d.acceptedTerms ? 5 : 0);
         if (scoreDoc(doc) > scoreDoc(existing)) byEmail.set(email, doc);
       }
     }
 
     const rows = [
       ...[...byEmail.values()].sort((a, b) => (a.email || '').localeCompare(b.email || '')),
-      ...noEmail,
+      ...noEmail.sort((a, b) => (a.uid || a._docId || '').localeCompare(b.uid || b._docId || '')),
     ];
 
     const ghostCount = allDocs.length - rows.length;
 
+    // ── Sort options ──────────────────────────────────────────
+    // Default: email alphabetical (already sorted above)
+    // Build table HTML
+    const tableRows = rows.map((u, idx) => {
+      const starred    = (u.starredQuestions || []).length;
+      const done       = (u.completedExams || u.doneExams || []).length;
+      const inProgress = (u.inProgressExams || []).length;
+      const copies     = u.copyCount || 0;
+      const accepted   = u.acceptedTerms === true;
+
+      // Email cell — show email if available, else UID
+      const identifier = u.email || u.uid || u._docId || '—';
+      const isUid = !u.email;
+      const emailCell = isUid
+        ? `<span style="font-family:monospace;font-size:.72rem;color:var(--muted);
+            background:#f1f5f9;padding:2px 5px;border-radius:4px;
+            border:1px solid #e2e8f0" title="אין אימייל — מוצג UID">
+            ${esc(identifier)}
+           </span>`
+        : `<span style="font-weight:500">${esc(identifier)}</span>`;
+
+      // Activity bar — visual summary
+      const totalActivity = copies + done * 3 + inProgress * 2 + starred;
+      const activityColor = totalActivity > 20 ? '#16a34a' : totalActivity > 5 ? '#d97706' : '#94a3b8';
+
+      return `<tr style="transition:background .15s" onmouseover="this.style.background='#f8fafc'" onmouseout="this.style.background=''">
+        <td style="font-size:.82rem;min-width:200px">
+          ${emailCell}
+        </td>
+        <td style="font-size:.85rem;color:var(--text)">${esc(u.displayName || '—')}</td>
+        <td style="text-align:center">
+          ${copies > 0
+            ? `<span class="badge" style="background:#eff6ff;color:#1d4ed8;border:1px solid #bfdbfe;font-weight:600">${copies}</span>`
+            : `<span style="color:var(--light);font-size:.8rem">0</span>`}
+        </td>
+        <td style="text-align:center">
+          ${done > 0
+            ? `<span class="badge b-done" style="font-weight:600">✓ ${done}</span>`
+            : `<span style="color:var(--light);font-size:.8rem">0</span>`}
+        </td>
+        <td style="text-align:center">
+          ${inProgress > 0
+            ? `<span class="badge" style="background:#fefce8;color:#854d0e;border:1px solid #fde047;font-weight:600">⏳ ${inProgress}</span>`
+            : `<span style="color:var(--light);font-size:.8rem">0</span>`}
+        </td>
+        <td style="text-align:center">
+          ${starred > 0
+            ? `<span class="badge b-orange" style="font-weight:600">⭐ ${starred}</span>`
+            : `<span style="color:var(--light);font-size:.8rem">0</span>`}
+        </td>
+        <td style="text-align:center">
+          ${accepted
+            ? `<span class="badge" style="background:#dcfce7;color:#166534;border:1px solid #86efac">✓ אישר</span>`
+            : `<span class="badge" style="background:#fef2f2;color:#991b1b;border:1px solid #fca5a5">✗ טרם</span>`}
+        </td>
+      </tr>`;
+    }).join('');
+
+    // ── Summary stats bar ─────────────────────────────────────
+    const totalCopies     = rows.reduce((s, u) => s + (u.copyCount || 0), 0);
+    const totalDone       = rows.reduce((s, u) => s + (u.completedExams || u.doneExams || []).length, 0);
+    const totalInProgress = rows.reduce((s, u) => s + (u.inProgressExams || []).length, 0);
+    const totalStarred    = rows.reduce((s, u) => s + (u.starredQuestions || []).length, 0);
+    const totalAccepted   = rows.filter(u => u.acceptedTerms === true).length;
+
     wrap.innerHTML = `
+      <!-- Summary stats -->
+      <div style="display:flex;gap:.75rem;flex-wrap:wrap;margin-bottom:1.2rem">
+        ${[
+          ['📋', 'העתקות סה"כ',    totalCopies,     '#eff6ff','#1d4ed8','#bfdbfe'],
+          ['✅', 'מבחנים שהושלמו', totalDone,        '#f0fdf4','#166534','#86efac'],
+          ['⏳', 'בתהליך סה"כ',    totalInProgress,  '#fefce8','#854d0e','#fde047'],
+          ['⭐', 'כוכביות סה"כ',   totalStarred,     '#fff7ed','#9a3412','#fdba74'],
+          ['📜', 'אישרו תנאים',    `${totalAccepted}/${rows.length}`, '#f5f3ff','#5b21b6','#c4b5fd'],
+        ].map(([icon, lbl, val, bg, fg, border]) => `
+          <div style="flex:1;min-width:110px;background:${bg};border:1px solid ${border};
+                      border-radius:10px;padding:.65rem .9rem;text-align:center">
+            <div style="font-size:1.1rem;font-weight:700;color:${fg}">${icon} ${val}</div>
+            <div style="font-size:.72rem;color:${fg};opacity:.8;margin-top:.15rem">${lbl}</div>
+          </div>`).join('')}
+      </div>
+
+      <!-- Table -->
       <div style="overflow-x:auto">
-        <table class="tbl">
+        <table class="tbl" style="min-width:680px">
           <thead>
             <tr>
-              <th>אימייל</th>
+              <th>אימייל / UID</th>
               <th>שם</th>
-              <th style="text-align:center">⭐ כוכביות</th>
-              <th style="text-align:center">✓ מבחנים שהושלמו</th>
+              <th style="text-align:center" title="מספר פעמים שלחץ על העתק">📋 העתקות</th>
+              <th style="text-align:center" title="מבחנים שסומנו כבוצע">✅ הושלמו</th>
+              <th style="text-align:center" title="מבחנים שסומנו בתהליך">⏳ בתהליך</th>
+              <th style="text-align:center" title="שאלות מסומנות בכוכבית">⭐ כוכביות</th>
               <th style="text-align:center">📜 הצהרה</th>
             </tr>
           </thead>
-          <tbody>
-            ${rows.map(u => {
-              const starred   = (u.starredQuestions || []).length;
-              const completed = (u.completedExams || u.doneExams || []).length;
-              const accepted  = u.acceptedTerms === true;
-              const emailCell = u.email
-                ? esc(u.email)
-                : `<span style="font-family:monospace;font-size:.75rem;color:var(--light)" title="אין אימייל — UID: ${esc(u.uid || u._docId)}">UID בלבד</span>`;
-              return `<tr>
-                <td style="font-size:.82rem">${emailCell}</td>
-                <td>${esc(u.displayName || '—')}</td>
-                <td style="text-align:center">
-                  ${starred > 0
-                    ? `<span class="badge b-orange">${starred}</span>`
-                    : `<span style="color:var(--light)">0</span>`}
-                </td>
-                <td style="text-align:center">
-                  ${completed > 0
-                    ? `<span class="badge b-done">✓ ${completed}</span>`
-                    : `<span style="color:var(--light)">0</span>`}
-                </td>
-                <td style="text-align:center">
-                  ${accepted
-                    ? `<span class="badge" style="background:#dcfce7;color:#166534;border:1px solid #86efac">✓ אישר</span>`
-                    : `<span class="badge" style="background:#fef2f2;color:#991b1b;border:1px solid #fca5a5">✗ לא אישר</span>`}
-                </td>
-              </tr>`;
-            }).join('')}
-          </tbody>
+          <tbody>${tableRows}</tbody>
         </table>
-        <p style="font-size:.75rem;color:var(--light);margin-top:.6rem;text-align:left">
-          ${rows.length} משתמשים ייחודיים
-          ${ghostCount > 0 ? ` · <span title="docs ישנים ממשתמשים שנמחקו ונרשמו מחדש">${ghostCount} docs כפולים/ישנים הוסתרו</span>` : ''}
-          · עודכן ${new Date().toLocaleTimeString('he-IL')}
+
+        <p style="font-size:.75rem;color:var(--light);margin-top:.6rem;display:flex;justify-content:space-between;align-items:center">
+          <span>
+            ${rows.length} משתמשים ייחודיים
+            ${ghostCount > 0 ? ` · ${ghostCount} docs כפולים/ישנים הוסתרו` : ''}
+          </span>
+          <span>עודכן ${new Date().toLocaleTimeString('he-IL')}
+            &nbsp;·&nbsp;
+            <button class="btn btn-sm btn-secondary" onclick="renderUserStats()" style="padding:.2rem .6rem;font-size:.75rem">🔄 רענן</button>
+          </span>
         </p>
       </div>`;
   } catch (e) {
     wrap.innerHTML = `<div class="form-error show">שגיאה בטעינת משתמשים: ${esc(e.message)}</div>`;
+    console.error('renderUserStats error:', e);
   }
 }
 
@@ -1140,7 +1207,14 @@ async function refreshDashboard() {
     const totalExams = examsSnap.size;
     let   totalQs    = 0;
     examsSnap.docs.forEach(d => totalQs += (d.data().questions || []).length);
-    const totalUsers = usersSnap.size;
+    // Count unique users by email — same deduplication logic as renderUserStats
+    const _uniqueEmails = new Set();
+    let _noEmailCount = 0;
+    usersSnap.docs.forEach(d => {
+      const _e = (d.data().email || "").toLowerCase().trim();
+      if (_e) _uniqueEmails.add(_e); else _noEmailCount++;
+    });
+    const totalUsers = _uniqueEmails.size + _noEmailCount;
 
     if (sg) sg.innerHTML = [
       ['📚', courses.length, 'קורסים'],
