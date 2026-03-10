@@ -17,8 +17,20 @@ const firebaseConfig = {
 /* ── Admin email whitelist ─────────────────────────────────────
    Only these emails can log in to the /admin.html panel.
    Add your admin email(s) here.                               */
-const ADMIN_EMAILS = [
+var ADMIN_EMAILS = [
   "***REMOVED***"   // ← Replace with your email
+];
+
+/* ── Pilot students whitelist ──────────────────────────────────
+   Only these emails can access the site during the pilot.
+   Admins are always allowed in regardless of this list.       */
+var PILOT_STUDENTS = [
+  "seansirota@mail.tau.ac.il",
+  "student2@example.com",
+  "student3@example.com",
+  "student4@example.com",
+  "student5@example.com",
+  // ← הוסף כאן אימיילים של סטודנטים מורשים
 ];
 
 /* ── Claude backend endpoint ───────────────────────────────────

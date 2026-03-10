@@ -202,6 +202,7 @@ function _applySectionUI(name) {
   if (name === 'courses')   renderCoursesList();
   if (name === 'add-exam')  populateAllSelects();
   if (name === 'analytics') renderAnalytics();
+  if (name === 'users')     renderUserStats();
 }
 
 // Public — called from nav clicks; pushes history entry
@@ -1008,6 +1009,115 @@ function resetForm() {
   _editingExamId  = null;        // ← FIX: clear edit context
   clearImport();
   document.getElementById('ae-error')?.classList.remove('show');
+}
+
+/* ══════════════════════════════════════════════════════════
+   USER STATS
+══════════════════════════════════════════════════════════ */
+
+async function renderUserStats() {
+  const wrap = document.getElementById('users-table-wrap');
+  if (!wrap) return;
+  wrap.innerHTML = `<div style="text-align:center;padding:2rem"><div class="spinner" style="margin:0 auto"></div></div>`;
+
+  try {
+    // Fetch all user docs (Firestore limit is 1M docs — fine for a course pilot)
+    const snap = await db.collection('users').get();
+    if (snap.empty) {
+      wrap.innerHTML = `<div style="text-align:center;padding:2rem;color:var(--light)">אין משתמשים במערכת</div>`;
+      return;
+    }
+
+    const allDocs = snap.docs.map(d => ({ _docId: d.id, ...d.data() }));
+
+    // ── Deduplicate by email ──────────────────────────────────
+    // If the same email appears in multiple docs (user was deleted & re-registered,
+    // getting a new UID each time), keep the doc with the most data (highest score).
+    const byEmail = new Map();   // email → best doc
+    const noEmail  = [];         // docs with no email field at all
+
+    for (const doc of allDocs) {
+      const email = (doc.email || '').toLowerCase().trim();
+      if (!email) {
+        // Only keep uid-only docs if they have real user data
+        const hasData = (doc.starredQuestions || []).length > 0 ||
+                        (doc.completedExams   || doc.doneExams || []).length > 0 ||
+                        doc.acceptedTerms === true || doc.displayName;
+        if (hasData) noEmail.push(doc);
+        // Otherwise it's a ghost doc created by fetchUserData before email was added — skip
+        continue;
+      }
+      if (!byEmail.has(email)) {
+        byEmail.set(email, doc);
+      } else {
+        // Keep the doc with more meaningful data
+        const existing = byEmail.get(email);
+        const scoreDoc = d =>
+          (d.starredQuestions || []).length +
+          (d.completedExams || d.doneExams || []).length * 2 +
+          (d.acceptedTerms ? 5 : 0);
+        if (scoreDoc(doc) > scoreDoc(existing)) byEmail.set(email, doc);
+      }
+    }
+
+    const rows = [
+      ...[...byEmail.values()].sort((a, b) => (a.email || '').localeCompare(b.email || '')),
+      ...noEmail,
+    ];
+
+    const ghostCount = allDocs.length - rows.length;
+
+    wrap.innerHTML = `
+      <div style="overflow-x:auto">
+        <table class="tbl">
+          <thead>
+            <tr>
+              <th>אימייל</th>
+              <th>שם</th>
+              <th style="text-align:center">⭐ כוכביות</th>
+              <th style="text-align:center">✓ מבחנים שהושלמו</th>
+              <th style="text-align:center">📜 הצהרה</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${rows.map(u => {
+              const starred   = (u.starredQuestions || []).length;
+              const completed = (u.completedExams || u.doneExams || []).length;
+              const accepted  = u.acceptedTerms === true;
+              const emailCell = u.email
+                ? esc(u.email)
+                : `<span style="font-family:monospace;font-size:.75rem;color:var(--light)" title="אין אימייל — UID: ${esc(u.uid || u._docId)}">UID בלבד</span>`;
+              return `<tr>
+                <td style="font-size:.82rem">${emailCell}</td>
+                <td>${esc(u.displayName || '—')}</td>
+                <td style="text-align:center">
+                  ${starred > 0
+                    ? `<span class="badge b-orange">${starred}</span>`
+                    : `<span style="color:var(--light)">0</span>`}
+                </td>
+                <td style="text-align:center">
+                  ${completed > 0
+                    ? `<span class="badge b-done">✓ ${completed}</span>`
+                    : `<span style="color:var(--light)">0</span>`}
+                </td>
+                <td style="text-align:center">
+                  ${accepted
+                    ? `<span class="badge" style="background:#dcfce7;color:#166534;border:1px solid #86efac">✓ אישר</span>`
+                    : `<span class="badge" style="background:#fef2f2;color:#991b1b;border:1px solid #fca5a5">✗ לא אישר</span>`}
+                </td>
+              </tr>`;
+            }).join('')}
+          </tbody>
+        </table>
+        <p style="font-size:.75rem;color:var(--light);margin-top:.6rem;text-align:left">
+          ${rows.length} משתמשים ייחודיים
+          ${ghostCount > 0 ? ` · <span title="docs ישנים ממשתמשים שנמחקו ונרשמו מחדש">${ghostCount} docs כפולים/ישנים הוסתרו</span>` : ''}
+          · עודכן ${new Date().toLocaleTimeString('he-IL')}
+        </p>
+      </div>`;
+  } catch (e) {
+    wrap.innerHTML = `<div class="form-error show">שגיאה בטעינת משתמשים: ${esc(e.message)}</div>`;
+  }
 }
 
 /* ══════════════════════════════════════════════════════════

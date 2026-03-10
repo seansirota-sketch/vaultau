@@ -48,27 +48,68 @@ let STATE = {
 /* ── BOOTSTRAP ─────────────────────────────────────────────── */
 document.addEventListener('DOMContentLoaded', () => {
   auth.onAuthStateChanged(async (user) => {
+    // If we just denied a user and called signOut, skip the null-user render
+    if (!user && STATE._blockNextAuthRender) {
+      STATE._blockNextAuthRender = false;
+      return;
+    }
     if (user) {
+      const email = (user.email || '').toLowerCase().trim();
+
+      // ── 1. Whitelist check ──────────────────────────────────
+      const isAdmin = (window.ADMIN_EMAILS   || []).some(e => e.toLowerCase() === email);
+      const isPilot = (window.PILOT_STUDENTS || []).some(e => e.toLowerCase() === email);
+
+      if (!isAdmin && !isPilot) {
+        // Sign out quietly (no await — avoids re-triggering onAuthStateChanged render loop)
+        auth.signOut();
+        document.getElementById('app').innerHTML = `
+          <div class="auth-wrap">
+            <div class="auth-card" style="text-align:center">
+              <div class="auth-logo">
+                <span class="icon">🔒</span>
+                <h1>גישה נדחתה</h1>
+              </div>
+              <p style="color:var(--danger);margin:.5rem 0 1.2rem">
+                האימייל <strong>${email}</strong> אינו ברשימת הסטודנטים המורשים לפיילוט.
+              </p>
+              <p style="font-size:.85rem;color:var(--light)">פנה למנהל הקורס להוספת הרשאה.</p>
+              <button class="btn btn-primary" style="margin-top:1.2rem;width:100%;justify-content:center"
+                onclick="renderAuth()">חזרה לכניסה</button>
+            </div>
+          </div>`;
+        // Override the upcoming onAuthStateChanged(null) so it doesn't wipe this screen
+        STATE._blockNextAuthRender = true;
+        return;
+      }
+
       STATE.fireUser = user;
-      STATE.userData = await fetchUserData(user.uid);
-      STATE.doneExams = STATE.userData?.doneExams || [];
+      STATE.userData = await fetchUserData(user.uid, user.email);
+      STATE.doneExams       = STATE.userData?.doneExams       || [];
       STATE.inProgressExams = STATE.userData?.inProgressExams || [];
+
       if (typeof gtag === 'function') {
         gtag('config', 'G-SF9W1XBZZK', { user_id: user.uid });
       }
-      renderNavbar();
 
-      // Restore page from browser history state (e.g. back/forward)
+      // ── 2. Terms check ─────────────────────────────────────
+      if (!STATE.userData?.acceptedTerms) {
+        renderTermsModal();
+        return; // block until accepted
+      }
+
+      // ── 3. Normal load ─────────────────────────────────────
+      renderNavbar();
       const hs = history.state;
       if (hs && hs.page) {
         STATE.page     = hs.page;
         STATE.courseId = hs.courseId || null;
         STATE.examId   = hs.examId   || null;
       } else {
-        // First load — stamp the initial state so Back can return here
         history.replaceState({ page: 'home', courseId: null, examId: null }, '');
       }
       renderPage();
+
     } else {
       renderAuth();
     }
@@ -195,9 +236,17 @@ function authBusy(busy) {
 }
 
 async function doLogin() {
-  const email = document.getElementById('l-email').value.trim();
+  const email = document.getElementById('l-email').value.trim().toLowerCase();
   const pass  = document.getElementById('l-pass').value;
   if (!email || !pass) return authErr('נא למלא את כל השדות');
+
+  // ── Whitelist check before even attempting Firebase signIn ──
+  const isAdmin = (window.ADMIN_EMAILS   || []).some(e => e.toLowerCase() === email);
+  const isPilot = (window.PILOT_STUDENTS || []).some(e => e.toLowerCase() === email);
+  if (!isAdmin && !isPilot) {
+    return authErr('האימייל ' + email + ' אינו ברשימת הסטודנטים המורשים לפיילוט. פנה למנהל הקורס.');
+  }
+
   authBusy(true);
   try {
     await auth.signInWithEmailAndPassword(email, pass);
@@ -216,16 +265,24 @@ async function doLogin() {
 
 async function doSignup() {
   const name  = document.getElementById('s-name').value.trim();
-  const email = document.getElementById('s-email').value.trim();
+  const email = document.getElementById('s-email').value.trim().toLowerCase();
   const pass  = document.getElementById('s-pass').value;
   if (!name || !email || !pass) return authErr('נא למלא את כל השדות');
   if (pass.length < 6) return authErr('סיסמה חייבת להכיל לפחות 6 תווים');
+
+  // ── Whitelist check before creating account ────────────────
+  const isAdmin = (window.ADMIN_EMAILS   || []).some(e => e.toLowerCase() === email);
+  const isPilot = (window.PILOT_STUDENTS || []).some(e => e.toLowerCase() === email);
+  if (!isAdmin && !isPilot) {
+    return authErr('האימייל ' + email + ' אינו ברשימת הסטודנטים המורשים לפיילוט. פנה למנהל הקורס.');
+  }
+
   authBusy(true);
   try {
     const cred = await auth.createUserWithEmailAndPassword(email, pass);
     await cred.user.updateProfile({ displayName: name });
 
-    // Create user doc in Firestore
+    // Create user doc in Firestore — only for whitelisted users
     await saveUserData(cred.user.uid, {
       uid:              cred.user.uid,
       displayName:      name,
@@ -248,7 +305,8 @@ async function doSignup() {
 async function doLogout() {
   await auth.signOut();
   STATE = { page: 'home', courseId: null, examId: null, tab: 'exams',
-            fireUser: null, userData: null, courses: null, exams: {}, examVotes: {}, doneExams: [], inProgressExams: [] };
+            fireUser: null, userData: null, courses: null, exams: {}, examVotes: {},
+            doneExams: [], inProgressExams: [], savedFilters: {} };
   renderAuth();
 }
 
@@ -312,6 +370,72 @@ async function goExam(cId, eId) {
   STATE.examId   = eId;
   history.pushState({ page: 'exam', courseId: cId, examId: eId }, '');
   await renderExam();
+}
+
+/* ══════════════════════════════════════════════════════════
+   TERMS MODAL  (pilot — shown once per user)
+══════════════════════════════════════════════════════════ */
+
+function renderTermsModal() {
+  document.getElementById('app').innerHTML = `
+    <div id="terms-overlay" style="
+      position:fixed;inset:0;background:rgba(0,0,0,.6);
+      display:flex;align-items:center;justify-content:center;
+      z-index:9999;padding:1rem">
+      <div style="
+        background:#fff;border-radius:16px;max-width:480px;width:100%;
+        padding:2rem 2rem 1.5rem;box-shadow:0 20px 60px rgba(0,0,0,.3);
+        direction:rtl;text-align:right">
+
+        <div style="text-align:center;margin-bottom:1.2rem">
+          <span style="font-size:2.2rem">📜</span>
+          <h2 style="margin:.5rem 0 .25rem;font-size:1.2rem;color:#1e293b">הצהרת סטודנט</h2>
+          <p style="font-size:.82rem;color:#64748b">יש לאשר לפני שימוש במערכת</p>
+        </div>
+
+        <div style="
+          background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;
+          padding:1rem 1.2rem;font-size:.88rem;line-height:1.7;color:#334155;
+          margin-bottom:1.4rem">
+          אני מצהיר/ה כי אני סטודנט/ית רשום/ה לקורס <strong>אלגברה לינארית 1א'</strong>,
+          ידוע לי שהתכנים מוגנים בזכויות יוצרים ואני מתחייב/ת
+          <strong>לא להפיץ או להעתיק אותם</strong>.
+        </div>
+
+        <button id="terms-accept-btn" class="btn btn-primary"
+          style="width:100%;justify-content:center;font-size:.95rem;padding:.75rem"
+          onclick="acceptTerms()">
+          אני מאשר/ת ומתחייב/ת ✓
+        </button>
+
+        <p style="text-align:center;font-size:.75rem;color:#94a3b8;margin-top:.9rem">
+          הצהרה זו נשמרת ואינה תופיע שוב
+        </p>
+      </div>
+    </div>`;
+}
+
+async function acceptTerms() {
+  const btn = document.getElementById('terms-accept-btn');
+  if (btn) { btn.disabled = true; btn.textContent = '💾 שומר...'; }
+
+  try {
+    const uid = STATE.fireUser?.uid;
+    if (!uid) throw new Error('לא מחובר');
+
+    await saveUserData(uid, { acceptedTerms: true });
+    STATE.userData = { ...STATE.userData, acceptedTerms: true };
+
+    // Continue to normal app load
+    renderNavbar();
+    history.replaceState({ page: 'home', courseId: null, examId: null }, '');
+    renderPage();
+
+  } catch (e) {
+    console.error('acceptTerms error:', e);
+    if (btn) { btn.disabled = false; btn.textContent = 'אני מאשר/ת ומתחייב/ת ✓'; }
+    alert('שגיאה בשמירת האישור: ' + e.message + '\nנסה שוב.');
+  }
 }
 
 /* ══════════════════════════════════════════════════════════
@@ -383,7 +507,7 @@ async function renderCourse() {
 
     // Use cached userData, only fetch if missing
     if (!STATE.userData) {
-      STATE.userData = await fetchUserData(STATE.fireUser.uid);
+      STATE.userData = await fetchUserData(STATE.fireUser.uid, STATE.fireUser.email);
       STATE.doneExams = STATE.userData?.doneExams || [];
       STATE.inProgressExams = STATE.userData?.inProgressExams || [];
     }
@@ -600,10 +724,19 @@ async function toggleDone(examId) {
   if (!STATE.userData) STATE.userData = {};
   STATE.userData = { ...STATE.userData, doneExams: done };
 
+  // completedExams — separate array for admin tracking (only grows, never shrinks)
+  const completed = [...(STATE.userData?.completedExams || [])];
+  if (adding && !completed.includes(examId)) completed.push(examId);
+  STATE.userData = { ...STATE.userData, completedExams: completed };
+
   applyFilters();
 
   try {
-    await saveUserData(uid, { doneExams: done, inProgressExams: STATE.inProgressExams });
+    await saveUserData(uid, {
+      doneExams:      done,
+      inProgressExams: STATE.inProgressExams,
+      completedExams:  completed,
+    });
   } catch (e) {
     console.error('Failed to save doneExams:', e);
     toast('שגיאה בשמירת הסימון', 'error');
@@ -677,7 +810,13 @@ function renderStarredTab(exams, starred) {
     const { q, qi, examTitle } = it;
     const subs   = q.subs || q.parts || [];
     const copyId = 'copy-starred-' + q.id;
-    COPY_MAP.set(copyId, q.text || '');
+    const fullStarredText = subs.length
+      ? [q.text || '', ...subs.map((s, si) => {
+          const lbl = s.label || (s.letter ? '(' + s.letter + ')' : '(' + String.fromCharCode(0x05D0 + si) + ')');
+          return lbl + ' ' + (s.text || '');
+        })].filter(Boolean).join('\n\n')
+      : (q.text || '');
+    COPY_MAP.set(copyId, fullStarredText);
 
     const partsHtml = subs.length ? `<div class="qv-parts">${subs.map((s, si) => {
       const rawLabel = s.label || (s.letter ? '(' + s.letter + ')' : '(' + String.fromCharCode(0x05D0 + si) + ')');
@@ -742,9 +881,18 @@ async function renderExam() {
     const exam = await fetchExam(STATE.examId);
     if (!exam) return goCourse(STATE.courseId);
 
+    // GA — exam view start
+    if (typeof gtag === 'function') {
+      gtag('event', 'exam_view_start', {
+        course_id: STATE.courseId,
+        exam_id:   STATE.examId,
+        exam_title: exam.title || STATE.examId,
+      });
+    }
+
     // Fetch userData only if not cached; fetch votes in parallel
     const [_, votes] = await Promise.all([
-      STATE.userData ? Promise.resolve() : fetchUserData(STATE.fireUser.uid).then(d => { STATE.userData = d; }),
+      STATE.userData ? Promise.resolve() : fetchUserData(STATE.fireUser.uid, STATE.fireUser.email).then(d => { STATE.userData = d; }),
       fetchExamVotes(exam.questions || []),
     ]);
     STATE.examVotes = votes;
@@ -812,7 +960,15 @@ function renderQuestionCard(q, qi, starred, userVotes = {}) {
   const hasSubs    = subs.length > 0;
   const qText      = q.text || '';
   const qCopyId    = 'copy-q-' + q.id;
-  COPY_MAP.set(qCopyId, qText);
+
+  // Top copy button copies the full question: stem + all sub-parts
+  const fullQText = hasSubs
+    ? [qText, ...subs.map((s, si) => {
+        const lbl = s.label || (s.letter ? '(' + s.letter + ')' : '(' + String.fromCharCode(0x05D0 + si) + ')');
+        return lbl + ' ' + (s.text || '');
+      })].filter(Boolean).join('\n\n')
+    : qText;
+  COPY_MAP.set(qCopyId, fullQText);
 
   const starSVG = (on) => `<svg width="18" height="18" viewBox="0 0 24 24"
     fill="${on ? '#f59e0b' : 'none'}" stroke="${on ? '#f59e0b' : '#9ca3af'}" stroke-width="2">
@@ -873,7 +1029,7 @@ async function toggleStar(id) {
 
   // Ensure userData is loaded
   if (!STATE.userData) {
-    STATE.userData = await fetchUserData(uid);
+    STATE.userData = await fetchUserData(uid, STATE.fireUser?.email);
   }
 
   const starred = [...(STATE.userData?.starredQuestions || [])];
@@ -1032,5 +1188,12 @@ function _doCopy(text, event) {
       setTimeout(() => tip.classList.remove('show'), 1400);
     }
     toast('✅ הועתק!', 'info');
+    // GA — copy question
+    if (typeof gtag === 'function') {
+      gtag('event', 'copy_question', {
+        course_id: STATE.courseId || '',
+        exam_id:   STATE.examId   || '',
+      });
+    }
   }).catch(() => toast('העתקה נכשלה', 'error'));
 }

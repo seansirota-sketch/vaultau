@@ -21,7 +21,6 @@
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-storage-compat.js"></script>
 
 <!-- Shared Firebase config + helpers (must load before admin.js) -->
 <script src="firebase-config.js"></script>
@@ -94,6 +93,10 @@
         <a id="nav-courses" onclick="showSection('courses')">
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
           קורסים
+        </a>
+        <a id="nav-users" onclick="showSection('users')">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+          מעקב משתמשים
         </a>
         <div class="nav-divider"></div>
           <a href="index.html">
@@ -178,19 +181,6 @@
                 onkeydown="if(event.key==='Enter'){event.preventDefault();addLecturer()}">
               <button type="button" class="btn btn-secondary btn-sm" onclick="addLecturer()">+ הוסף</button>
             </div>
-          </div>
-          <div class="form-group">
-            <label>PDF להורדה <span style="font-weight:400;color:var(--light);font-size:.8rem">(אופציונלי — טופס המבחן המקורי)</span></label>
-            <div class="pdf-download-upload-row">
-              <input type="file" id="ae-pdf-file" accept=".pdf" style="display:none"
-                onchange="onExamPdfSelected(this)">
-              <button type="button" class="btn btn-secondary btn-sm" onclick="document.getElementById('ae-pdf-file').click()">
-                📎 בחר PDF
-              </button>
-              <span id="ae-pdf-name" style="font-size:.82rem;color:var(--light);align-self:center">לא נבחר קובץ</span>
-              <button type="button" id="ae-pdf-clear" class="btn btn-sm" style="display:none;background:transparent;color:var(--danger);border:none;padding:0 .3rem" onclick="clearExamPdf()" title="הסר PDF">✕</button>
-            </div>
-            <input type="hidden" id="ae-pdf-url" value="">
           </div>
           <div id="ae-error" class="form-error"></div>
         </div>
@@ -333,6 +323,20 @@
         <div class="ac">
           <div class="ac-title">קורסים קיימים</div>
           <div id="courses-list"></div>
+        </div>
+      </div>
+
+      <!-- ── USERS ──────────────────────────────────────── -->
+      <div class="adm-section" id="sec-users">
+        <div class="sec-header">
+          <h2 class="sec-title">מעקב משתמשים</h2>
+          <button class="btn btn-secondary btn-sm" onclick="renderUserStats()">🔄 רענן</button>
+        </div>
+        <div class="ac">
+          <div class="ac-title">סטטוס סטודנטים</div>
+          <div id="users-table-wrap">
+            <div style="text-align:center;padding:2rem;color:var(--light)">לחץ על רענן לטעינת הנתונים</div>
+          </div>
         </div>
       </div>
 
