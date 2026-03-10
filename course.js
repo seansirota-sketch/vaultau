@@ -42,6 +42,7 @@ let STATE = {
   examVotes: {},     // { [questionId]: { easy, medium, hard, unsolved } }
   doneExams: [],     // Array<examId> — exams marked as done by user
   inProgressExams: [], // Array<examId> — exams marked as in-progress by user
+  savedFilters: {},    // { [courseId]: { fy, fs, fm, fl } } — persists across exam navigation
 };
 
 /* ── BOOTSTRAP ─────────────────────────────────────────────── */
@@ -77,9 +78,9 @@ document.addEventListener('DOMContentLoaded', () => {
   window.addEventListener('popstate', async (e) => {
     if (!STATE.fireUser) return;
     const hs = e.state || { page: 'home', courseId: null, examId: null };
-    STATE.page     = hs.page     || 'home';
-    STATE.courseId = hs.courseId || null;
-    STATE.examId   = hs.examId   || null;
+    STATE.page          = hs.page     || 'home';
+    STATE.courseId      = hs.courseId || null;
+    STATE.examId        = hs.examId   || null;
     renderNavbar();
     renderPage();
   });
@@ -299,6 +300,13 @@ async function goCourse(id) {
 }
 
 async function goExam(cId, eId) {
+  // Snapshot current filter values into STATE before navigating away
+  STATE.savedFilters[cId] = {
+    fy: document.getElementById('f-y')?.value || '',
+    fs: document.getElementById('f-s')?.value || '',
+    fm: document.getElementById('f-m')?.value || '',
+    fl: document.getElementById('f-l')?.value || '',
+  };
   STATE.page     = 'exam';
   STATE.courseId = cId;
   STATE.examId   = eId;
@@ -369,9 +377,8 @@ async function renderCourse() {
     if (!course) return goHome();
 
     // Fetch exams (with cache)
-    if (!STATE.exams[STATE.courseId]) {
-      STATE.exams[STATE.courseId] = await fetchExamsForCourse(STATE.courseId);
-    }
+    // Always re-fetch exams so pdfUrl and other updates are reflected immediately
+    STATE.exams[STATE.courseId] = await fetchExamsForCourse(STATE.courseId);
     const exams = STATE.exams[STATE.courseId];
 
     // Use cached userData, only fetch if missing
@@ -463,6 +470,14 @@ function renderExamsTab(course, exams, years, sems, moeds, lecturers) {
     </div>
     <div class="exam-list" id="exam-list"></div>`;
 
+  // Restore saved filter values for this course (persisted across exam navigation)
+  const saved = STATE.savedFilters[STATE.courseId];
+  if (saved) {
+    const fy = document.getElementById('f-y'); if (fy) fy.value = saved.fy || '';
+    const fs = document.getElementById('f-s'); if (fs) fs.value = saved.fs || '';
+    const fm = document.getElementById('f-m'); if (fm) fm.value = saved.fm || '';
+    const fl = document.getElementById('f-l'); if (fl) fl.value = saved.fl || '';
+  }
   applyFilters();
 }
 
@@ -473,6 +488,11 @@ function applyFilters() {
   const fm = document.getElementById('f-m')?.value || '';
   const fl = document.getElementById('f-l')?.value || '';
 
+  // Persist current filter values so they survive exam navigation
+  if (STATE.courseId) {
+    STATE.savedFilters[STATE.courseId] = { fy, fs, fm, fl };
+  }
+
   let filtered = exams;
   if (fy) filtered = filtered.filter(e => String(e.year) === fy);
   if (fs) filtered = filtered.filter(e => e.semester === fs);
@@ -480,6 +500,17 @@ function applyFilters() {
   if (fl) filtered = filtered.filter(e => {
     const lecs = Array.isArray(e.lecturers) ? e.lecturers : (e.lecturer ? [e.lecturer] : []);
     return lecs.includes(fl);
+  });
+
+  // Sort: numeric prefix first (desc), then lexicographic suffix (asc)
+  // e.g. 2025BB > 2025BA > 2025AB > 2025AA, and 2025 > 2024
+  filtered = [...filtered].sort((a, b) => {
+    const ta = (a.title || a.id || '').toUpperCase();
+    const tb = (b.title || b.id || '').toUpperCase();
+    const numA = parseInt(ta) || 0;
+    const numB = parseInt(tb) || 0;
+    if (numB !== numA) return numB - numA;          // higher year first
+    return ta.localeCompare(tb, undefined, { numeric: false }); // suffix A-Z
   });
 
   const el = document.getElementById('exam-list');
@@ -510,6 +541,12 @@ function applyFilters() {
           ${isDone ? '<span class="badge b-done">✓ בוצע</span>' : isInProgress ? '<span class="badge b-inprogress">⏳ בתהליך</span>' : ''}
         </div>
       </div>
+      ${e.pdfUrl ? `<a class="pdf-download-btn" href="${e.pdfUrl}" target="_blank" rel="noopener"
+        onclick="event.stopPropagation()" title="הורד טופס מבחן">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M12 3v13M5 16l7 7 7-7"/><line x1="3" y1="22" x2="21" y2="22"/>
+        </svg>
+      </a>` : ''}
       <button class="inprogress-toggle-btn ${isInProgress ? 'inprogress-active' : ''}"
         onclick="event.stopPropagation(); toggleInProgress('${e.id}')"
         title="${isInProgress ? 'בטל בתהליך' : 'סמן כבתהליך'}">
@@ -530,6 +567,7 @@ function resetFilters() {
     const el = document.getElementById(id);
     if (el) el.value = '';
   });
+  if (STATE.courseId) delete STATE.savedFilters[STATE.courseId];
   applyFilters();
 }
 

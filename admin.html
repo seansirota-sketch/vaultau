@@ -21,6 +21,7 @@
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-storage-compat.js"></script>
 
 <!-- Shared Firebase config + helpers (must load before admin.js) -->
 <script src="firebase-config.js"></script>
@@ -177,6 +178,19 @@
                 onkeydown="if(event.key==='Enter'){event.preventDefault();addLecturer()}">
               <button type="button" class="btn btn-secondary btn-sm" onclick="addLecturer()">+ הוסף</button>
             </div>
+          </div>
+          <div class="form-group">
+            <label>PDF להורדה <span style="font-weight:400;color:var(--light);font-size:.8rem">(אופציונלי — טופס המבחן המקורי)</span></label>
+            <div class="pdf-download-upload-row">
+              <input type="file" id="ae-pdf-file" accept=".pdf" style="display:none"
+                onchange="onExamPdfSelected(this)">
+              <button type="button" class="btn btn-secondary btn-sm" onclick="document.getElementById('ae-pdf-file').click()">
+                📎 בחר PDF
+              </button>
+              <span id="ae-pdf-name" style="font-size:.82rem;color:var(--light);align-self:center">לא נבחר קובץ</span>
+              <button type="button" id="ae-pdf-clear" class="btn btn-sm" style="display:none;background:transparent;color:var(--danger);border:none;padding:0 .3rem" onclick="clearExamPdf()" title="הסר PDF">✕</button>
+            </div>
+            <input type="hidden" id="ae-pdf-url" value="">
           </div>
           <div id="ae-error" class="form-error"></div>
         </div>
