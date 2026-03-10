@@ -643,6 +643,74 @@ async function handleFileInput(file) {
 /* ── Live text parser ─────────────────────────────────────── */
 let parsedQuestions = [];
 let _editingExamId  = null;  // tracks the exam being edited (for safe update, not delete-first)
+let _examPdfFile    = null;  // File object selected for PDF download upload
+
+function onExamPdfSelected(input) {
+  const file = input.files[0];
+  if (!file) return;
+  _examPdfFile = file;
+  document.getElementById('ae-pdf-name').textContent = file.name;
+  document.getElementById('ae-pdf-clear').style.display = '';
+}
+
+function clearExamPdf() {
+  _examPdfFile = null;
+  document.getElementById('ae-pdf-file').value = '';
+  document.getElementById('ae-pdf-name').textContent = 'לא נבחר קובץ';
+  document.getElementById('ae-pdf-clear').style.display = 'none';
+  document.getElementById('ae-pdf-url').value = '';
+}
+
+async function uploadExamPdf(examId) {
+  if (!_examPdfFile) return null;
+
+  // Use the shared storage instance from firebase-config.js
+  const stor = typeof storage !== 'undefined' && storage
+    ? storage
+    : firebase.storage();
+
+  if (!stor) throw new Error('Firebase Storage לא זמין — וודא שה-SDK נטען');
+
+  const ref = stor.ref(`exam-pdfs/${examId}.pdf`);
+
+  return await new Promise((resolve, reject) => {
+    const uploadTask = ref.put(_examPdfFile);
+
+    // Timeout — reject after 60 seconds
+    const timeout = setTimeout(() => {
+      uploadTask.cancel();
+      reject(new Error('העלאה נכשלה: חרגה מ-60 שניות (בדוק חיבור אינטרנט והרשאות Storage)'));
+    }, 60000);
+
+    uploadTask.on('state_changed',
+      (snapshot) => {
+        const pct = Math.round((snapshot.bytesTransferred / snapshot.totalBytes) * 100);
+        showSpinner(`📤 מעלה PDF... ${pct}%`);
+      },
+      (error) => {
+        clearTimeout(timeout);
+        // Give a human-readable error based on Firebase error codes
+        const messages = {
+          'storage/unauthorized':     'אין הרשאה להעלות — בדוק Firebase Storage Rules',
+          'storage/canceled':         'ההעלאה בוטלה',
+          'storage/unknown':          'שגיאת רשת לא ידועה',
+          'storage/quota-exceeded':   'חרגת ממכסת האחסון',
+          'storage/unauthenticated':  'לא מחובר — יש להתחבר מחדש',
+        };
+        reject(new Error(messages[error.code] || `שגיאת Storage: ${error.code} — ${error.message}`));
+      },
+      async () => {
+        clearTimeout(timeout);
+        try {
+          const url = await uploadTask.snapshot.ref.getDownloadURL();
+          resolve(url);
+        } catch (e) {
+          reject(new Error('ההעלאה הצליחה אך לא ניתן לקבל URL: ' + e.message));
+        }
+      }
+    );
+  });
+}
 
 async function runParser() {
   const raw = document.getElementById('raw-text')?.value || '';
@@ -868,6 +936,26 @@ async function submitAddExam() {
 
     // ── Build exam object ───────────────────────────────────────────
     const examId = _editingExamId || genId();   // reuse ID when editing, new ID for new exam
+
+    // ── Upload PDF to Storage if one was selected ────────────────
+    let pdfUrl = document.getElementById('ae-pdf-url')?.value || null;
+    if (_examPdfFile) {
+      showSpinner('📤 מעלה PDF...');
+      try {
+        pdfUrl = await uploadExamPdf(examId);
+        toast('✅ PDF הועלה בהצלחה', 'success');
+      } catch (pdfErr) {
+        console.error('PDF upload failed:', pdfErr);
+        const goAhead = confirm(`העלאת ה-PDF נכשלה:\n${pdfErr.message}\n\nהאם לשמור את המבחן ללא PDF?`);
+        if (!goAhead) {
+          if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = '💾 שמור מבחן'; }
+          hideSpinner();
+          return;
+        }
+        pdfUrl = null;
+      }
+    }
+
     const exam   = {
       id:        examId,
       courseId,
@@ -876,6 +964,7 @@ async function submitAddExam() {
       semester:  sem  || null,
       moed:      moed || null,
       lecturers: lecturers.length ? lecturers : null,
+      pdfUrl:    pdfUrl || null,
       questions: questions.map(q => ({
         id:      q.id || genId(),
         text:    q.text,
@@ -914,6 +1003,7 @@ function resetForm() {
   ['ae-course','ae-sem','ae-moed'].forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
   ['ae-title','ae-year'].forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
   _clearLecturers();
+  clearExamPdf();
   parsedQuestions = [];          // ← FIX: clear carry-over questions from previous exam
   _editingExamId  = null;        // ← FIX: clear edit context
   clearImport();
@@ -1070,6 +1160,18 @@ async function editExam(courseId, examId) {
     document.getElementById('ae-sem').value      = exam.semester  || '';
     document.getElementById('ae-moed').value     = exam.moed      || '';
     _setLecturers(exam.lecturers || exam.lecturer || []);
+
+    // Load existing PDF URL if present
+    const pdfUrlEl = document.getElementById('ae-pdf-url');
+    const pdfNameEl = document.getElementById('ae-pdf-name');
+    const pdfClearEl = document.getElementById('ae-pdf-clear');
+    if (exam.pdfUrl) {
+      if (pdfUrlEl)   pdfUrlEl.value = exam.pdfUrl;
+      if (pdfNameEl)  pdfNameEl.textContent = 'PDF קיים (ניתן להחליף)';
+      if (pdfClearEl) pdfClearEl.style.display = '';
+    } else {
+      clearExamPdf();
+    }
 
     // ── FIX: deep-copy questions so edits don't mutate cached data ──
     parsedQuestions = (exam.questions || []).map(q => ({

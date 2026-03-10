@@ -33,8 +33,9 @@ if (!firebase.apps.length) {
   firebase.initializeApp(firebaseConfig);
 }
 
-const db   = firebase.firestore();
-const auth = firebase.auth();
+const db      = firebase.firestore();
+const auth    = firebase.auth();
+const storage = typeof firebase.storage === 'function' ? firebase.storage() : null;
 
 /* ── Firestore helpers (shared) ─────────────────────────────── */
 

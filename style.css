@@ -960,6 +960,25 @@ mjx-container { direction: ltr; }
   border-color: #ea580c; background: #ea580c; color: #fff; font-weight: 700;
 }
 
+/* ── PDF DOWNLOAD BUTTON (exam list) ────────────────────────── */
+.pdf-download-btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 30px; height: 30px; border-radius: 50%;
+  border: 2px solid #d1d5db; background: transparent;
+  color: #9ca3af; cursor: pointer;
+  transition: all .18s; flex-shrink: 0; margin-left: .5rem;
+  text-decoration: none;
+}
+.pdf-download-btn:hover { border-color: #1d4ed8; color: #1d4ed8; }
+
+/* ── PDF DOWNLOAD UPLOAD ROW (admin) ────────────────────────── */
+.pdf-download-upload-row {
+  display: flex; align-items: center; gap: .5rem; flex-wrap: wrap;
+  padding: .4rem .55rem;
+  background: var(--card2); border: 1px solid var(--border);
+  border-radius: var(--r);
+}
+
 /* ── AVG DIFFICULTY BADGE ───────────────────────────────────── */
 .diff-avg-badge {
   display: inline-flex; align-items: center; gap: .2rem;
