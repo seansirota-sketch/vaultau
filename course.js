@@ -1195,5 +1195,13 @@ function _doCopy(text, event) {
         exam_id:   STATE.examId   || '',
       });
     }
+    // Firestore — increment copy counter for this user
+    const uid = STATE.fireUser?.uid;
+    if (uid) {
+      db.collection('users').doc(uid).set(
+        { copyCount: firebase.firestore.FieldValue.increment(1) },
+        { merge: true }
+      ).catch(e => console.warn('copyCount increment failed:', e));
+    }
   }).catch(() => toast('העתקה נכשלה', 'error'));
 }
