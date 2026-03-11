@@ -98,6 +98,14 @@
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
           מעקב משתמשים
         </a>
+        <a id="nav-survey" onclick="showSection('survey')">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
+          ניהול סקר
+        </a>
+        <a id="nav-permissions" onclick="showSection('permissions')">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+          ניהול הרשאות
+        </a>
         <div class="nav-divider"></div>
           <a href="index.html">
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
@@ -336,6 +344,124 @@
           <div class="ac-title">סטטוס סטודנטים</div>
           <div id="users-table-wrap">
             <div style="text-align:center;padding:2rem;color:var(--light)">לחץ על רענן לטעינת הנתונים</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── SURVEY MANAGER ─────────────────────────────────── -->
+      <div class="adm-section" id="sec-survey">
+        <div class="sec-header">
+          <h2 class="sec-title">ניהול סקר</h2>
+          <button class="btn btn-secondary btn-sm" onclick="renderSurveyManager()">🔄 רענן</button>
+        </div>
+
+        <!-- Current status card -->
+        <div class="ac" id="survey-status-card">
+          <div class="ac-title">סטטוס נוכחי</div>
+          <div id="survey-status-body" style="padding:1.25rem">
+            <div class="spinner" style="margin:0 auto"></div>
+          </div>
+        </div>
+
+        <!-- Control panel -->
+        <div class="ac">
+          <div class="ac-title">הגדרות סקר</div>
+          <div style="padding:1.25rem;display:flex;flex-direction:column;gap:1rem">
+
+            <div class="form-group" style="margin:0">
+              <label style="font-weight:600">קישור ל-Google Form</label>
+              <input id="survey-url-input" type="url" dir="ltr"
+                placeholder="https://docs.google.com/forms/d/e/.../viewform?embedded=true"
+                style="font-size:.85rem">
+              <p style="font-size:.76rem;color:var(--muted);margin:.35rem 0 0">
+                השתמש בקישור ה-<strong>Embed</strong> מ-Google Forms (שיתוף → הטמעה → העתק URL)
+              </p>
+            </div>
+
+            <div style="display:flex;gap:.75rem;flex-wrap:wrap">
+              <button class="btn btn-primary" onclick="activateSurvey()">
+                ✅ הפעל סקר לכולם
+              </button>
+              <button class="btn btn-danger" onclick="deactivateSurvey()">
+                ⛔ כבה סקר
+              </button>
+              <button class="btn btn-secondary" onclick="resetSurveyResponses()">
+                🔄 אפס תשובות (הצג שוב לכולם)
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Response stats -->
+        <div class="ac">
+          <div class="ac-title">מי מילא את הסקר</div>
+          <div id="survey-responses-body" style="padding:1.25rem">
+            <span style="color:var(--muted);font-size:.85rem">לחץ על רענן לטעינה</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── PERMISSIONS MANAGER ───────────────────────────────── -->
+      <div class="adm-section" id="sec-permissions">
+        <div class="sec-header">
+          <h2 class="sec-title">ניהול הרשאות גישה</h2>
+          <button class="btn btn-secondary btn-sm" onclick="renderPermissionsSection()">🔄 רענן</button>
+        </div>
+
+        <!-- Add emails panel -->
+        <div class="ac">
+          <div class="ac-title">הוספת מיילים מורשים</div>
+          <div style="padding:1.25rem;display:flex;flex-direction:column;gap:1rem">
+            <div class="form-group" style="margin:0">
+              <label style="font-weight:600">הדבק רשימת מיילים</label>
+              <textarea id="permissions-textarea"
+                rows="8"
+                dir="ltr"
+                placeholder="student1@mail.tau.ac.il&#10;student2@mail.tau.ac.il&#10;student3@mail.tau.ac.il"
+                style="font-family:monospace;font-size:.85rem;resize:vertical;width:100%;
+                       border:1.5px solid var(--border);border-radius:8px;padding:.75rem;
+                       box-sizing:border-box;line-height:1.6;color:var(--text)"></textarea>
+              <p style="font-size:.76rem;color:var(--muted);margin:.35rem 0 0">
+                מייל אחד בכל שורה (או מופרדים בפסיק / נקודה-פסיק). כפילויות ינוקו אוטומטית.
+              </p>
+            </div>
+            <div style="display:flex;justify-content:flex-end">
+              <button id="add-emails-btn" class="btn btn-primary" onclick="addAuthorizedEmails()">
+                🔓 הוסף מיילים למערכת
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Current authorized users -->
+        <div class="ac">
+          <div class="ac-title" style="justify-content:space-between">
+            <span>מיילים מורשים כעת</span>
+            <span id="permissions-count" style="font-size:.8rem;color:var(--muted);font-weight:400"></span>
+          </div>
+          <div id="permissions-list-wrap" style="padding:1.25rem">
+            <div style="text-align:center;padding:1.5rem;color:var(--light)">לחץ על רענן לטעינת הרשימה</div>
+          </div>
+        </div>
+
+        <!-- Firestore rules reminder -->
+        <div class="ac" style="border-color:#fbbf24;background:#fffbeb">
+          <div class="ac-title" style="color:#92400e">⚠️ הגדרת Firebase Security Rules</div>
+          <div style="padding:1rem 1.25rem;font-size:.82rem;color:#78350f;line-height:1.7">
+            <p style="margin:0 0 .5rem">יש להוסיף לכללי Firestore את ההרשאות הבאות:</p>
+            <pre dir="ltr" style="background:#fef3c7;border-radius:6px;padding:.75rem;font-size:.78rem;overflow-x:auto;margin:0">match /authorized_users/{email} {
+  // כל משתמש מחובר יכול לקרוא את הרשומה שלו עצמו
+  allow read: if request.auth != null
+              &amp;&amp; request.auth.token.email == email;
+  // כתיבה — מנהל בלבד (מוגדר ב-Custom Claims)
+  // בשלב זה: הגן ע"י Netlify function או Admin SDK בלבד
+  allow write: if false; // נאכף ע"י Netlify proxy
+}</pre>
+            <p style="margin:.5rem 0 0;color:#92400e">
+              <strong>לזמן הפיילוט</strong>: ניתן להגדיר
+              <code>allow read, write: if request.auth != null &amp;&amp; request.auth.token.email in ["sean.sirota.2002.09@gmail.com"];</code>
+              עד להגדרת Custom Claims.
+            </p>
           </div>
         </div>
       </div>

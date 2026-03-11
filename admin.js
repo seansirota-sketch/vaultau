@@ -197,12 +197,14 @@ function _applySectionUI(name) {
   if (sec) sec.classList.add('active');
   const nav = document.getElementById('nav-' + name);
   if (nav) nav.classList.add('active');
-  if (name === 'manage')    renderManageTable();
-  if (name === 'dashboard') refreshDashboard();
-  if (name === 'courses')   renderCoursesList();
-  if (name === 'add-exam')  populateAllSelects();
-  if (name === 'analytics') renderAnalytics();
-  if (name === 'users')     renderUserStats();
+  if (name === 'manage')      renderManageTable();
+  if (name === 'dashboard')   refreshDashboard();
+  if (name === 'courses')     renderCoursesList();
+  if (name === 'add-exam')    populateAllSelects();
+  if (name === 'analytics')   renderAnalytics();
+  if (name === 'users')       renderUserStats();
+  if (name === 'survey')      renderSurveyManager();
+  if (name === 'permissions') renderPermissionsSection();
 }
 
 // Public — called from nav clicks; pushes history entry
@@ -1756,5 +1758,340 @@ async function showHardQuestionsReport() {
   } catch(e) {
     bodyEl.innerHTML = `<p style="color:var(--danger)">${e.message}</p>`;
     console.error(e);
+  }
+}
+
+
+/* ══════════════════════════════════════════════════════════
+   SURVEY MANAGER  (admin)
+══════════════════════════════════════════════════════════ */
+
+async function renderSurveyManager() {
+  const statusEl = document.getElementById('survey-status-body');
+  const respEl   = document.getElementById('survey-responses-body');
+  if (statusEl) statusEl.innerHTML = '<div class="spinner" style="margin:0 auto"></div>';
+  if (respEl)   respEl.innerHTML   = '<div class="spinner" style="margin:0 auto"></div>';
+
+  // ── Part 1: settings/global (independent try/catch) ──────────
+  try {
+    const doc      = await db.collection('settings').doc('global').get();
+    const settings = doc.exists ? doc.data() : {};
+    const isActive = settings.isSurveyActive === true;
+    const url      = settings.surveyUrl || '';
+
+    const urlInput = document.getElementById('survey-url-input');
+    if (urlInput && url) urlInput.value = url;
+
+    if (statusEl) {
+      statusEl.innerHTML = `
+        <div style="display:flex;align-items:center;gap:1rem;flex-wrap:wrap">
+          <div style="
+            display:inline-flex;align-items:center;gap:.5rem;
+            padding:.5rem 1rem;border-radius:99px;font-weight:600;font-size:.9rem;
+            ${isActive
+              ? 'background:#dcfce7;color:#166534;border:1.5px solid #86efac'
+              : 'background:#f1f5f9;color:#64748b;border:1.5px solid #cbd5e1'}">
+            <span style="font-size:1rem">${isActive ? '🟢' : '⚫'}</span>
+            ${isActive ? 'סקר פעיל' : 'סקר כבוי'}
+          </div>
+          ${url
+            ? `<a href="${esc(url)}" target="_blank" rel="noopener"
+                style="font-size:.8rem;color:var(--blue);text-decoration:underline;word-break:break-all">
+                ${esc(url.length > 60 ? url.slice(0,60)+'…' : url)}
+               </a>`
+            : '<span style="color:var(--muted);font-size:.85rem">אין לינק מוגדר</span>'}
+        </div>`;
+    }
+  } catch(e) {
+    console.error('renderSurveyManager — settings error:', e);
+    if (statusEl) {
+      const isPerms = e.code === 'permission-denied';
+      statusEl.innerHTML = isPerms
+        ? `<div class="form-error show" style="margin:0">
+            <strong>שגיאת הרשאות Firestore</strong><br>
+            יש להוסיף חוקים ל-<code>settings</code> ב-Firebase Console —
+            ראה הוראות למטה.
+           </div>`
+        : `<p style="color:var(--danger);margin:0">${esc(e.message)}</p>`;
+    }
+  }
+
+  // ── Part 2: user responses (independent try/catch) ────────────
+  try {
+    const usersSnap = await db.collection('users').get();
+    const allDocs   = usersSnap.docs.map(d => ({ _docId: d.id, ...d.data() }));
+
+    // Deduplicate by email — same logic as renderUserStats.
+    // If a user deleted their account and re-registered they get a new UID
+    // and a new Firestore doc. Keep only the doc with the most data.
+    const scoreDoc = d =>
+      (d.acceptedTerms ? 5 : 0) +
+      (d.displayName   ? 3 : 0) +
+      (d.surveyDone    ? 2 : 0) +
+      (d.copyCount || 0) / 10;
+
+    const byEmail = new Map();
+    const noEmail = [];
+    for (const doc of allDocs) {
+      const email = (doc.email || '').toLowerCase().trim();
+      if (!email) {
+        // Only keep docs that have at least a uid (real user, not a ghost)
+        if (doc.uid || doc.displayName || doc.acceptedTerms) noEmail.push(doc);
+        continue;
+      }
+      if (!byEmail.has(email)) {
+        byEmail.set(email, doc);
+      } else {
+        if (scoreDoc(doc) > scoreDoc(byEmail.get(email))) byEmail.set(email, doc);
+      }
+    }
+    const allUsers = [
+      ...[...byEmail.values()].sort((a,b) => (a.email||'').localeCompare(b.email||'')),
+      ...noEmail,
+    ];
+
+    const done    = allUsers.filter(u => u.surveyDone === true);
+    const notDone = allUsers.filter(u => u.surveyDone !== true);
+
+    const row = (u, filled) => `<tr${filled ? '' : ' style="opacity:.65"'}>
+      <td style="font-size:.82rem">${esc(u.email || u.uid || '—')}</td>
+      <td>${esc(u.displayName || '—')}</td>
+      <td style="text-align:center">
+        ${filled
+          ? '<span class="badge" style="background:#dcfce7;color:#166534;border:1px solid #86efac">✓ מילא</span>'
+          : '<span class="badge" style="background:#fef2f2;color:#991b1b;border:1px solid #fca5a5">✗ טרם</span>'}
+      </td>
+    </tr>`;
+
+    if (respEl) {
+      respEl.innerHTML = `
+        <p style="font-size:.85rem;color:var(--muted);margin:0 0 .8rem">
+          ${done.length} מתוך ${allUsers.length} משתמשים מילאו את הסקר
+        </p>
+        <table class="tbl">
+          <thead><tr><th>אימייל</th><th>שם</th><th style="text-align:center">סטטוס</th></tr></thead>
+          <tbody>
+            ${done.map(u => row(u, true)).join('')}
+            ${notDone.map(u => row(u, false)).join('')}
+          </tbody>
+        </table>`;
+    }
+  } catch(e) {
+    console.error('renderSurveyManager — users error:', e);
+    if (respEl) respEl.innerHTML = `<p style="color:var(--danger);margin:0">${esc(e.message)}</p>`;
+  }
+}
+
+async function activateSurvey() {
+  const url = document.getElementById('survey-url-input')?.value.trim();
+  if (!url) {
+    toast('נא להזין קישור ל-Google Form לפני ההפעלה', 'error');
+    document.getElementById('survey-url-input')?.focus();
+    return;
+  }
+  if (!url.startsWith('http')) {
+    toast('קישור לא תקין — חייב להתחיל ב-https://', 'error');
+    return;
+  }
+  try {
+    await db.collection('settings').doc('global').set(
+      { surveyUrl: url, isSurveyActive: true },
+      { merge: true }
+    );
+    toast('✅ הסקר הופעל לכל המשתמשים', 'success');
+    renderSurveyManager();
+  } catch(e) {
+    toast('שגיאה: ' + e.message, 'error');
+  }
+}
+
+async function deactivateSurvey() {
+  try {
+    await db.collection('settings').doc('global').set(
+      { isSurveyActive: false },
+      { merge: true }
+    );
+    toast('⛔ הסקר כובה', 'info');
+    renderSurveyManager();
+  } catch(e) {
+    toast('שגיאה: ' + e.message, 'error');
+  }
+}
+
+async function resetSurveyResponses() {
+  if (!confirm('איפוס יגרום לכל הסטודנטים לראות את הסקר שוב. להמשיך?')) return;
+  try {
+    const snap  = await db.collection('users').get();
+    const batch = db.batch();
+    snap.docs.forEach(d => {
+      batch.update(d.ref, { surveyDone: firebase.firestore.FieldValue.delete() });
+    });
+    await batch.commit();
+    toast('🔄 תשובות אופסו — הסקר יוצג לכולם מחדש', 'info');
+    renderSurveyManager();
+  } catch(e) {
+    toast('שגיאה באיפוס: ' + e.message, 'error');
+  }
+}
+
+
+/* ══════════════════════════════════════════════════════════
+   PERMISSIONS MANAGER  (admin)
+   Manages the `authorized_users` Firestore collection.
+   Each document ID = normalized email, with field active:true.
+══════════════════════════════════════════════════════════ */
+
+/**
+ * Render the full list of authorized emails from Firestore.
+ */
+async function renderPermissionsSection() {
+  const listEl  = document.getElementById('permissions-list-wrap');
+  const countEl = document.getElementById('permissions-count');
+  if (listEl) listEl.innerHTML = '<div class="spinner" style="margin:1.5rem auto"></div>';
+
+  // Guard — only admins may reach this section, but double-check
+  if (!adminUser || !ADMIN_EMAILS.includes(adminUser.email)) {
+    if (listEl) listEl.innerHTML = '<p style="color:var(--danger)">גישה נדחתה — מנהלים בלבד</p>';
+    return;
+  }
+
+  try {
+    const snap   = await db.collection('authorized_users').get();
+    const emails = snap.docs
+      .filter(d => d.data().active !== false)   // include active:true + missing field
+      .map(d => d.id)
+      .sort((a, b) => a.localeCompare(b));
+
+    if (countEl) countEl.textContent = emails.length + ' מיילים מורשים';
+
+    if (!listEl) return;
+
+    if (!emails.length) {
+      listEl.innerHTML = `
+        <div class="empty" style="padding:2rem">
+          <span class="ei">📭</span>
+          <h3>אין מיילים מורשים עדיין</h3>
+          <p>הוסף מיילים בעזרת הטופס למעלה</p>
+        </div>`;
+      return;
+    }
+
+    const rows = emails.map(email => `
+      <tr>
+        <td style="font-size:.85rem;font-family:monospace;direction:ltr;text-align:left">${esc(email)}</td>
+        <td style="text-align:center">
+          <span class="badge" style="background:#dcfce7;color:#166534;border:1px solid #86efac">✓ פעיל</span>
+        </td>
+        <td style="text-align:left;padding-left:.5rem">
+          <button class="btn btn-danger btn-sm"
+            onclick="deleteAuthorizedEmail('${esc(email)}')">מחק</button>
+        </td>
+      </tr>`).join('');
+
+    listEl.innerHTML = `
+      <table class="tbl">
+        <thead>
+          <tr>
+            <th style="direction:ltr;text-align:left">אימייל</th>
+            <th style="text-align:center">סטטוס</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>${rows}</tbody>
+      </table>`;
+
+  } catch (e) {
+    console.error('renderPermissionsSection error:', e);
+    if (listEl) listEl.innerHTML = `<p style="color:var(--danger);padding:1rem">${esc(e.message)}</p>`;
+  }
+}
+
+/**
+ * Parse the textarea, deduplicate, normalize, and batch-write to Firestore.
+ * Only emails containing '@' are accepted.
+ */
+async function addAuthorizedEmails() {
+  // Admin guard
+  if (!adminUser || !ADMIN_EMAILS.includes(adminUser.email)) {
+    toast('גישה נדחתה — מנהלים בלבד', 'error');
+    return;
+  }
+
+  const textarea = document.getElementById('permissions-textarea');
+  if (!textarea) return;
+
+  const raw = textarea.value;
+
+  // Split on newlines, commas, or semicolons
+  const candidates = raw
+    .split(/[\n\r,;]+/)
+    .map(s => s.trim().toLowerCase())
+    .filter(s => s.includes('@') && s.length > 4);
+
+  // Deduplicate
+  const unique = [...new Set(candidates)];
+
+  if (!unique.length) {
+    toast('לא נמצאו כתובות מייל תקינות', 'error');
+    return;
+  }
+
+  const btn = document.getElementById('add-emails-btn');
+  if (btn) { btn.disabled = true; btn.textContent = '💾 שומר...'; }
+
+  try {
+    // Firestore batch — max 500 writes per batch; split if needed
+    const CHUNK = 400;
+    for (let i = 0; i < unique.length; i += CHUNK) {
+      const batch = db.batch();
+      unique.slice(i, i + CHUNK).forEach(email => {
+        const ref = db.collection('authorized_users').doc(email);
+        batch.set(ref, {
+          active:   true,
+          addedBy:  adminUser.email,
+          addedAt:  firebase.firestore.FieldValue.serverTimestamp(),
+        }, { merge: true });
+      });
+      await batch.commit();
+    }
+
+    toast(`✅ ${unique.length} מיילים נוספו בהצלחה`, 'success');
+    textarea.value = '';
+    await renderPermissionsSection();
+
+  } catch (e) {
+    console.error('addAuthorizedEmails error:', e);
+    toast('שגיאה בשמירה: ' + e.message, 'error');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = '🔓 הוסף מיילים למערכת'; }
+  }
+}
+
+/**
+ * Remove a single email from authorized_users.
+ * Sets active:false instead of hard-delete so audit trail is preserved.
+ * (The document stays in Firestore with active:false — isUserAuthorized will reject it.)
+ */
+async function deleteAuthorizedEmail(email) {
+  // Admin guard
+  if (!adminUser || !ADMIN_EMAILS.includes(adminUser.email)) {
+    toast('גישה נדחתה — מנהלים בלבד', 'error');
+    return;
+  }
+
+  if (!confirm(`האם למחוק את הרשאת הגישה של:\n${email}?`)) return;
+
+  try {
+    // Soft-delete: mark inactive so the doc can be re-activated later
+    await db.collection('authorized_users').doc(email).set(
+      { active: false, revokedBy: adminUser.email,
+        revokedAt: firebase.firestore.FieldValue.serverTimestamp() },
+      { merge: true }
+    );
+    toast(`🗑️ ${email} הוסר מרשימת ההרשאות`, 'info');
+    await renderPermissionsSection();
+  } catch (e) {
+    console.error('deleteAuthorizedEmail error:', e);
+    toast('שגיאה במחיקה: ' + e.message, 'error');
   }
 }
