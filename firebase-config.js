@@ -17,11 +17,7 @@ var ADMIN_EMAILS = [
 ];
 
 var PILOT_STUDENTS = [
-  "seansirota@mail.tau.ac.il",
-  "student2@example.com",
-  "student3@example.com",
-  "student4@example.com",
-  "student5@example.com",
+  "seansirota@mail.tau.ac.il"
 ];
 
 const CLAUDE_ENDPOINT = "/.netlify/functions/parse-exam";
@@ -93,4 +89,34 @@ async function saveUserData(uid, data) {
 function genId() {
   if (typeof crypto !== 'undefined' && crypto.randomUUID) return crypto.randomUUID();
   return Math.random().toString(36).substr(2, 9) + Date.now().toString(36);
+}
+
+/**
+ * Check whether a given email is authorized to access the app.
+ * Priority:
+ *   1. ADMIN_EMAILS  — always allowed (static, no network).
+ *   2. Firestore `authorized_users/{email}` with active:true.
+ *   3. Falls back to static PILOT_STUDENTS if Firestore is unreachable.
+ *
+ * @param {string} email  — raw email, will be normalized internally
+ * @returns {Promise<boolean>}
+ */
+async function isUserAuthorized(email) {
+  if (!email) return false;
+  const normalized = email.toLowerCase().trim();
+
+  // 1. Admins always pass — no Firestore round-trip needed
+  if ((window.ADMIN_EMAILS || []).some(e => e.toLowerCase() === normalized)) {
+    return true;
+  }
+
+  // 2. Dynamic check via Firestore
+  try {
+    const doc = await db.collection('authorized_users').doc(normalized).get();
+    return doc.exists && doc.data()?.active === true;
+  } catch (err) {
+    console.warn('isUserAuthorized: Firestore unreachable, falling back to static list', err);
+    // 3. Offline / rules-error fallback — use the static list
+    return (window.PILOT_STUDENTS || []).some(e => e.toLowerCase() === normalized);
+  }
 }

@@ -98,7 +98,11 @@ document.addEventListener('DOMContentLoaded', () => {
         return; // block until accepted
       }
 
-      // ── 3. Normal load ─────────────────────────────────────
+      // ── 3. Survey check ────────────────────────────────────
+      // Run in background — don't block initial render
+      checkAndShowSurvey();
+
+      // ── 4. Normal load ─────────────────────────────────────
       renderNavbar();
       const hs = history.state;
       if (hs && hs.page) {
@@ -122,6 +126,12 @@ document.addEventListener('DOMContentLoaded', () => {
     STATE.page          = hs.page     || 'home';
     STATE.courseId      = hs.courseId || null;
     STATE.examId        = hs.examId   || null;
+    // Guard: if terms not accepted, block navigation and re-show modal
+    if (!STATE.userData?.acceptedTerms) {
+      document.getElementById('app').innerHTML = '';
+      renderTermsModal();
+      return;
+    }
     renderNavbar();
     renderPage();
   });
@@ -177,7 +187,13 @@ function renderAuth() {
           </div>
           <div class="form-group">
             <label>סיסמה</label>
-            <input id="l-pass" type="password" placeholder="••••••">
+            <div class="pass-wrap">
+              <input id="l-pass" type="password" placeholder="••••••">
+              <button type="button" class="pass-eye" onclick="togglePassVis('l-pass','l-eye')"
+                title="הצג / הסתר סיסמה" id="l-eye" aria-label="הצג סיסמה">
+                ${_eyeIcon(false)}
+              </button>
+            </div>
           </div>
           <button id="login-btn" class="btn btn-primary" style="width:100%;justify-content:center"
             onclick="doLogin()">כניסה ←</button>
@@ -195,11 +211,18 @@ function renderAuth() {
           </div>
           <div class="form-group">
             <label>סיסמה</label>
-            <input id="s-pass" type="password" placeholder="לפחות 6 תווים">
+            <div class="pass-wrap">
+              <input id="s-pass" type="password" placeholder="לפחות 6 תווים">
+              <button type="button" class="pass-eye" onclick="togglePassVis('s-pass','s-eye')"
+                title="הצג / הסתר סיסמה" id="s-eye" aria-label="הצג סיסמה">
+                ${_eyeIcon(false)}
+              </button>
+            </div>
           </div>
           <button id="signup-btn" class="btn btn-primary" style="width:100%;justify-content:center"
             onclick="doSignup()">הרשמה ←</button>
         </div>
+
       </div>
     </div>`;
 
@@ -225,6 +248,34 @@ function authErr(msg) {
   if (!e) return;
   e.textContent = msg;
   e.classList.add('show');
+}
+
+/* ── Eye SVG helper ─────────────────────────────────────── */
+function _eyeIcon(visible) {
+  return visible
+    ? `<svg width="18" height="18" viewBox="0 0 24 24" fill="none"
+         stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+         <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20C6.48 20 2 15 2 12c0-1.13.35-2.18.94-3.06"/>
+         <path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c5.52 0 10 5 10 8 0 1.22-.4 2.38-1.08 3.4"/>
+         <line x1="2" y1="2" x2="22" y2="22"/>
+       </svg>`
+    : `<svg width="18" height="18" viewBox="0 0 24 24" fill="none"
+         stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+         <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
+         <circle cx="12" cy="12" r="3"/>
+       </svg>`;
+}
+
+/* ── Toggle password visibility ──────────────────────────── */
+function togglePassVis(inputId, btnId) {
+  const inp = document.getElementById(inputId);
+  const btn = document.getElementById(btnId);
+  if (!inp || !btn) return;
+  const showing = inp.type === 'text';
+  inp.type = showing ? 'password' : 'text';
+  btn.innerHTML = _eyeIcon(!showing);
+  btn.setAttribute('aria-label', showing ? 'הצג סיסמה' : 'הסתר סיסמה');
+  inp.focus();
 }
 
 function authBusy(busy) {
@@ -334,8 +385,34 @@ function renderNavbar() {
 }
 
 /* ── ROUTING ─────────────────────────────────────────────────── */
+function requireTermsAccepted() {
+  // Central gate — called before ANY page render.
+  // If the user hasn't accepted terms yet, wipe the app and show the modal.
+  // Returns true if access is allowed, false if blocked.
+  if (!STATE.fireUser) return false;          // not logged in — auth handles this
+  if (STATE.userData?.acceptedTerms) return true; // already accepted — allow through
+  // Not accepted yet — replace entire app with the terms screen
+  document.getElementById('app').innerHTML = '';  // clear navbar first so no content leaks
+  renderTermsModal();
+  return false;
+}
+
+function requireSurveyDone() {
+  // If a survey is active and user hasn't completed it, block all navigation.
+  if (STATE._surveyPending && STATE.userData?.surveyDone !== true) {
+    // Re-show the survey modal if it was somehow closed
+    if (!document.getElementById('survey-modal') && STATE._surveyUrl) {
+      showSurveyModal(STATE._surveyUrl);
+    }
+    return false;
+  }
+  return true;
+}
+
 function renderPage() {
-  if (STATE.page === 'home')   renderHome();
+  if (!requireTermsAccepted()) return;
+  if (!requireSurveyDone())   return;
+  if (STATE.page === 'home')        renderHome();
   else if (STATE.page === 'course') renderCourse();
   else if (STATE.page === 'exam')   renderExam();
 }
@@ -383,27 +460,43 @@ function renderTermsModal() {
       display:flex;align-items:center;justify-content:center;
       z-index:9999;padding:1rem">
       <div style="
-        background:#fff;border-radius:16px;max-width:480px;width:100%;
+        background:#fff;border-radius:16px;max-width:500px;width:100%;
         padding:2rem 2rem 1.5rem;box-shadow:0 20px 60px rgba(0,0,0,.3);
         direction:rtl;text-align:right">
 
         <div style="text-align:center;margin-bottom:1.2rem">
           <span style="font-size:2.2rem">📜</span>
           <h2 style="margin:.5rem 0 .25rem;font-size:1.2rem;color:#1e293b">הצהרת סטודנט</h2>
-          <p style="font-size:.82rem;color:#64748b">יש לאשר לפני שימוש במערכת</p>
+          <p style="font-size:.82rem;color:#64748b">יש לקרוא ולאשר לפני שימוש במערכת</p>
         </div>
 
         <div style="
           background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;
-          padding:1rem 1.2rem;font-size:.88rem;line-height:1.7;color:#334155;
-          margin-bottom:1.4rem">
-          אני מצהיר/ה כי אני סטודנט/ית רשום/ה לקורס <strong>אלגברה לינארית 1א'</strong>,
-          ידוע לי שהתכנים מוגנים בזכויות יוצרים ואני מתחייב/ת
-          <strong>לא להפיץ או להעתיק אותם</strong>.
+          padding:1rem 1.2rem;font-size:.88rem;line-height:1.8;color:#334155;
+          margin-bottom:1.2rem">
+          <p style="margin:0 0 .6rem">
+            אני מצהיר/ה כי אני סטודנט/ית רשום/ה לקורס <strong>אלגברה לינארית 1א'</strong>
+            באוניברסיטת תל אביב.
+          </p>
+          <p style="margin:0">
+            ידוע לי שכל התכנים המופיעים באתר זה — שאלות מבחן, פתרונות וחומרי לימוד —
+            <strong>מוגנים בזכויות יוצרים</strong> ומיועדים לשימוש אישי בלבד.
+            אני מתחייב/ת <strong>לא להפיץ, לשתף, להעתיק או לפרסם</strong> תכנים אלו
+            בכל אמצעי שהוא ללא אישור מפורש.
+          </p>
         </div>
 
+        <!-- Checkbox confirmation -->
+        <label class="terms-check-label" id="terms-check-label">
+          <input type="checkbox" id="terms-check" onchange="onTermsCheckChange()">
+          <span class="terms-check-text">
+            קראתי והבנתי את ההצהרה לעיל, ואני מסכים/ה לשמור על זכויות היוצרים
+          </span>
+        </label>
+
         <button id="terms-accept-btn" class="btn btn-primary"
-          style="width:100%;justify-content:center;font-size:.95rem;padding:.75rem"
+          style="width:100%;justify-content:center;font-size:.95rem;padding:.75rem;margin-top:1rem"
+          disabled
           onclick="acceptTerms()">
           אני מאשר/ת ומתחייב/ת ✓
         </button>
@@ -415,7 +508,24 @@ function renderTermsModal() {
     </div>`;
 }
 
+function onTermsCheckChange() {
+  const cb  = document.getElementById('terms-check');
+  const btn = document.getElementById('terms-accept-btn');
+  const lbl = document.getElementById('terms-check-label');
+  if (!cb || !btn) return;
+  btn.disabled = !cb.checked;
+  if (lbl) lbl.classList.toggle('terms-check-label--checked', cb.checked);
+}
+
 async function acceptTerms() {
+  // Double-check the checkbox — never trust only the button's disabled state
+  const cb  = document.getElementById('terms-check');
+  if (!cb?.checked) {
+    document.getElementById('terms-check-label')?.classList.add('terms-check-label--error');
+    setTimeout(() => document.getElementById('terms-check-label')?.classList.remove('terms-check-label--error'), 1200);
+    return;
+  }
+
   const btn = document.getElementById('terms-accept-btn');
   if (btn) { btn.disabled = true; btn.textContent = '💾 שומר...'; }
 
@@ -423,8 +533,12 @@ async function acceptTerms() {
     const uid = STATE.fireUser?.uid;
     if (!uid) throw new Error('לא מחובר');
 
-    await saveUserData(uid, { acceptedTerms: true });
-    STATE.userData = { ...STATE.userData, acceptedTerms: true };
+    const now = firebase.firestore.Timestamp.now();
+    await saveUserData(uid, {
+      acceptedTerms:   true,
+      acceptedTermsAt: now,       // exact timestamp of acceptance
+    });
+    STATE.userData = { ...STATE.userData, acceptedTerms: true, acceptedTermsAt: now };
 
     // Continue to normal app load
     renderNavbar();
@@ -1204,4 +1318,98 @@ function _doCopy(text, event) {
       ).catch(e => console.warn('copyCount increment failed:', e));
     }
   }).catch(() => toast('העתקה נכשלה', 'error'));
+}
+
+
+/* ══════════════════════════════════════════════════════════
+   SURVEY MODAL  (student-facing)
+══════════════════════════════════════════════════════════ */
+
+async function checkAndShowSurvey() {
+  try {
+    // Already filled — skip
+    if (STATE.userData?.surveyDone === true) return;
+
+    const doc = await db.collection('settings').doc('global').get();
+    if (!doc.exists) return;
+    const { isSurveyActive, surveyUrl } = doc.data();
+    if (!isSurveyActive || !surveyUrl) return;
+
+    // Mark survey as pending on STATE so renderPage can gate on it
+    STATE._surveyPending = true;
+    STATE._surveyUrl     = surveyUrl;
+
+    showSurveyModal(surveyUrl);
+  } catch(e) {
+    console.warn('checkAndShowSurvey error:', e);
+  }
+}
+
+function showSurveyModal(url) {
+  // Remove any existing survey modal first
+  document.getElementById('survey-modal')?.remove();
+
+  const modal = document.createElement('div');
+  modal.id = 'survey-modal';
+  modal.className = 'survey-modal-overlay';
+  modal.innerHTML = `
+    <div class="survey-modal-box">
+      <div class="survey-modal-header">
+        <div>
+          <h2 class="survey-modal-title">📋 סקר משוב קצר</h2>
+          <p class="survey-modal-sub">נשמח לשמוע את דעתך — נדרשות כ-2 דקות בלבד</p>
+        </div>
+      </div>
+      <div class="survey-iframe-wrap">
+        <iframe
+          src="${url}"
+          class="survey-iframe"
+          frameborder="0"
+          marginheight="0"
+          marginwidth="0"
+          title="סקר משוב">
+          טוען...
+        </iframe>
+      </div>
+      <div class="survey-modal-footer">
+        <p class="survey-mandatory-note">
+          ⚠️ מילוי הסקר הוא <strong>חובה</strong> — לא ניתן לגשת למבחנים לפני השלמתו
+        </p>
+        <button class="btn btn-primary" onclick="markSurveyDone()">
+          ✅ סיימתי למלא את הסקר
+        </button>
+      </div>
+    </div>`;
+
+  document.body.appendChild(modal);
+  // Prevent background scroll
+  document.body.style.overflow = 'hidden';
+}
+
+async function markSurveyDone() {
+  const uid = STATE.fireUser?.uid;
+  const btn = document.querySelector('#survey-modal .btn-primary');
+  if (btn) { btn.disabled = true; btn.textContent = '💾 שומר...'; }
+
+  try {
+    if (uid) {
+      await saveUserData(uid, { surveyDone: true });
+      STATE.userData = { ...STATE.userData, surveyDone: true };
+    }
+    STATE._surveyPending = false;
+    closeSurveyModal();
+    toast('תודה על המשוב! 🙏', 'info');
+    // Now let the user into the app
+    renderNavbar();
+    renderPage();
+  } catch(e) {
+    console.error('markSurveyDone error:', e);
+    if (btn) { btn.disabled = false; btn.textContent = '✅ סיימתי למלא את הסקר'; }
+    toast('שגיאה בשמירה — נסה שוב', 'error');
+  }
+}
+
+function closeSurveyModal() {
+  document.getElementById('survey-modal')?.remove();
+  document.body.style.overflow = '';
 }
