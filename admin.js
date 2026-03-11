@@ -197,14 +197,13 @@ function _applySectionUI(name) {
   if (sec) sec.classList.add('active');
   const nav = document.getElementById('nav-' + name);
   if (nav) nav.classList.add('active');
-  if (name === 'manage')      renderManageTable();
-  if (name === 'dashboard')   refreshDashboard();
-  if (name === 'courses')     renderCoursesList();
-  if (name === 'add-exam')    populateAllSelects();
-  if (name === 'analytics')   renderAnalytics();
-  if (name === 'users')       renderUserStats();
-  if (name === 'survey')      renderSurveyManager();
-  if (name === 'permissions') renderPermissionsSection();
+  if (name === 'manage')    renderManageTable();
+  if (name === 'dashboard') refreshDashboard();
+  if (name === 'courses')   renderCoursesList();
+  if (name === 'add-exam')  populateAllSelects();
+  if (name === 'analytics') renderAnalytics();
+  if (name === 'users')     renderUserStats();
+  if (name === 'survey')    renderSurveyManager();
 }
 
 // Public — called from nav clicks; pushes history entry
@@ -1348,15 +1347,21 @@ async function editExam(courseId, examId) {
     _setLecturers(exam.lecturers || exam.lecturer || []);
 
     // Load existing PDF URL if present
-    const pdfUrlEl = document.getElementById('ae-pdf-url');
-    const pdfNameEl = document.getElementById('ae-pdf-name');
-    const pdfClearEl = document.getElementById('ae-pdf-clear');
+    const pdfUrlEl     = document.getElementById('ae-pdf-url');
+    const pdfNameEl    = document.getElementById('ae-pdf-name');
+    const pdfClearEl   = document.getElementById('ae-pdf-clear');
+    const pdfCurrentEl = document.getElementById('ae-pdf-current');
     if (exam.pdfUrl) {
-      if (pdfUrlEl)   pdfUrlEl.value = exam.pdfUrl;
-      if (pdfNameEl)  pdfNameEl.textContent = 'PDF קיים (ניתן להחליף)';
-      if (pdfClearEl) pdfClearEl.style.display = '';
+      if (pdfUrlEl)     pdfUrlEl.value = exam.pdfUrl;
+      if (pdfNameEl)    pdfNameEl.textContent = 'PDF קיים (ניתן להחליף)';
+      if (pdfClearEl)   pdfClearEl.style.display = '';
+      if (pdfCurrentEl) {
+        pdfCurrentEl.style.display = '';
+        pdfCurrentEl.innerHTML = `קובץ נוכחי: <a href="${exam.pdfUrl}" target="_blank" rel="noopener">פתח PDF ↗</a>`;
+      }
     } else {
       clearExamPdf();
+      if (pdfCurrentEl) pdfCurrentEl.style.display = 'none';
     }
 
     // ── FIX: deep-copy questions so edits don't mutate cached data ──
@@ -1931,167 +1936,5 @@ async function resetSurveyResponses() {
     renderSurveyManager();
   } catch(e) {
     toast('שגיאה באיפוס: ' + e.message, 'error');
-  }
-}
-
-
-/* ══════════════════════════════════════════════════════════
-   PERMISSIONS MANAGER  (admin)
-   Manages the `authorized_users` Firestore collection.
-   Each document ID = normalized email, with field active:true.
-══════════════════════════════════════════════════════════ */
-
-/**
- * Render the full list of authorized emails from Firestore.
- */
-async function renderPermissionsSection() {
-  const listEl  = document.getElementById('permissions-list-wrap');
-  const countEl = document.getElementById('permissions-count');
-  if (listEl) listEl.innerHTML = '<div class="spinner" style="margin:1.5rem auto"></div>';
-
-  // Guard — only admins may reach this section, but double-check
-  if (!adminUser || !ADMIN_EMAILS.includes(adminUser.email)) {
-    if (listEl) listEl.innerHTML = '<p style="color:var(--danger)">גישה נדחתה — מנהלים בלבד</p>';
-    return;
-  }
-
-  try {
-    const snap   = await db.collection('authorized_users').get();
-    const emails = snap.docs
-      .filter(d => d.data().active !== false)   // include active:true + missing field
-      .map(d => d.id)
-      .sort((a, b) => a.localeCompare(b));
-
-    if (countEl) countEl.textContent = emails.length + ' מיילים מורשים';
-
-    if (!listEl) return;
-
-    if (!emails.length) {
-      listEl.innerHTML = `
-        <div class="empty" style="padding:2rem">
-          <span class="ei">📭</span>
-          <h3>אין מיילים מורשים עדיין</h3>
-          <p>הוסף מיילים בעזרת הטופס למעלה</p>
-        </div>`;
-      return;
-    }
-
-    const rows = emails.map(email => `
-      <tr>
-        <td style="font-size:.85rem;font-family:monospace;direction:ltr;text-align:left">${esc(email)}</td>
-        <td style="text-align:center">
-          <span class="badge" style="background:#dcfce7;color:#166534;border:1px solid #86efac">✓ פעיל</span>
-        </td>
-        <td style="text-align:left;padding-left:.5rem">
-          <button class="btn btn-danger btn-sm"
-            onclick="deleteAuthorizedEmail('${esc(email)}')">מחק</button>
-        </td>
-      </tr>`).join('');
-
-    listEl.innerHTML = `
-      <table class="tbl">
-        <thead>
-          <tr>
-            <th style="direction:ltr;text-align:left">אימייל</th>
-            <th style="text-align:center">סטטוס</th>
-            <th></th>
-          </tr>
-        </thead>
-        <tbody>${rows}</tbody>
-      </table>`;
-
-  } catch (e) {
-    console.error('renderPermissionsSection error:', e);
-    if (listEl) listEl.innerHTML = `<p style="color:var(--danger);padding:1rem">${esc(e.message)}</p>`;
-  }
-}
-
-/**
- * Parse the textarea, deduplicate, normalize, and batch-write to Firestore.
- * Only emails containing '@' are accepted.
- */
-async function addAuthorizedEmails() {
-  // Admin guard
-  if (!adminUser || !ADMIN_EMAILS.includes(adminUser.email)) {
-    toast('גישה נדחתה — מנהלים בלבד', 'error');
-    return;
-  }
-
-  const textarea = document.getElementById('permissions-textarea');
-  if (!textarea) return;
-
-  const raw = textarea.value;
-
-  // Split on newlines, commas, or semicolons
-  const candidates = raw
-    .split(/[\n\r,;]+/)
-    .map(s => s.trim().toLowerCase())
-    .filter(s => s.includes('@') && s.length > 4);
-
-  // Deduplicate
-  const unique = [...new Set(candidates)];
-
-  if (!unique.length) {
-    toast('לא נמצאו כתובות מייל תקינות', 'error');
-    return;
-  }
-
-  const btn = document.getElementById('add-emails-btn');
-  if (btn) { btn.disabled = true; btn.textContent = '💾 שומר...'; }
-
-  try {
-    // Firestore batch — max 500 writes per batch; split if needed
-    const CHUNK = 400;
-    for (let i = 0; i < unique.length; i += CHUNK) {
-      const batch = db.batch();
-      unique.slice(i, i + CHUNK).forEach(email => {
-        const ref = db.collection('authorized_users').doc(email);
-        batch.set(ref, {
-          active:   true,
-          addedBy:  adminUser.email,
-          addedAt:  firebase.firestore.FieldValue.serverTimestamp(),
-        }, { merge: true });
-      });
-      await batch.commit();
-    }
-
-    toast(`✅ ${unique.length} מיילים נוספו בהצלחה`, 'success');
-    textarea.value = '';
-    await renderPermissionsSection();
-
-  } catch (e) {
-    console.error('addAuthorizedEmails error:', e);
-    toast('שגיאה בשמירה: ' + e.message, 'error');
-  } finally {
-    if (btn) { btn.disabled = false; btn.textContent = '🔓 הוסף מיילים למערכת'; }
-  }
-}
-
-/**
- * Remove a single email from authorized_users.
- * Sets active:false instead of hard-delete so audit trail is preserved.
- * (The document stays in Firestore with active:false — isUserAuthorized will reject it.)
- */
-async function deleteAuthorizedEmail(email) {
-  // Admin guard
-  if (!adminUser || !ADMIN_EMAILS.includes(adminUser.email)) {
-    toast('גישה נדחתה — מנהלים בלבד', 'error');
-    return;
-  }
-
-  if (!confirm(`האם למחוק את הרשאת הגישה של:\n${email}?`)) return;
-
-  try {
-    // Soft-delete: mark inactive so the doc can be re-activated later
-    await db.collection('authorized_users').doc(email).set(
-      { active: false, revokedBy: adminUser.email,
-        revokedAt: firebase.firestore.FieldValue.serverTimestamp() },
-      { merge: true }
-    );
-    toast(`🗑️ ${email} הוסר מרשימת ההרשאות`, 'info');
-    await renderPermissionsSection();
-  } catch (e) {
-    console.error('deleteAuthorizedEmail error:', e);
-    toast('שגיאה במחיקה: ' + e.message, 'error');
   }
 }
