@@ -167,7 +167,7 @@ function renderAuth() {
       <div class="auth-card">
         <div class="auth-logo">
           <span class="icon">📚</span>
-          <h1>בנק מבחנים</h1>
+          <h1>VaultAU</h1>
           <p>כניסה לאוסף המבחנים האישי</p>
         </div>
         <div class="auth-tabs">
@@ -369,7 +369,7 @@ function renderNavbar() {
   document.getElementById('app').innerHTML = `
     <nav class="navbar">
       <span class="navbar-brand" onclick="goHome()">
-        <span class="ni">📚</span> בנק מבחנים
+        <span class="ni">📚</span> VaultAU
       </span>
       <div class="navbar-actions">
         <div class="navbar-user">
