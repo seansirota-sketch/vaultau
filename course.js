@@ -56,13 +56,14 @@ document.addEventListener('DOMContentLoaded', () => {
     if (user) {
       const email = (user.email || '').toLowerCase().trim();
 
-      // ── 1. Whitelist check ──────────────────────────────────
-      const isAdmin = (window.ADMIN_EMAILS   || []).some(e => e.toLowerCase() === email);
-      const isPilot = (window.PILOT_STUDENTS || []).some(e => e.toLowerCase() === email);
+      // ── 1. Authorization check (Firestore-backed) ───────────
+      const authorized = await isUserAuthorized(email);
 
-      if (!isAdmin && !isPilot) {
-        // Sign out quietly (no await — avoids re-triggering onAuthStateChanged render loop)
+      if (!authorized) {
         auth.signOut();
+        const errHint = window._lastAuthErr
+          ? `<p style="font-size:.75rem;color:#9ca3af;margin:.5rem 0 0;direction:ltr">(${window._lastAuthErr})</p>`
+          : '';
         document.getElementById('app').innerHTML = `
           <div class="auth-wrap">
             <div class="auth-card" style="text-align:center">
@@ -71,14 +72,14 @@ document.addEventListener('DOMContentLoaded', () => {
                 <h1>גישה נדחתה</h1>
               </div>
               <p style="color:var(--danger);margin:.5rem 0 1.2rem">
-                האימייל <strong>${email}</strong> אינו ברשימת הסטודנטים המורשים לפיילוט.
+                האימייל <strong>${email}</strong> אינו ברשימת הסטודנטים המורשים.
               </p>
+              ${errHint}
               <p style="font-size:.85rem;color:var(--light)">פנה למנהל הקורס להוספת הרשאה.</p>
               <button class="btn btn-primary" style="margin-top:1.2rem;width:100%;justify-content:center"
                 onclick="renderAuth()">חזרה לכניסה</button>
             </div>
           </div>`;
-        // Override the upcoming onAuthStateChanged(null) so it doesn't wipe this screen
         STATE._blockNextAuthRender = true;
         return;
       }
@@ -291,13 +292,6 @@ async function doLogin() {
   const pass  = document.getElementById('l-pass').value;
   if (!email || !pass) return authErr('נא למלא את כל השדות');
 
-  // ── Whitelist check before even attempting Firebase signIn ──
-  const isAdmin = (window.ADMIN_EMAILS   || []).some(e => e.toLowerCase() === email);
-  const isPilot = (window.PILOT_STUDENTS || []).some(e => e.toLowerCase() === email);
-  if (!isAdmin && !isPilot) {
-    return authErr('האימייל ' + email + ' אינו ברשימת הסטודנטים המורשים לפיילוט. פנה למנהל הקורס.');
-  }
-
   authBusy(true);
   try {
     await auth.signInWithEmailAndPassword(email, pass);
@@ -320,13 +314,6 @@ async function doSignup() {
   const pass  = document.getElementById('s-pass').value;
   if (!name || !email || !pass) return authErr('נא למלא את כל השדות');
   if (pass.length < 6) return authErr('סיסמה חייבת להכיל לפחות 6 תווים');
-
-  // ── Whitelist check before creating account ────────────────
-  const isAdmin = (window.ADMIN_EMAILS   || []).some(e => e.toLowerCase() === email);
-  const isPilot = (window.PILOT_STUDENTS || []).some(e => e.toLowerCase() === email);
-  if (!isAdmin && !isPilot) {
-    return authErr('האימייל ' + email + ' אינו ברשימת הסטודנטים המורשים לפיילוט. פנה למנהל הקורס.');
-  }
 
   authBusy(true);
   try {
