@@ -17,7 +17,7 @@ var ADMIN_EMAILS = [
 ];
 
 var PILOT_STUDENTS = [
-  "seansirota@mail.tau.ac.il"
+  "studetn@mail.tau.ac.il"
 ];
 
 const CLAUDE_ENDPOINT = "/.netlify/functions/parse-exam";

@@ -2011,7 +2011,7 @@ async function renderPermissionsSection() {
   const countEl = document.getElementById('permissions-count');
   if (listEl) listEl.innerHTML = '<div class="spinner" style="margin:1.5rem auto"></div>';
 
-  if (!adminUser || !ADMIN_EMAILS.includes(adminUser.email)) {
+  if (!adminUser || !ADMIN_EMAILS.some(e => e.toLowerCase() === (adminUser.email || '').toLowerCase())) {
     if (listEl) listEl.innerHTML = '<p style="color:var(--danger)">גישה נדחתה — מנהלים בלבד</p>';
     return;
   }
@@ -2068,7 +2068,7 @@ async function renderPermissionsSection() {
 }
 
 async function addAuthorizedEmails() {
-  if (!adminUser || !ADMIN_EMAILS.includes(adminUser.email)) {
+  if (!adminUser || !ADMIN_EMAILS.some(e => e.toLowerCase() === (adminUser.email || '').toLowerCase())) {
     toast('גישה נדחתה — מנהלים בלבד', 'error');
     return;
   }
@@ -2120,7 +2120,7 @@ async function addAuthorizedEmails() {
 }
 
 async function deleteAuthorizedEmail(email) {
-  if (!adminUser || !ADMIN_EMAILS.includes(adminUser.email)) {
+  if (!adminUser || !ADMIN_EMAILS.some(e => e.toLowerCase() === (adminUser.email || '').toLowerCase())) {
     toast('גישה נדחתה — מנהלים בלבד', 'error');
     return;
   }
