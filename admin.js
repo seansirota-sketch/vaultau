@@ -88,7 +88,7 @@ function showAdminApp() {
 }
 
 async function adminLogin() {
-  const email = document.getElementById('adm-email').value.trim();
+  const email = document.getElementById('adm-email').value.trim().toLowerCase();
   const pass  = document.getElementById('adm-pass').value;
   const err   = document.getElementById('adm-err');
   err.classList.remove('show');
@@ -99,14 +99,21 @@ async function adminLogin() {
     return;
   }
 
+  // Pre-check: is this email even in ADMIN_EMAILS?
+  if (!ADMIN_EMAILS.some(e => e.toLowerCase() === email)) {
+    err.textContent = 'אין הרשאת גישה לפאנל הניהול';
+    err.classList.add('show');
+    return;
+  }
+
   const btn = document.querySelector('#adm-login .btn-primary');
   if (btn) { btn.disabled = true; btn.textContent = 'מתחבר...'; }
 
   try {
     const cred = await auth.signInWithEmailAndPassword(email, pass);
 
-    // Check admin whitelist
-    if (!ADMIN_EMAILS.includes(cred.user.email)) {
+    // Double-check after sign-in (case-insensitive)
+    if (!ADMIN_EMAILS.some(e => e.toLowerCase() === (cred.user.email || '').toLowerCase())) {
       await auth.signOut();
       err.textContent = 'אין הרשאת גישה לפאנל הניהול';
       err.classList.add('show');
@@ -116,13 +123,16 @@ async function adminLogin() {
     adminUser = cred.user;
     showAdminApp();
   } catch (e) {
+    console.error('adminLogin error:', e.code, e.message);
     const messages = {
-      'auth/user-not-found':  'אימייל לא קיים במערכת',
-      'auth/wrong-password':  'סיסמה שגויה',
-      'auth/invalid-email':   'פורמט אימייל לא תקין',
-      'auth/too-many-requests': 'יותר מדי ניסיונות — נסה שוב מאוחר יותר',
+      'auth/user-not-found':       'אימייל לא קיים במערכת',
+      'auth/wrong-password':       'סיסמה שגויה',
+      'auth/invalid-credential':   'אימייל או סיסמה שגויים',
+      'auth/invalid-email':        'פורמט אימייל לא תקין',
+      'auth/too-many-requests':    'יותר מדי ניסיונות — נסה שוב מאוחר יותר',
+      'auth/network-request-failed': 'שגיאת רשת — בדוק חיבור לאינטרנט',
     };
-    err.textContent = messages[e.code] || 'שגיאת התחברות: ' + e.message;
+    err.textContent = messages[e.code] || `שגיאת התחברות (${e.code}): ${e.message}`;
     err.classList.add('show');
   } finally {
     if (btn) { btn.disabled = false; btn.textContent = 'כניסה ←'; }
@@ -145,7 +155,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // Listen for auth state changes
   auth.onAuthStateChanged(async (user) => {
-    if (user && ADMIN_EMAILS.includes(user.email)) {
+    if (user && ADMIN_EMAILS.some(e => e.toLowerCase() === (user.email || '').toLowerCase())) {
       adminUser = user;
       // Stamp initial history state so Back works from first section
       if (!history.state?.section) {
