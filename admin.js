@@ -197,13 +197,14 @@ function _applySectionUI(name) {
   if (sec) sec.classList.add('active');
   const nav = document.getElementById('nav-' + name);
   if (nav) nav.classList.add('active');
-  if (name === 'manage')    renderManageTable();
-  if (name === 'dashboard') refreshDashboard();
-  if (name === 'courses')   renderCoursesList();
-  if (name === 'add-exam')  populateAllSelects();
-  if (name === 'analytics') renderAnalytics();
-  if (name === 'users')     renderUserStats();
-  if (name === 'survey')    renderSurveyManager();
+  if (name === 'manage')      renderManageTable();
+  if (name === 'dashboard')   refreshDashboard();
+  if (name === 'courses')     renderCoursesList();
+  if (name === 'add-exam')    populateAllSelects();
+  if (name === 'analytics')   renderAnalytics();
+  if (name === 'users')       renderUserStats();
+  if (name === 'survey')      renderSurveyManager();
+  if (name === 'permissions') renderPermissionsSection();
 }
 
 // Public — called from nav clicks; pushes history entry
@@ -651,16 +652,24 @@ function onExamPdfSelected(input) {
   const file = input.files[0];
   if (!file) return;
   _examPdfFile = file;
-  document.getElementById('ae-pdf-name').textContent = file.name;
-  document.getElementById('ae-pdf-clear').style.display = '';
+  const nameEl  = document.getElementById('ae-pdf-name');
+  const clearEl = document.getElementById('ae-pdf-clear');
+  if (nameEl)  nameEl.textContent = file.name;
+  if (clearEl) clearEl.style.display = '';
 }
 
 function clearExamPdf() {
   _examPdfFile = null;
-  document.getElementById('ae-pdf-file').value = '';
-  document.getElementById('ae-pdf-name').textContent = 'לא נבחר קובץ';
-  document.getElementById('ae-pdf-clear').style.display = 'none';
-  document.getElementById('ae-pdf-url').value = '';
+  const fileEl    = document.getElementById('ae-pdf-file');
+  const nameEl    = document.getElementById('ae-pdf-name');
+  const clearEl   = document.getElementById('ae-pdf-clear');
+  const urlEl     = document.getElementById('ae-pdf-url');
+  const currentEl = document.getElementById('ae-pdf-current');
+  if (fileEl)    fileEl.value = '';
+  if (nameEl)    nameEl.textContent = 'לא נבחר קובץ';
+  if (clearEl)   clearEl.style.display = 'none';
+  if (urlEl)     urlEl.value = '';
+  if (currentEl) currentEl.style.display = 'none';
 }
 
 async function uploadExamPdf(examId) {
@@ -1006,10 +1015,13 @@ function resetForm() {
   ['ae-title','ae-year'].forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
   _clearLecturers();
   clearExamPdf();
-  parsedQuestions = [];          // ← FIX: clear carry-over questions from previous exam
-  _editingExamId  = null;        // ← FIX: clear edit context
+  parsedQuestions = [];
+  _editingExamId  = null;
   clearImport();
   document.getElementById('ae-error')?.classList.remove('show');
+  // Hide edit banner
+  const banner = document.getElementById('edit-mode-banner');
+  if (banner) banner.style.display = 'none';
 }
 
 /* ══════════════════════════════════════════════════════════
@@ -1335,18 +1347,42 @@ async function editExam(courseId, examId) {
     const exam = await fetchExam(examId);
     if (!exam) { toast('מבחן לא נמצא', 'error'); return; }
 
-    // ── FIX: store edit context — do NOT delete until user explicitly saves ──
     _editingExamId = examId;
 
     showSection('add-exam');
-    document.getElementById('ae-course').value   = courseId;
-    document.getElementById('ae-title').value    = exam.title     || '';
-    document.getElementById('ae-year').value     = exam.year      || '';
-    document.getElementById('ae-sem').value      = exam.semester  || '';
-    document.getElementById('ae-moed').value     = exam.moed      || '';
+
+    // ── Show edit-mode banner ───────────────────────────────────
+    let banner = document.getElementById('edit-mode-banner');
+    if (!banner) {
+      banner = document.createElement('div');
+      banner.id = 'edit-mode-banner';
+      banner.style.cssText = [
+        'background:#fffbeb','border:2px solid #f59e0b','border-radius:10px',
+        'padding:.8rem 1.25rem','margin-bottom:1rem',
+        'display:flex','align-items:center','justify-content:space-between','gap:.75rem',
+        'font-size:.88rem','color:#92400e','flex-wrap:wrap'
+      ].join(';');
+      const titleSection = document.getElementById('sec-add-exam');
+      if (titleSection) titleSection.insertBefore(banner, titleSection.firstChild.nextSibling);
+    }
+    banner.innerHTML = `
+      <span>✏️ <strong>מצב עריכה</strong> — עורך את המבחן: <strong>${esc(exam.title || examId)}</strong></span>
+      <button class="btn btn-secondary btn-sm" onclick="cancelEdit()">✕ בטל עריכה</button>`;
+    banner.style.display = 'flex';
+
+    // ── Scroll to top of form ───────────────────────────────────
+    banner.scrollIntoView({ behavior: 'smooth', block: 'start' });
+
+    // ── Fill form fields (with null guards) ────────────────────
+    const set = (id, val) => { const el = document.getElementById(id); if (el) el.value = val ?? ''; };
+    set('ae-course', courseId);
+    set('ae-title',  exam.title    || '');
+    set('ae-year',   exam.year     || '');
+    set('ae-sem',    exam.semester || '');
+    set('ae-moed',   exam.moed     || '');
     _setLecturers(exam.lecturers || exam.lecturer || []);
 
-    // Load existing PDF URL if present
+    // ── PDF ────────────────────────────────────────────────────
     const pdfUrlEl     = document.getElementById('ae-pdf-url');
     const pdfNameEl    = document.getElementById('ae-pdf-name');
     const pdfClearEl   = document.getElementById('ae-pdf-clear');
@@ -1357,26 +1393,40 @@ async function editExam(courseId, examId) {
       if (pdfClearEl)   pdfClearEl.style.display = '';
       if (pdfCurrentEl) {
         pdfCurrentEl.style.display = '';
-        pdfCurrentEl.innerHTML = `קובץ נוכחי: <a href="${exam.pdfUrl}" target="_blank" rel="noopener">פתח PDF ↗</a>`;
+        pdfCurrentEl.innerHTML = `קובץ נוכחי: <a href="${exam.pdfUrl}" target="_blank" rel="noopener" style="color:var(--blue)">פתח PDF ↗</a>`;
       }
     } else {
       clearExamPdf();
-      if (pdfCurrentEl) pdfCurrentEl.style.display = 'none';
     }
 
-    // ── FIX: deep-copy questions so edits don't mutate cached data ──
+    // ── Questions ──────────────────────────────────────────────
     parsedQuestions = (exam.questions || []).map(q => ({
       ...q,
-      subs: (q.subs || []).map(s => ({ ...s }))
+      subs: (q.subs || q.parts || []).map(s => ({ ...s }))
     }));
 
-    renderPreview();
-    toast('המבחן נטען לעריכה — ערוך ושמור', 'info');
+    if (parsedQuestions.length) {
+      renderPreview();
+    } else {
+      const pc = document.getElementById('preview-container');
+      if (pc) pc.style.display = 'none';
+    }
+
+    toast(`✏️ "${exam.title}" נטען לעריכה`, 'info');
   } catch (e) {
-    toast('שגיאה: ' + e.message, 'error');
+    console.error('editExam error:', e);
+    toast('שגיאה בטעינת המבחן: ' + e.message, 'error');
   } finally {
     hideSpinner();
   }
+}
+
+function cancelEdit() {
+  _editingExamId = null;
+  const banner = document.getElementById('edit-mode-banner');
+  if (banner) banner.style.display = 'none';
+  resetForm();
+  toast('העריכה בוטלה', 'info');
 }
 
 /* ══════════════════════════════════════════════════════════
@@ -1936,5 +1986,147 @@ async function resetSurveyResponses() {
     renderSurveyManager();
   } catch(e) {
     toast('שגיאה באיפוס: ' + e.message, 'error');
+  }
+}
+
+
+/* ══════════════════════════════════════════════════════════
+   PERMISSIONS MANAGER  (admin)
+   Manages the `authorized_users` Firestore collection.
+   Each document ID = normalized email, with field active:true.
+══════════════════════════════════════════════════════════ */
+
+async function renderPermissionsSection() {
+  const listEl  = document.getElementById('permissions-list-wrap');
+  const countEl = document.getElementById('permissions-count');
+  if (listEl) listEl.innerHTML = '<div class="spinner" style="margin:1.5rem auto"></div>';
+
+  if (!adminUser || !ADMIN_EMAILS.includes(adminUser.email)) {
+    if (listEl) listEl.innerHTML = '<p style="color:var(--danger)">גישה נדחתה — מנהלים בלבד</p>';
+    return;
+  }
+
+  try {
+    const snap   = await db.collection('authorized_users').get();
+    const emails = snap.docs
+      .filter(d => d.data().active !== false)
+      .map(d => d.id)
+      .sort((a, b) => a.localeCompare(b));
+
+    if (countEl) countEl.textContent = emails.length + ' מיילים מורשים';
+
+    if (!listEl) return;
+
+    if (!emails.length) {
+      listEl.innerHTML = `
+        <div class="empty" style="padding:2rem">
+          <span class="ei">📭</span>
+          <h3>אין מיילים מורשים עדיין</h3>
+          <p>הוסף מיילים בעזרת הטופס למעלה</p>
+        </div>`;
+      return;
+    }
+
+    const rows = emails.map(email => `
+      <tr>
+        <td style="font-size:.85rem;font-family:monospace;direction:ltr;text-align:left">${esc(email)}</td>
+        <td style="text-align:center">
+          <span class="badge" style="background:#dcfce7;color:#166534;border:1px solid #86efac">✓ פעיל</span>
+        </td>
+        <td>
+          <button class="btn btn-danger btn-sm"
+            onclick="deleteAuthorizedEmail('${esc(email)}')">מחק</button>
+        </td>
+      </tr>`).join('');
+
+    listEl.innerHTML = `
+      <table class="tbl">
+        <thead>
+          <tr>
+            <th style="direction:ltr;text-align:left">אימייל</th>
+            <th style="text-align:center">סטטוס</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>${rows}</tbody>
+      </table>`;
+
+  } catch (e) {
+    console.error('renderPermissionsSection error:', e);
+    if (listEl) listEl.innerHTML = `<p style="color:var(--danger);padding:1rem">${esc(e.message)}</p>`;
+  }
+}
+
+async function addAuthorizedEmails() {
+  if (!adminUser || !ADMIN_EMAILS.includes(adminUser.email)) {
+    toast('גישה נדחתה — מנהלים בלבד', 'error');
+    return;
+  }
+
+  const textarea = document.getElementById('permissions-textarea');
+  if (!textarea) return;
+
+  const raw = textarea.value;
+  const candidates = raw
+    .split(/[\n\r,;]+/)
+    .map(s => s.trim().toLowerCase())
+    .filter(s => s.includes('@') && s.length > 4);
+
+  const unique = [...new Set(candidates)];
+
+  if (!unique.length) {
+    toast('לא נמצאו כתובות מייל תקינות', 'error');
+    return;
+  }
+
+  const btn = document.getElementById('add-emails-btn');
+  if (btn) { btn.disabled = true; btn.textContent = '💾 שומר...'; }
+
+  try {
+    const CHUNK = 400;
+    for (let i = 0; i < unique.length; i += CHUNK) {
+      const batch = db.batch();
+      unique.slice(i, i + CHUNK).forEach(email => {
+        const ref = db.collection('authorized_users').doc(email);
+        batch.set(ref, {
+          active:   true,
+          addedBy:  adminUser.email,
+          addedAt:  firebase.firestore.FieldValue.serverTimestamp(),
+        }, { merge: true });
+      });
+      await batch.commit();
+    }
+
+    toast(`✅ ${unique.length} מיילים נוספו בהצלחה`, 'success');
+    textarea.value = '';
+    await renderPermissionsSection();
+
+  } catch (e) {
+    console.error('addAuthorizedEmails error:', e);
+    toast('שגיאה בשמירה: ' + e.message, 'error');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = '🔓 הוסף מיילים למערכת'; }
+  }
+}
+
+async function deleteAuthorizedEmail(email) {
+  if (!adminUser || !ADMIN_EMAILS.includes(adminUser.email)) {
+    toast('גישה נדחתה — מנהלים בלבד', 'error');
+    return;
+  }
+
+  if (!confirm(`האם למחוק את הרשאת הגישה של:\n${email}?`)) return;
+
+  try {
+    await db.collection('authorized_users').doc(email).set(
+      { active: false, revokedBy: adminUser.email,
+        revokedAt: firebase.firestore.FieldValue.serverTimestamp() },
+      { merge: true }
+    );
+    toast(`🗑️ ${email} הוסר מרשימת ההרשאות`, 'info');
+    await renderPermissionsSection();
+  } catch (e) {
+    console.error('deleteAuthorizedEmail error:', e);
+    toast('שגיאה במחיקה: ' + e.message, 'error');
   }
 }
