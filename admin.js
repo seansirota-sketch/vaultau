@@ -182,6 +182,8 @@ async function initAdmin() {
     await populateAllSelects();
     await refreshDashboard();
     await renderManageTable();
+    // טעינת בדאג' בקשות גישה ברקע
+    _loadRequestsBadge();
     await renderCoursesList();
     setupUploadZone();
     _renderLecturersWidget();
@@ -215,6 +217,7 @@ function _applySectionUI(name) {
   if (name === 'users')       renderUserStats();
   if (name === 'survey')      renderSurveyManager();
   if (name === 'permissions') renderPermissionsSection();
+  if (name === 'requests')    renderRequestsSection();
 }
 
 // Public — called from nav clicks; pushes history entry
@@ -2067,6 +2070,39 @@ async function renderPermissionsSection() {
   }
 }
 
+/* ══════════════════════════════════════════════════════════
+   PERMISSIONS MANAGER  —  UPDATED addAuthorizedEmails
+   קטע זה מחליף את הפונקציה הקיימת ב-admin.js (שורות 2070–2120)
+   ══════════════════════════════════════════════════════════ */
+
+/**
+ * שולח מייל ברכה דרך Netlify Function.
+ * נקרא בצורה fire-and-forget (לא חוסם את ה-UI).
+ *
+ * @param {string} email  — כתובת המייל של הסטודנט
+ * @param {string} [name] — שם מלא (אופציונלי)
+ */
+async function sendWelcomeEmail(email, name = '') {
+  try {
+    const res = await fetch('/.netlify/functions/send-welcome-email', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, name }),
+    });
+
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      console.warn(`sendWelcomeEmail failed for ${email}:`, data.error || res.status);
+    } else {
+      console.log(`✉️ Welcome email queued → ${email}`);
+    }
+  } catch (err) {
+    // שגיאת רשת — לא עוצרים את כל תהליך ההוספה בגללה
+    console.warn('sendWelcomeEmail network error:', err.message);
+  }
+}
+
+/* ── מחליף את addAuthorizedEmails הקיימת ── */
 async function addAuthorizedEmails() {
   if (!adminUser || !ADMIN_EMAILS.some(e => e.toLowerCase() === (adminUser.email || '').toLowerCase())) {
     toast('גישה נדחתה — מנהלים בלבד', 'error');
@@ -2093,15 +2129,27 @@ async function addAuthorizedEmails() {
   if (btn) { btn.disabled = true; btn.textContent = '💾 שומר...'; }
 
   try {
+    /* ── 1. טען את הרשימה הקיימת בקריאה אחת (collection-level read) ── */
+    const existingSnap = await db.collection('authorized_users').get();
+    const alreadyActive = new Set(
+      existingSnap.docs
+        .filter(d => d.data().active === true)
+        .map(d => d.id)   // document ID = normalized email
+    );
+
+    // מיילים שלא היו פעילים עד כה — אלה יקבלו מייל ברכה
+    const newEmails = unique.filter(e => !alreadyActive.has(e));
+
+    /* ── 2. כתוב ל-Firestore בצ'אנקים ── */
     const CHUNK = 400;
     for (let i = 0; i < unique.length; i += CHUNK) {
       const batch = db.batch();
       unique.slice(i, i + CHUNK).forEach(email => {
         const ref = db.collection('authorized_users').doc(email);
         batch.set(ref, {
-          active:   true,
-          addedBy:  adminUser.email,
-          addedAt:  firebase.firestore.FieldValue.serverTimestamp(),
+          active: true,
+          addedBy: adminUser.email,
+          addedAt: firebase.firestore.FieldValue.serverTimestamp(),
         }, { merge: true });
       });
       await batch.commit();
@@ -2109,6 +2157,21 @@ async function addAuthorizedEmails() {
 
     toast(`✅ ${unique.length} מיילים נוספו בהצלחה`, 'success');
     textarea.value = '';
+
+    /* ── 3. שלח מיילי ברכה רק למיילים החדשים — fire-and-forget ── */
+    if (newEmails.length > 0) {
+      toast(`✉️ שולח ${newEmails.length} מיילי ברכה...`, 'info');
+
+      // שולחים במקביל, עם throttle קל (כדי לא לדפוק SendGrid בבת אחת)
+      const MAIL_BATCH = 5; // עד 5 מיילים במקביל
+      for (let i = 0; i < newEmails.length; i += MAIL_BATCH) {
+        const chunk = newEmails.slice(i, i + MAIL_BATCH);
+        await Promise.all(chunk.map(email => sendWelcomeEmail(email)));
+      }
+
+      console.log(`📧 Welcome emails sent to ${newEmails.length} new users`);
+    }
+
     await renderPermissionsSection();
 
   } catch (e) {
@@ -2118,6 +2181,7 @@ async function addAuthorizedEmails() {
     if (btn) { btn.disabled = false; btn.textContent = '🔓 הוסף מיילים למערכת'; }
   }
 }
+
 
 async function deleteAuthorizedEmail(email) {
   if (!adminUser || !ADMIN_EMAILS.some(e => e.toLowerCase() === (adminUser.email || '').toLowerCase())) {
@@ -2138,5 +2202,202 @@ async function deleteAuthorizedEmail(email) {
   } catch (e) {
     console.error('deleteAuthorizedEmail error:', e);
     toast('שגיאה במחיקה: ' + e.message, 'error');
+  }
+}
+
+
+/* ══════════════════════════════════════════════════════════
+   ACCESS REQUESTS PANEL
+   Collection: access_requests
+   Each doc: { name, email, lecturer, timestamp, status }
+══════════════════════════════════════════════════════════ */
+
+/**
+ * טוען ומציג את כל בקשות הגישה הממתינות.
+ * נקרא ע"י showSection('requests') ועל ידי כפתור הרענון.
+ */
+async function renderRequestsSection() {
+  const listEl  = document.getElementById('requests-list-wrap');
+  const countEl = document.getElementById('requests-count');
+  const badge   = document.getElementById('requests-badge');
+
+  if (listEl) listEl.innerHTML = '<div class="spinner" style="margin:1.5rem auto"></div>';
+
+  if (!adminUser || !ADMIN_EMAILS.some(e => e.toLowerCase() === (adminUser.email || '').toLowerCase())) {
+    if (listEl) listEl.innerHTML = '<p style="color:var(--danger)">גישה נדחתה — מנהלים בלבד</p>';
+    return;
+  }
+
+  try {
+    const snap = await db.collection('access_requests')
+      .where('status', '==', 'pending')
+      .get();
+
+    // Sort client-side to avoid requiring a Firestore composite index
+    const requests = snap.docs
+      .map(d => ({ id: d.id, ...d.data() }))
+      .sort((a, b) => (b.timestamp?.toMillis?.() || 0) - (a.timestamp?.toMillis?.() || 0));
+
+    // Update badge in sidebar
+    if (badge) {
+      if (requests.length > 0) {
+        badge.textContent    = requests.length;
+        badge.style.display  = 'inline-block';
+      } else {
+        badge.style.display  = 'none';
+      }
+    }
+    if (countEl) countEl.textContent = requests.length + ' בקשות ממתינות';
+    if (!listEl) return;
+
+    if (!requests.length) {
+      listEl.innerHTML = `
+        <div class="empty" style="padding:2rem;text-align:center">
+          <span style="font-size:2rem;display:block;margin-bottom:.5rem">📭</span>
+          <h3 style="font-weight:600;margin-bottom:.3rem">אין בקשות ממתינות</h3>
+          <p style="color:var(--muted);font-size:.88rem">כל הבקשות אושרו או שאין בקשות חדשות</p>
+        </div>`;
+      return;
+    }
+
+    const rows = requests.map(req => {
+      const ts = req.timestamp?.toDate?.();
+      const dateStr = ts
+        ? ts.toLocaleDateString('he-IL', { day: '2-digit', month: '2-digit', year: 'numeric',
+            hour: '2-digit', minute: '2-digit' })
+        : '—';
+      return `
+        <tr id="req-row-${esc(req.id)}">
+          <td style="font-weight:600">${esc(req.name || '—')}</td>
+          <td style="font-size:.84rem;font-family:monospace;direction:ltr;text-align:left">${esc(req.email)}</td>
+          <td>${esc(req.lecturer || '—')}</td>
+          <td style="font-size:.8rem;color:var(--muted);white-space:nowrap">${dateStr}</td>
+          <td>
+            <span class="badge" style="background:#fff7ed;color:#9a3412;border:1px solid #fdba74">ממתין</span>
+          </td>
+          <td>
+            <button class="btn btn-success btn-sm" onclick="approveAccessRequest('${esc(req.id)}','${esc(req.email)}','${esc(req.name || '')}')">
+              ✅ אשר גישה
+            </button>
+          </td>
+        </tr>`;
+    }).join('');
+
+    listEl.innerHTML = `
+      <table class="tbl">
+        <thead>
+          <tr>
+            <th>שם</th>
+            <th style="direction:ltr;text-align:left">אימייל</th>
+            <th>מרצה</th>
+            <th>תאריך</th>
+            <th>סטטוס</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>${rows}</tbody>
+      </table>`;
+
+  } catch (e) {
+    console.error('renderRequestsSection error:', e);
+    if (listEl) listEl.innerHTML = `<p style="color:var(--danger);padding:1rem">${esc(e.message)}</p>`;
+  }
+}
+
+/**
+ * מאשר בקשת גישה:
+ *  1. מוסיף את המייל ל-authorized_users (active:true)
+ *  2. מעדכן את הבקשה המקורית ל-status:'approved'
+ *  3. שולח מייל ברכה
+ */
+async function approveAccessRequest(requestId, email, name) {
+  if (!adminUser || !ADMIN_EMAILS.some(e => e.toLowerCase() === (adminUser.email || '').toLowerCase())) {
+    toast('גישה נדחתה — מנהלים בלבד', 'error');
+    return;
+  }
+
+  const btn = document.querySelector(`#req-row-${CSS.escape(requestId)} .btn-success`);
+  if (btn) { btn.disabled = true; btn.textContent = 'מאשר...'; }
+
+  try {
+    const normalizedEmail = email.toLowerCase().trim();
+
+    // 1. הוסף ל-authorized_users
+    await db.collection('authorized_users').doc(normalizedEmail).set({
+      active:     true,
+      email:      normalizedEmail,
+      name:       name || '',
+      addedBy:    adminUser.email,
+      addedAt:    firebase.firestore.FieldValue.serverTimestamp(),
+      source:     'access_request',
+    }, { merge: true });
+
+    // 2. עדכן סטטוס הבקשה
+    await db.collection('access_requests').doc(requestId).set({
+      status:     'approved',
+      approvedBy: adminUser.email,
+      approvedAt: firebase.firestore.FieldValue.serverTimestamp(),
+    }, { merge: true });
+
+    // 3. שלח מייל ברכה (fire-and-forget)
+    sendWelcomeEmail(normalizedEmail, name);
+
+    toast(`✅ ${normalizedEmail} אושר בהצלחה — נשלח מייל ברכה`, 'success');
+
+    // הסר את השורה מה-UI ללא רענון מלא
+    const row = document.getElementById(`req-row-${requestId}`);
+    if (row) {
+      row.style.transition = 'opacity .3s';
+      row.style.opacity    = '0';
+      setTimeout(() => {
+        row.remove();
+        // עדכן את מונה הבקשות
+        const tbody  = document.querySelector('#requests-list-wrap tbody');
+        const countEl = document.getElementById('requests-count');
+        const badge   = document.getElementById('requests-badge');
+        const remaining = tbody ? tbody.querySelectorAll('tr').length : 0;
+        if (countEl) countEl.textContent = remaining + ' בקשות ממתינות';
+        if (badge) {
+          if (remaining > 0) { badge.textContent = remaining; }
+          else               { badge.style.display = 'none'; }
+        }
+        if (!remaining && tbody) {
+          document.getElementById('requests-list-wrap').innerHTML = `
+            <div class="empty" style="padding:2rem;text-align:center">
+              <span style="font-size:2rem;display:block;margin-bottom:.5rem">📭</span>
+              <h3 style="font-weight:600;margin-bottom:.3rem">אין בקשות ממתינות</h3>
+              <p style="color:var(--muted);font-size:.88rem">כל הבקשות אושרו</p>
+            </div>`;
+        }
+      }, 350);
+    }
+
+  } catch (err) {
+    console.error('approveAccessRequest error:', err);
+    toast('שגיאה באישור הבקשה: ' + err.message, 'error');
+    if (btn) { btn.disabled = false; btn.textContent = '✅ אשר גישה'; }
+  }
+}
+
+/**
+ * טוען בשקט את מספר הבקשות הממתינות ומעדכן את הבדאג' בסיידבר.
+ * נקרא בעת אתחול האדמין.
+ */
+async function _loadRequestsBadge() {
+  try {
+    const snap = await db.collection('access_requests')
+      .where('status', '==', 'pending')
+      .get();
+    const badge = document.getElementById('requests-badge');
+    if (!badge) return;
+    if (snap.size > 0) {
+      badge.textContent   = snap.size;
+      badge.style.display = 'inline-block';
+    } else {
+      badge.style.display = 'none';
+    }
+  } catch (e) {
+    // non-critical — ignore silently
+    console.warn('_loadRequestsBadge:', e.message);
   }
 }

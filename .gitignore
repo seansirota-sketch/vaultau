@@ -1,0 +1,16 @@
+# Dependencies
+node_modules/
+
+# Netlify internal folder (this is the one we talked about!)
+.netlify/
+
+# Environment variables (secrets)
+.env
+
+# Firebase
+.firebase/
+firebase-debug.log
+
+# OS generated files (Mac/Windows hidden files)
+.DS_Store
+Thumbs.db
