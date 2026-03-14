@@ -60,27 +60,12 @@ document.addEventListener('DOMContentLoaded', () => {
       const authorized = await isUserAuthorized(email);
 
       if (!authorized) {
-        auth.signOut();
-        const errHint = window._lastAuthErr
-          ? `<p style="font-size:.75rem;color:#9ca3af;margin:.5rem 0 0;direction:ltr">(${window._lastAuthErr})</p>`
-          : '';
-        document.getElementById('app').innerHTML = `
-          <div class="auth-wrap">
-            <div class="auth-card" style="text-align:center">
-              <div class="auth-logo">
-                <span class="icon">🔒</span>
-                <h1>גישה נדחתה</h1>
-              </div>
-              <p style="color:var(--danger);margin:.5rem 0 1.2rem">
-                האימייל <strong>${email}</strong> אינו ברשימת הסטודנטים המורשים.
-              </p>
-              ${errHint}
-              <p style="font-size:.85rem;color:var(--light)">פנה למנהל הקורס להוספת הרשאה.</p>
-              <button class="btn btn-primary" style="margin-top:1.2rem;width:100%;justify-content:center"
-                onclick="renderAuth()">חזרה לכניסה</button>
-            </div>
-          </div>`;
+        // ✅ Do NOT sign out here — the user must stay authenticated so
+        // Firestore's  allow create: if isLoggedIn()  rule is satisfied
+        // when they submit the access-request form.
+        // Sign-out happens only if the user clicks "← חזרה לכניסה".
         STATE._blockNextAuthRender = true;
+        renderAccessRequestForm(email, user.displayName || '');
         return;
       }
 
@@ -235,6 +220,185 @@ function renderAuth() {
   });
 }
 
+
+/* ══════════════════════════════════════════════════════════
+   ACCESS REQUEST FORM  — shown when isUserAuthorized → false
+══════════════════════════════════════════════════════════ */
+
+function renderAccessRequestForm(email, name = '') {
+  document.getElementById('app').innerHTML = `
+    <div class="auth-wrap" style="padding:1.5rem">
+      <div class="auth-card" style="max-width:460px">
+
+        <!-- Header -->
+        <div class="auth-logo" style="margin-bottom:1.2rem">
+          <span class="icon">🔐</span>
+          <h1 style="font-size:1.2rem">אין לך הרשאת גישה למאגר המבחנים</h1>
+          <p style="font-size:.84rem;color:var(--muted);margin-top:.4rem;line-height:1.6">
+            המאגר פתוח כרגע לסטודנטים של מרצים נבחרים בלבד.<br>
+            אם הינך סטודנט בקורס, מלא את הפרטים הבאים כדי לקבל גישה.
+          </p>
+        </div>
+
+        <!-- Success state (hidden initially) -->
+        <div id="req-success" style="display:none;text-align:center;padding:1rem 0">
+          <div style="font-size:2.5rem;margin-bottom:.75rem">✅</div>
+          <h3 style="color:var(--success);font-size:1.05rem;margin-bottom:.5rem">בקשתך נשלחה!</h3>
+          <p style="font-size:.88rem;color:var(--muted);line-height:1.7">
+            המתן לאישור המנהל.<br>
+            תקבל מייל ברגע שהגישה תאושר.
+          </p>
+          <button class="btn btn-secondary" style="margin-top:1.2rem;width:100%;justify-content:center"
+            onclick="renderAuth()">חזרה לכניסה</button>
+        </div>
+
+        <!-- Form -->
+        <div id="req-form">
+          <div id="req-err" class="form-error"></div>
+
+          <div class="form-group">
+            <label>שם מלא</label>
+            <input id="req-name" type="text" placeholder="ישראל ישראלי"
+              value="${esc(name)}" autocomplete="name">
+          </div>
+
+          <div class="form-group">
+            <label>אימייל אוניברסיטאי</label>
+            <input id="req-email" type="email" value="${esc(email)}"
+              placeholder="your@mail.tau.ac.il" autocomplete="email">
+          </div>
+
+          <div class="form-group">
+            <label>מרצה</label>
+            <select id="req-lecturer">
+              <option value="" disabled selected>בחר מרצה...</option>
+              <option value="סמיון אלסקר">סמיון אלסקר</option>
+              <option value="ענת אמיר">ענת אמיר</option>
+            </select>
+          </div>
+
+          <button id="req-submit-btn" class="btn btn-primary"
+            style="width:100%;justify-content:center;margin-top:.5rem;height:42px"
+            onclick="submitAccessRequest()">
+            <span id="req-btn-text">שלח בקשת גישה ←</span>
+            <span id="req-btn-spin" style="display:none">
+              <span class="spinner"
+                style="width:18px;height:18px;border-width:2.5px;
+                       border-color:rgba(255,255,255,.35);border-top-color:#fff;
+                       display:inline-block;margin:0"></span>
+            </span>
+          </button>
+
+          <button class="btn"
+            style="width:100%;justify-content:center;margin-top:.55rem;
+                   color:var(--muted);background:transparent;border-color:transparent;font-size:.82rem"
+            onclick="auth.signOut().catch(()=>{}).finally(()=>renderAuth())">← חזרה לכניסה</button>
+        </div>
+
+      </div>
+    </div>`;
+
+  document.getElementById('req-name')?.addEventListener('keydown', e => {
+    if (e.key === 'Enter') document.getElementById('req-lecturer')?.focus();
+  });
+}
+
+async function submitAccessRequest() {
+  const name     = (document.getElementById('req-name')?.value     || '').trim();
+  const email    = (document.getElementById('req-email')?.value    || '').trim().toLowerCase();
+  const lecturer = (document.getElementById('req-lecturer')?.value || '').trim();
+
+  const errEl = document.getElementById('req-err');
+  function showErr(msg) {
+    if (!errEl) return;
+    errEl.textContent = msg;
+    errEl.classList.add('show');
+  }
+  if (errEl) errEl.classList.remove('show');
+
+  if (!name)     return showErr('נא להזין שם מלא');
+  if (!email)    return showErr('לא ניתן לזהות את האימייל');
+  if (!lecturer) return showErr('נא לבחור מרצה');
+
+  // ── Loading state ────────────────────────────────────────
+  const btn     = document.getElementById('req-submit-btn');
+  const btnText = document.getElementById('req-btn-text');
+  const btnSpin = document.getElementById('req-btn-spin');
+  if (btn)     btn.disabled          = true;
+  if (btnText) btnText.style.display = 'none';
+  if (btnSpin) btnSpin.style.display = 'inline-flex';
+
+  // Keep a reference to the current user NOW, before any async operations
+  // that might change auth state.
+  const currentUser = auth.currentUser;
+
+  /**
+   * Cleanup helper — always called at the end (success or failure).
+   * If the session is anonymous:
+   *   1. delete() — removes the account from Firebase Auth permanently (no ghost users).
+   *   2. Falls back to signOut() if delete fails (e.g. token expired).
+   * If the session is not anonymous (Google / email):
+   *   — do nothing; the user stays signed in normally.
+   */
+  async function _cleanupAnonymousSession() {
+    if (!currentUser?.isAnonymous) return;
+    try {
+      await currentUser.delete();
+    } catch (deleteErr) {
+      console.warn('Anonymous user delete failed, falling back to signOut:', deleteErr.message);
+      try { await auth.signOut(); } catch (_) {}
+    }
+  }
+
+  try {
+    // ── Duplicate check (best-effort — only admins can list this collection) ──
+    try {
+      const existing = await db.collection('access_requests')
+        .where('email', '==', email)
+        .where('status', '==', 'pending')
+        .limit(1)
+        .get();
+      if (!existing.empty) {
+        // Already submitted — show success and clean up
+        document.getElementById('req-form').style.display    = 'none';
+        document.getElementById('req-success').style.display = 'block';
+        await _cleanupAnonymousSession();
+        return;
+      }
+    } catch (_dupErr) {
+      // Non-admin users can't query this collection — skip and proceed to create
+    }
+
+    // ── Write to Firestore ───────────────────────────────
+    await db.collection('access_requests').add({
+      name,
+      email,
+      lecturer,
+      timestamp: firebase.firestore.FieldValue.serverTimestamp(),
+      status: 'pending',
+    });
+
+    // ── Show success ─────────────────────────────────────
+    document.getElementById('req-form').style.display    = 'none';
+    document.getElementById('req-success').style.display = 'block';
+
+    // Delete the anonymous account (or sign out as fallback).
+    // This prevents ghost accounts piling up in Firebase Auth,
+    // and ensures the user can sign in cleanly with Google after approval.
+    await _cleanupAnonymousSession();
+
+  } catch (err) {
+    console.error('submitAccessRequest error:', err);
+    showErr('אירעה שגיאה בשליחת הבקשה. נסה שוב.');
+    if (btn)     btn.disabled          = false;
+    if (btnText) btnText.style.display = 'inline';
+    if (btnSpin) btnSpin.style.display = 'none';
+    // Safety net: sign out even on failure so we're never stuck with
+    // a broken anonymous session.
+    try { await auth.signOut(); } catch (_) {}
+  }
+}
+
 function switchTab(t) {
   document.querySelectorAll('.auth-tab').forEach((el, i) =>
     el.classList.toggle('active', (i === 0) === (t === 'login'))
@@ -280,7 +444,9 @@ function togglePassVis(inputId, btnId) {
 }
 
 function authBusy(busy) {
-  document.getElementById('auth-loading').style.display = busy ? 'block' : 'none';
+  // Guard: auth-form elements may not exist when we're on the request form page
+  const loadEl = document.getElementById('auth-loading');
+  if (loadEl) loadEl.style.display = busy ? 'block' : 'none';
   const lb = document.getElementById('login-btn');
   const sb = document.getElementById('signup-btn');
   if (lb) lb.disabled = busy;
@@ -294,14 +460,33 @@ async function doLogin() {
 
   authBusy(true);
   try {
-    await auth.signInWithEmailAndPassword(email, pass);
-    // onAuthStateChanged will handle the rest
+    const cred = await auth.signInWithEmailAndPassword(email, pass);
+
+    // ── Authorization check after successful Firebase sign-in ──
+    // We stay signed in (so we know the email) but redirect unauthorized
+    // users to the access-request form instead of dropping them in limbo.
+    const authorized = await isUserAuthorized(cred.user.email || email);
+    if (!authorized) {
+      authBusy(false);
+      // Keep the Firebase session alive — renderAccessRequestForm reads
+      // the email from the readonly field and submits to Firestore.
+      // onAuthStateChanged will NOT render anything because
+      // STATE._blockNextAuthRender is set inside renderAccessRequestForm's
+      // enclosing flow (set before this call path was reached in the sign-up
+      // route). For the login route we must set it here.
+      STATE._blockNextAuthRender = true;
+      renderAccessRequestForm(cred.user.email || email, cred.user.displayName || '');
+      return;
+    }
+
+    // onAuthStateChanged will handle the authorized flow
   } catch (e) {
     const messages = {
       'auth/user-not-found':     'אימייל לא קיים במערכת',
       'auth/wrong-password':     'סיסמה שגויה',
       'auth/invalid-email':      'פורמט אימייל לא תקין',
       'auth/too-many-requests':  'יותר מדי ניסיונות — נסה שוב מאוחר יותר',
+      'auth/invalid-credential': 'אימייל או סיסמה שגויים',
     };
     authErr(messages[e.code] || 'שגיאת התחברות: ' + e.message);
     authBusy(false);
@@ -317,10 +502,29 @@ async function doSignup() {
 
   authBusy(true);
   try {
+    // ── Check authorization BEFORE creating a Firebase account ──
+    // This prevents "ghost accounts": users who exist in Auth but not in the whitelist.
+    // If they try to sign up again they'd get "email already in use" — very confusing.
+    const authorized = await isUserAuthorized(email);
+    if (!authorized) {
+      authBusy(false);
+      // Sign in anonymously so the Firestore access_requests write has
+      // request.auth != null (rule: allow create: if isLoggedIn()).
+      // The anonymous session is cleaned up when the user clicks "חזרה לכניסה".
+      try {
+        await auth.signInAnonymously();
+      } catch (_) {
+        // If anonymous auth is disabled in the Firebase console, the write
+        // will still be attempted — the Firestore rule must then be:
+        // allow create: if true;
+      }
+      renderAccessRequestForm(email, name);
+      return;
+    }
+
     const cred = await auth.createUserWithEmailAndPassword(email, pass);
     await cred.user.updateProfile({ displayName: name });
 
-    // Create user doc in Firestore — only for whitelisted users
     await saveUserData(cred.user.uid, {
       uid:              cred.user.uid,
       displayName:      name,
@@ -331,7 +535,7 @@ async function doSignup() {
     // onAuthStateChanged will handle the rest
   } catch (e) {
     const messages = {
-      'auth/email-already-in-use': 'אימייל כבר קיים במערכת',
+      'auth/email-already-in-use': 'אימייל כבר קיים במערכת — נסה להתחבר במקום להירשם',
       'auth/invalid-email':        'פורמט אימייל לא תקין',
       'auth/weak-password':        'הסיסמה חלשה מדי',
     };
