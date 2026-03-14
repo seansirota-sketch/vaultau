@@ -112,7 +112,9 @@ async function isUserAuthorized(email) {
 
   // 2. Dynamic check via Firestore
   try {
-    const doc = await db.collection('authorized_users').doc(normalized).get();
+    // source:'server' bypasses the local Firestore cache — ensures we always
+    // get the latest authorization status, not a stale 'document not found'.
+    const doc = await db.collection('authorized_users').doc(normalized).get({ source: 'server' });
     return doc.exists && doc.data()?.active === true;
   } catch (err) {
     console.warn('isUserAuthorized: Firestore unreachable, falling back to static list', err);

@@ -54,22 +54,37 @@ document.addEventListener('DOMContentLoaded', () => {
       return;
     }
     if (user) {
+      // ── Anonymous users are a temporary session for Firestore writes only.
+      // Never run the auth/UI flow for them.
+      if (user.isAnonymous) return;
+
       const email = (user.email || '').toLowerCase().trim();
 
       // ── 1. Authorization check (Firestore-backed) ───────────
       const authorized = await isUserAuthorized(email);
 
       if (!authorized) {
-        // ✅ Do NOT sign out here — the user must stay authenticated so
-        // Firestore's  allow create: if isLoggedIn()  rule is satisfied
-        // when they submit the access-request form.
-        // Sign-out happens only if the user clicks "← חזרה לכניסה".
+        // Delete the real account if it was just created (prevents ghost accounts).
+        // Then sign in anonymously so submitAccessRequest can write to Firestore
+        // (rule: allow create: if isLoggedIn()).
         STATE._blockNextAuthRender = true;
+        try { await user.delete(); } catch (_) {}
+        try { await auth.signInAnonymously(); } catch (_) {}
         renderAccessRequestForm(email, user.displayName || '');
         return;
       }
 
       STATE.fireUser = user;
+      // Save user data on first sign-in (display name may have just been set).
+      if (!STATE.userData) {
+        await saveUserData(user.uid, {
+          uid:              user.uid,
+          displayName:      user.displayName || '',
+          email:            email,
+          starredQuestions: [],
+          createdAt:        firebase.firestore.FieldValue.serverTimestamp(),
+        }).catch(() => {});
+      }
       STATE.userData = await fetchUserData(user.uid, user.email);
       STATE.doneExams       = STATE.userData?.doneExams       || [];
       STATE.inProgressExams = STATE.userData?.inProgressExams || [];
@@ -502,37 +517,12 @@ async function doSignup() {
 
   authBusy(true);
   try {
-    // ── Check authorization BEFORE creating a Firebase account ──
-    // This prevents "ghost accounts": users who exist in Auth but not in the whitelist.
-    // If they try to sign up again they'd get "email already in use" — very confusing.
-    const authorized = await isUserAuthorized(email);
-    if (!authorized) {
-      authBusy(false);
-      // Sign in anonymously so the Firestore access_requests write has
-      // request.auth != null (rule: allow create: if isLoggedIn()).
-      // The anonymous session is cleaned up when the user clicks "חזרה לכניסה".
-      try {
-        await auth.signInAnonymously();
-      } catch (_) {
-        // If anonymous auth is disabled in the Firebase console, the write
-        // will still be attempted — the Firestore rule must then be:
-        // allow create: if true;
-      }
-      renderAccessRequestForm(email, name);
-      return;
-    }
-
+    // Create the account — onAuthStateChanged will run isUserAuthorized
+    // and handle both the authorized (→ app) and unauthorized (→ request form)
+    // paths. This avoids all anonymous-auth timing issues.
     const cred = await auth.createUserWithEmailAndPassword(email, pass);
     await cred.user.updateProfile({ displayName: name });
-
-    await saveUserData(cred.user.uid, {
-      uid:              cred.user.uid,
-      displayName:      name,
-      email:            email,
-      starredQuestions: [],
-      createdAt:        firebase.firestore.FieldValue.serverTimestamp(),
-    });
-    // onAuthStateChanged will handle the rest
+    // onAuthStateChanged will handle the rest (save user data + route)
   } catch (e) {
     const messages = {
       'auth/email-already-in-use': 'אימייל כבר קיים במערכת — נסה להתחבר במקום להירשם',
