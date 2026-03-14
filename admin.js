@@ -2067,6 +2067,39 @@ async function renderPermissionsSection() {
   }
 }
 
+/* ══════════════════════════════════════════════════════════
+   PERMISSIONS MANAGER  —  UPDATED addAuthorizedEmails
+   קטע זה מחליף את הפונקציה הקיימת ב-admin.js (שורות 2070–2120)
+   ══════════════════════════════════════════════════════════ */
+
+/**
+ * שולח מייל ברכה דרך Netlify Function.
+ * נקרא בצורה fire-and-forget (לא חוסם את ה-UI).
+ *
+ * @param {string} email  — כתובת המייל של הסטודנט
+ * @param {string} [name] — שם מלא (אופציונלי)
+ */
+async function sendWelcomeEmail(email, name = '') {
+  try {
+    const res = await fetch('/.netlify/functions/send-welcome-email', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, name }),
+    });
+
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      console.warn(`sendWelcomeEmail failed for ${email}:`, data.error || res.status);
+    } else {
+      console.log(`✉️ Welcome email queued → ${email}`);
+    }
+  } catch (err) {
+    // שגיאת רשת — לא עוצרים את כל תהליך ההוספה בגללה
+    console.warn('sendWelcomeEmail network error:', err.message);
+  }
+}
+
+/* ── מחליף את addAuthorizedEmails הקיימת ── */
 async function addAuthorizedEmails() {
   if (!adminUser || !ADMIN_EMAILS.some(e => e.toLowerCase() === (adminUser.email || '').toLowerCase())) {
     toast('גישה נדחתה — מנהלים בלבד', 'error');
@@ -2093,15 +2126,27 @@ async function addAuthorizedEmails() {
   if (btn) { btn.disabled = true; btn.textContent = '💾 שומר...'; }
 
   try {
+    /* ── 1. טען את הרשימה הקיימת בקריאה אחת (collection-level read) ── */
+    const existingSnap = await db.collection('authorized_users').get();
+    const alreadyActive = new Set(
+      existingSnap.docs
+        .filter(d => d.data().active === true)
+        .map(d => d.id)   // document ID = normalized email
+    );
+
+    // מיילים שלא היו פעילים עד כה — אלה יקבלו מייל ברכה
+    const newEmails = unique.filter(e => !alreadyActive.has(e));
+
+    /* ── 2. כתוב ל-Firestore בצ'אנקים ── */
     const CHUNK = 400;
     for (let i = 0; i < unique.length; i += CHUNK) {
       const batch = db.batch();
       unique.slice(i, i + CHUNK).forEach(email => {
         const ref = db.collection('authorized_users').doc(email);
         batch.set(ref, {
-          active:   true,
-          addedBy:  adminUser.email,
-          addedAt:  firebase.firestore.FieldValue.serverTimestamp(),
+          active: true,
+          addedBy: adminUser.email,
+          addedAt: firebase.firestore.FieldValue.serverTimestamp(),
         }, { merge: true });
       });
       await batch.commit();
@@ -2109,6 +2154,21 @@ async function addAuthorizedEmails() {
 
     toast(`✅ ${unique.length} מיילים נוספו בהצלחה`, 'success');
     textarea.value = '';
+
+    /* ── 3. שלח מיילי ברכה רק למיילים החדשים — fire-and-forget ── */
+    if (newEmails.length > 0) {
+      toast(`✉️ שולח ${newEmails.length} מיילי ברכה...`, 'info');
+
+      // שולחים במקביל, עם throttle קל (כדי לא לדפוק SendGrid בבת אחת)
+      const MAIL_BATCH = 5; // עד 5 מיילים במקביל
+      for (let i = 0; i < newEmails.length; i += MAIL_BATCH) {
+        const chunk = newEmails.slice(i, i + MAIL_BATCH);
+        await Promise.all(chunk.map(email => sendWelcomeEmail(email)));
+      }
+
+      console.log(`📧 Welcome emails sent to ${newEmails.length} new users`);
+    }
+
     await renderPermissionsSection();
 
   } catch (e) {
@@ -2118,6 +2178,7 @@ async function addAuthorizedEmails() {
     if (btn) { btn.disabled = false; btn.textContent = '🔓 הוסף מיילים למערכת'; }
   }
 }
+
 
 async function deleteAuthorizedEmail(email) {
   if (!adminUser || !ADMIN_EMAILS.some(e => e.toLowerCase() === (adminUser.email || '').toLowerCase())) {
