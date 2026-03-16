@@ -13,7 +13,8 @@ const firebaseConfig = {
 };
 
 var ADMIN_EMAILS = [
-  "sean.sirota.2002.09@gmail.com"
+  "sean.sirota.2002.09@gmail.com",
+  "gmorag1@gmail.com"
 ];
 
 var PILOT_STUDENTS = [
