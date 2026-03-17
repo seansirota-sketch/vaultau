@@ -14,7 +14,9 @@
   window.dataLayer = window.dataLayer || [];
   function gtag(){dataLayer.push(arguments);}
   gtag('js', new Date());
-  gtag('config', 'G-SF9W1XBZZK');
+  if (location.hostname !== 'localhost' && location.hostname !== '127.0.0.1') {
+    gtag('config', 'G-SF9W1XBZZK');
+  }
 </script>
 
 <!-- Firebase v9 compat SDK -->
@@ -40,6 +42,11 @@
 <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js" async></script>
 </head>
 <body>
+
+<!-- Dev mode banner (shown only on localhost by admin.js) -->
+<div id="dev-banner" style="display:none;background:#ff9800;color:#000;text-align:center;padding:8px;font-weight:bold;font-size:15px;position:sticky;top:0;z-index:9999;">
+  🔧 מצב פיתוח — אמולטור פעיל
+</div>
 
 <!-- ═══ LOGIN SCREEN ════════════════════════════════════════ -->
 <div id="adm-login">

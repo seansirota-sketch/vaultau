@@ -31,6 +31,13 @@ const db      = firebase.firestore();
 const auth    = firebase.auth();
 const storage = typeof firebase.storage === 'function' ? firebase.storage() : null;
 
+// Connect to Firebase Emulator when running locally
+if (location.hostname === 'localhost' || location.hostname === '127.0.0.1') {
+  db.useEmulator('localhost', 8080);
+  auth.useEmulator('http://localhost:9099');
+  if (storage) storage.useEmulator('localhost', 9199);
+}
+
 async function fetchCourses() {
   const snap = await db.collection('courses').orderBy('name').get();
   return snap.docs.map(d => ({ ...d.data(), id: d.id }));

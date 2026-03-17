@@ -12,7 +12,9 @@
   window.dataLayer = window.dataLayer || [];
   function gtag(){dataLayer.push(arguments);}
   gtag('js', new Date());
-  gtag('config', 'G-SF9W1XBZZK');
+  if (location.hostname !== 'localhost' && location.hostname !== '127.0.0.1') {
+    gtag('config', 'G-SF9W1XBZZK');
+  }
 </script>
 
 <!-- Firebase v9 compat SDK -->

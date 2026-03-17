@@ -10,6 +10,11 @@ node_modules/
 # Firebase
 .firebase/
 firebase-debug.log
+ui-debug.log
+firestore-debug.log
+storage-debug.log
+emulator-data/
+firebase-export-*/
 
 # OS generated files (Mac/Windows hidden files)
 .DS_Store
