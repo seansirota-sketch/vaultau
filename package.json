@@ -1,4 +1,8 @@
 {
+  "scripts": {
+    "emulator": "firebase emulators:start --import=./emulator-data --export-on-exit=./emulator-data",
+    "dev": "netlify dev"
+  },
   "dependencies": {
     "@sendgrid/mail": "^8.1.6"
   }

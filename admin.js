@@ -146,6 +146,12 @@ async function adminLogout() {
 }
 
 document.addEventListener('DOMContentLoaded', () => {
+  // Show dev-mode banner when running on localhost (emulator)
+  if (location.hostname === 'localhost' || location.hostname === '127.0.0.1') {
+    const banner = document.getElementById('dev-banner');
+    if (banner) banner.style.display = 'block';
+  }
+
   document.getElementById('adm-pass')?.addEventListener('keydown', e => {
     if (e.key === 'Enter') adminLogin();
   });

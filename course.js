@@ -89,7 +89,7 @@ document.addEventListener('DOMContentLoaded', () => {
       STATE.doneExams       = STATE.userData?.doneExams       || [];
       STATE.inProgressExams = STATE.userData?.inProgressExams || [];
 
-      if (typeof gtag === 'function') {
+      if (typeof gtag === 'function' && location.hostname !== 'localhost' && location.hostname !== '127.0.0.1') {
         gtag('config', 'G-SF9W1XBZZK', { user_id: user.uid });
       }
 
