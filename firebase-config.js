@@ -14,6 +14,7 @@ const firebaseConfig = {
 
 var ADMIN_EMAILS = [
   "***REMOVED***",
+  "***REMOVED***",
   "***REMOVED***"
 ];
 
