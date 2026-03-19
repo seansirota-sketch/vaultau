@@ -1464,11 +1464,12 @@ async function adminAddCourse() {
       name,
       code,
       icon: randIcon(),
+      status: 'draft',  // Default to draft - admin must publish manually
       createdAt: firebase.firestore.FieldValue.serverTimestamp(),
     });
     document.getElementById('c-name').value = '';
     document.getElementById('c-code').value = '';
-    toast('✅ קורס נוסף', 'success');
+    toast('✅ קורס נוסף (בסטטוס טיוטה)', 'success');
     await renderCoursesList();
     await populateAllSelects();
     await refreshDashboard();
@@ -1483,33 +1484,92 @@ async function renderCoursesList() {
   el.innerHTML = '<div class="spinner"></div>';
 
   try {
-    const courses = await fetchCourses();
+    // Admin always sees all courses (direct query, no filter)
+    const snap = await db.collection('courses').orderBy('name').get();
+    const courses = snap.docs.map(d => ({ ...d.data(), id: d.id }));
+    
     if (!courses.length) {
       el.innerHTML = '<div class="empty"><span class="ei">📭</span><h3>אין קורסים</h3></div>';
       return;
     }
 
     // Count exams per course
-    const snap = await db.collection('exams').get();
+    const examSnap = await db.collection('exams').get();
     const examCount = {};
-    snap.docs.forEach(d => {
+    examSnap.docs.forEach(d => {
       const cid = d.data().courseId;
       examCount[cid] = (examCount[cid] || 0) + 1;
     });
 
-    const rows = courses.map(c => `<tr>
+    const rows = courses.map(c => {
+      const status = c.status || 'draft';
+      return `<tr>
       <td style="font-size:1.3rem">${esc(c.icon)}</td>
       <td><strong>${esc(c.name)}</strong></td>
       <td><code>${esc(c.code)}</code></td>
       <td>${examCount[c.id] || 0}</td>
+      <td>
+        <div class="status-btn-group" data-course-id="${c.id}">
+          <button class="status-btn ${status === 'published' ? 'active' : ''}" 
+                  onclick="updateCourseStatus('${c.id}', 'published')" 
+                  title="פורסם — גלוי לכולם">
+            🟢 פורסם
+          </button>
+          <button class="status-btn ${status === 'admin' ? 'active' : ''}" 
+                  onclick="updateCourseStatus('${c.id}', 'admin')" 
+                  title="מנהלים — גלוי למנהלים בלבד">
+            🔒 מנהלים
+          </button>
+          <button class="status-btn ${status === 'draft' ? 'active' : ''}" 
+                  onclick="updateCourseStatus('${c.id}', 'draft')" 
+                  title="טיוטה — מוסתר מכולם">
+            📝 טיוטה
+          </button>
+        </div>
+      </td>
       <td><button class="btn btn-danger btn-sm" onclick="deleteCourse('${c.id}')">🗑️</button></td>
-    </tr>`).join('');
+    </tr>`;
+    }).join('');
 
     el.innerHTML = `<table class="tbl">
-      <thead><tr><th>אייקון</th><th>שם</th><th>קוד</th><th>מבחנים</th><th></th></tr></thead>
+      <thead><tr><th>אייקון</th><th>שם</th><th>קוד</th><th>מבחנים</th><th>סטטוס</th><th></th></tr></thead>
       <tbody>${rows}</tbody></table>`;
   } catch (e) {
     el.innerHTML = `<p style="color:var(--danger)">שגיאה: ${e.message}</p>`;
+  }
+}
+
+/**
+ * Update course visibility status.
+ */
+async function updateCourseStatus(courseId, status) {
+  const validStatuses = ['published', 'admin', 'draft'];
+  if (!validStatuses.includes(status)) {
+    toast('סטטוס לא חוקי', 'error');
+    return;
+  }
+
+  // Optimistic UI update
+  const btnGroup = document.querySelector(`.status-btn-group[data-course-id="${courseId}"]`);
+  if (btnGroup) {
+    btnGroup.querySelectorAll('.status-btn').forEach(btn => btn.classList.remove('active'));
+    const btnIndex = status === 'published' ? 0 : status === 'admin' ? 1 : 2;
+    btnGroup.querySelectorAll('.status-btn')[btnIndex]?.classList.add('active');
+  }
+
+  try {
+    await db.collection('courses').doc(courseId).update({
+      status,
+      statusUpdatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+      statusUpdatedBy: adminUser?.email || 'unknown',
+    });
+
+    const statusLabels = { published: '🟢 פורסם', admin: '🔒 מנהלים', draft: '📝 טיוטה' };
+    toast(`סטטוס עודכן ל: ${statusLabels[status]}`, 'success');
+  } catch (e) {
+    console.error('updateCourseStatus error:', e);
+    toast('שגיאה בעדכון סטטוס: ' + e.message, 'error');
+    await renderCoursesList();
   }
 }
 

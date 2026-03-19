@@ -1178,3 +1178,64 @@ mjx-container { direction: ltr; }
   padding: .55rem .9rem;
   margin: 0;
 }
+
+/* ══════════════════════════════════════════════════════════
+   COURSE STATUS BUTTONS (Admin Panel)
+══════════════════════════════════════════════════════════ */
+.status-btn-group {
+  display: inline-flex;
+  gap: 4px;
+  background: #f1f5f9;
+  padding: 3px;
+  border-radius: 8px;
+}
+
+.status-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 10px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  cursor: pointer;
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: #64748b;
+  transition: all 0.2s ease;
+  white-space: nowrap;
+  font-family: inherit;
+}
+
+.status-btn:hover {
+  background: #e2e8f0;
+  color: #334155;
+}
+
+.status-btn.active {
+  background: #fff;
+  color: #1e293b;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+}
+
+.status-btn.active:first-child {
+  background: #dcfce7;
+  color: #166534;
+}
+
+.status-btn.active:nth-child(2) {
+  background: #fef3c7;
+  color: #92400e;
+}
+
+.status-btn.active:nth-child(3) {
+  background: #f1f5f9;
+  color: #475569;
+}
+
+@media (max-width: 900px) {
+  .status-btn {
+    padding: 4px 6px;
+    font-size: 0.7rem;
+  }
+}

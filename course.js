@@ -1,3 +1,4 @@
+console.log('✅ course.js LOADED - version with status filter');
 function nl2br(html){if(!html)return '';return html.replace(/\n/g,'<br>');}
 /* ============================================================
    EXAM BANK  —  course.js  (Firebase edition)
@@ -742,8 +743,30 @@ async function renderHome() {
   page.innerHTML = `<div class="container"><div class="spinner" style="margin-top:3rem"></div></div>`;
 
   try {
-    if (!STATE.courses) STATE.courses = await fetchCourses();
-    const courses = STATE.courses;
+    // Check if user is admin
+    const userEmail = (STATE.fireUser?.email || '').toLowerCase().trim();
+    const isAdmin = ADMIN_EMAILS.some(e => e.toLowerCase() === userEmail);
+    
+    console.log('renderHome - userEmail:', userEmail, 'isAdmin:', isAdmin);
+    
+    // Fetch courses from Firestore with server-side filtering
+    let snap;
+    if (isAdmin) {
+      // Admin sees published + admin-only courses (NOT drafts)
+      snap = await db.collection('courses').where('status', 'in', ['published', 'admin']).get();
+    } else {
+      // Regular user sees only published courses
+      snap = await db.collection('courses').where('status', '==', 'published').get();
+    }
+    
+    // Sort by name client-side (avoids need for composite index)
+    const courses = snap.docs
+      .map(d => ({ ...d.data(), id: d.id }))
+      .sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+    
+    console.log('renderHome - courses count:', courses.length);
+    
+    STATE.courses = courses;
 
     if (!courses.length) {
       page.innerHTML = `<div class="container">
@@ -791,9 +814,28 @@ async function renderCourse() {
   page.innerHTML = `<div class="container"><div class="spinner" style="margin-top:3rem"></div></div>`;
 
   try {
-    if (!STATE.courses) STATE.courses = await fetchCourses();
-    const course = STATE.courses.find(c => c.id === STATE.courseId);
-    if (!course) return goHome();
+    // Check if user is admin
+    const userEmail = (STATE.fireUser?.email || '').toLowerCase().trim();
+    const isAdmin = ADMIN_EMAILS.some(e => e.toLowerCase() === userEmail);
+    
+    // Fetch the course directly by ID
+    const courseDoc = await db.collection('courses').doc(STATE.courseId).get();
+    if (!courseDoc.exists) return goHome();
+    
+    const course = { ...courseDoc.data(), id: courseDoc.id };
+    
+    // Check access:
+    // - draft: no one can access (only visible in admin panel)
+    // - admin: only admins can access
+    // - published: everyone can access
+    if (course.status === 'draft') {
+      console.log('renderCourse - access denied, draft course');
+      return goHome();
+    }
+    if (course.status === 'admin' && !isAdmin) {
+      console.log('renderCourse - access denied, admin-only course');
+      return goHome();
+    }
 
     // Fetch exams (with cache)
     // Always re-fetch exams so pdfUrl and other updates are reflected immediately
@@ -1169,9 +1211,28 @@ async function renderExam() {
   page.innerHTML = `<div class="container"><div class="spinner" style="margin-top:3rem"></div></div>`;
 
   try {
-    if (!STATE.courses) STATE.courses = await fetchCourses();
-    const course = STATE.courses.find(c => c.id === STATE.courseId);
-    if (!course) return goHome();
+    // Check if user is admin
+    const userEmail = (STATE.fireUser?.email || '').toLowerCase().trim();
+    const isAdmin = ADMIN_EMAILS.some(e => e.toLowerCase() === userEmail);
+    
+    // Fetch the course directly by ID
+    const courseDoc = await db.collection('courses').doc(STATE.courseId).get();
+    if (!courseDoc.exists) return goHome();
+    
+    const course = { ...courseDoc.data(), id: courseDoc.id };
+    
+    // Check access:
+    // - draft: no one can access
+    // - admin: only admins can access
+    // - published: everyone can access
+    if (course.status === 'draft') {
+      console.log('renderExam - access denied, draft course');
+      return goHome();
+    }
+    if (course.status === 'admin' && !isAdmin) {
+      console.log('renderExam - access denied, admin-only course');
+      return goHome();
+    }
 
     const exam = await fetchExam(STATE.examId);
     if (!exam) return goCourse(STATE.courseId);
