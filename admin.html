@@ -59,6 +59,17 @@
   border-color: var(--primary, #667eea);
   background: rgba(102,126,234,.1);
 }
+#meta-autofill-banner {
+  display: none;
+  background: linear-gradient(135deg,#d1fae5,#a7f3d0);
+  border: 1.5px solid #10b981;
+  border-radius: 10px;
+  padding: .75rem 1.1rem;
+  font-size: .85rem;
+  color: #065f46;
+  font-weight: 600;
+  margin: .75rem 0 0;
+}
 </style>
 </head>
 <body>
@@ -109,6 +120,10 @@
         <a id="nav-add-exam" onclick="showSection('add-exam')">
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>
           הוספת מבחן
+        </a>
+        <a id="nav-bulk-upload" onclick="showSection('bulk-upload')">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+          העלאה מרובה
         </a>
         <a id="nav-manage" onclick="showSection('manage')">
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
@@ -224,6 +239,7 @@
             </div>
           </div>
           <div id="ae-error" class="form-error"></div>
+          <div id="meta-autofill-banner"></div>
         </div>
 
         <!-- PDF / Text import -->
@@ -233,8 +249,8 @@
           <div class="upload-zone" id="upload-zone">
             <input type="file" id="pdf-input" accept=".pdf,.txt,.tex,.lyx">
             <span class="uz-icon">📄</span>
-            <div class="uz-text">הגרר שילוב PDF לכאן</div>
-            <div class="uz-sub">או לחץ לבחירת קובץ &mdash; PDF / LaTeX / LyX / TXT</div>
+            <div class="uz-text">גרור PDF לכאן — יימלא אוטומטית</div>
+            <div class="uz-sub">קלוד Vision יחלץ שאלות · מרצים · שנה · סמסטר · מועד</div>
           </div>
 
           <div id="upload-status" style="display:none"></div>
@@ -502,6 +518,77 @@
           <div id="requests-list-wrap" style="padding:1.25rem">
             <div style="text-align:center;padding:1.5rem;color:var(--light)">לחץ על רענן לטעינת הבקשות</div>
           </div>
+        </div>
+      </div>
+
+      <!-- ── BULK UPLOAD ─────────────────────────────────────── -->
+      <div class="adm-section" id="sec-bulk-upload">
+        <div class="sec-header">
+          <h2 class="sec-title">העלאה מרובה</h2>
+        </div>
+
+        <div class="ac">
+          <div class="ac-title">הגדרות</div>
+          <div style="padding:1.25rem;display:flex;flex-direction:column;gap:1rem">
+            <div class="form-group" style="margin:0;max-width:320px">
+              <label style="font-weight:600">קורס יעד</label>
+              <select id="bulk-course">
+                <option value="">-- בחר קורס --</option>
+              </select>
+              <p style="font-size:.76rem;color:var(--muted);margin:.35rem 0 0">
+                כל הקבצים יעלו לקורס זה. שנה/סמסטר/מועד יוסקו משם הקובץ.
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <div class="ac">
+          <div class="ac-title">רשימת מרצים ידועים <span style="font-weight:400;color:var(--muted);font-size:.8rem">(אופציונלי)</span></div>
+          <div style="padding:1.25rem;display:flex;flex-direction:column;gap:.6rem">
+            <p style="font-size:.82rem;color:var(--muted);margin:0">
+              שם אחד בכל שורה. כאשר קלוד מזהה שם דומה במבחן הוא יוחלף בשם המדויק מהרשימה.
+            </p>
+            <textarea id="bulk-known-lecturers" rows="5" dir="rtl"
+              placeholder="ישראל ישראלי&#10;שרה כהן&#10;אבי לוי"
+              style="font-size:.88rem;resize:vertical;width:100%;border:1.5px solid var(--border);
+                     border-radius:8px;padding:.75rem;box-sizing:border-box;line-height:1.8;
+                     color:var(--text);font-family:inherit"></textarea>
+            <p style="font-size:.76rem;color:var(--muted);margin:0">
+              💡 שם פרטי + שם משפחה בלבד, ללא תארים (ד"ר, פרופ' וכד')
+            </p>
+          </div>
+        </div>
+
+        <div class="ac">
+          <div class="ac-title">בחר קבצי PDF</div>
+          <div style="padding:1.25rem;display:flex;flex-direction:column;gap:1rem">
+            <label class="upload-zone" id="bulk-zone" style="cursor:pointer">
+              <input type="file" id="bulk-file-input" accept=".pdf" multiple style="display:none"
+                     onchange="onBulkFilesSelected(this)">
+              <span class="uz-icon">📦</span>
+              <div class="uz-text">גרור מספר קבצי PDF לכאן</div>
+              <div class="uz-sub">או לחץ לבחירה — ניתן לבחור מספר קבצים בו-זמנית</div>
+            </label>
+
+            <div id="bulk-file-list" style="display:none;display:flex;flex-direction:column;gap:.5rem"></div>
+
+            <div style="display:flex;gap:.75rem;justify-content:flex-end;margin-top:.5rem">
+              <button class="btn btn-secondary" onclick="clearBulkFiles()">נקה</button>
+              <button id="bulk-start-btn" class="btn btn-primary btn-lg" onclick="startBulkUpload()" disabled>
+                🚀 התחל העלאה
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Progress log -->
+        <div class="ac" id="bulk-log-card" style="display:none">
+          <div class="ac-title" style="justify-content:space-between">
+            <span>יומן פעולות</span>
+            <span id="bulk-progress-label" style="font-size:.82rem;color:var(--muted);font-weight:400"></span>
+          </div>
+          <div id="bulk-log" style="padding:1rem 1.25rem;display:flex;flex-direction:column;gap:.4rem;
+               max-height:360px;overflow-y:auto;font-size:.84rem"></div>
         </div>
       </div>
 
