@@ -99,28 +99,24 @@ async function adminLogin() {
     return;
   }
 
-  // Pre-check: is this email even in ADMIN_EMAILS?
-  if (!ADMIN_EMAILS.some(e => e.toLowerCase() === email)) {
-    err.textContent = 'אין הרשאת גישה לפאנל הניהול';
-    err.classList.add('show');
-    return;
-  }
-
+  // Pre-check: is this email an admin? (quick check before Auth round-trip)
+  // Full role verification happens after sign-in via Firestore
   const btn = document.querySelector('#adm-login .btn-primary');
   if (btn) { btn.disabled = true; btn.textContent = 'מתחבר...'; }
 
   try {
     const cred = await auth.signInWithEmailAndPassword(email, pass);
 
-    // Double-check after sign-in (case-insensitive)
-    if (!ADMIN_EMAILS.some(e => e.toLowerCase() === (cred.user.email || '').toLowerCase())) {
+    // Verify role from Firestore after sign-in
+    const userDoc = await db.collection('users').doc(cred.user.uid).get();
+    if (!userDoc.exists || userDoc.data()?.role !== 'admin') {
       await auth.signOut();
       err.textContent = 'אין הרשאת גישה לפאנל הניהול';
       err.classList.add('show');
       return;
     }
 
-    adminUser = cred.user;
+    adminUser = { ...cred.user, role: 'admin' };
     showAdminApp();
   } catch (e) {
     console.error('adminLogin error:', e.code, e.message);
@@ -161,13 +157,18 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // Listen for auth state changes
   auth.onAuthStateChanged(async (user) => {
-    if (user && ADMIN_EMAILS.some(e => e.toLowerCase() === (user.email || '').toLowerCase())) {
-      adminUser = user;
-      // Stamp initial history state so Back works from first section
-      if (!history.state?.section) {
-        history.replaceState({ section: 'dashboard' }, '');
+    if (user) {
+      const userDoc = await db.collection('users').doc(user.uid).get();
+      if (userDoc.exists && userDoc.data()?.role === 'admin') {
+        adminUser = { ...user, role: 'admin' };
+        // Stamp initial history state so Back works from first section
+        if (!history.state?.section) {
+          history.replaceState({ section: 'dashboard' }, '');
+        }
+        showAdminApp();
+      } else {
+        showLoginScreen();
       }
-      showAdminApp();
     } else {
       showLoginScreen();
     }
@@ -2080,13 +2081,10 @@ async function renderPermissionsSection() {
   const countEl = document.getElementById('permissions-count');
   if (listEl) listEl.innerHTML = '<div class="spinner" style="margin:1.5rem auto"></div>';
 
-  if (!adminUser || !ADMIN_EMAILS.some(e => e.toLowerCase() === (adminUser.email || '').toLowerCase())) {
+  if (!adminUser || adminUser.role !== 'admin') {
     if (listEl) listEl.innerHTML = '<p style="color:var(--danger)">גישה נדחתה — מנהלים בלבד</p>';
     return;
   }
-
-  try {
-    const snap   = await db.collection('authorized_users').get();
     const emails = snap.docs
       .filter(d => d.data().active !== false)
       .map(d => d.id)
@@ -2170,7 +2168,7 @@ async function sendWelcomeEmail(email, name = '') {
 
 /* ── מחליף את addAuthorizedEmails הקיימת ── */
 async function addAuthorizedEmails() {
-  if (!adminUser || !ADMIN_EMAILS.some(e => e.toLowerCase() === (adminUser.email || '').toLowerCase())) {
+  if (!adminUser || adminUser.role !== 'admin') {
     toast('גישה נדחתה — מנהלים בלבד', 'error');
     return;
   }
@@ -2250,7 +2248,7 @@ async function addAuthorizedEmails() {
 
 
 async function deleteAuthorizedEmail(email) {
-  if (!adminUser || !ADMIN_EMAILS.some(e => e.toLowerCase() === (adminUser.email || '').toLowerCase())) {
+  if (!adminUser || adminUser.role !== 'admin') {
     toast('גישה נדחתה — מנהלים בלבד', 'error');
     return;
   }
@@ -2289,7 +2287,7 @@ async function renderRequestsSection() {
 
   if (listEl) listEl.innerHTML = '<div class="spinner" style="margin:1.5rem auto"></div>';
 
-  if (!adminUser || !ADMIN_EMAILS.some(e => e.toLowerCase() === (adminUser.email || '').toLowerCase())) {
+  if (!adminUser || adminUser.role !== 'admin') {
     if (listEl) listEl.innerHTML = '<p style="color:var(--danger)">גישה נדחתה — מנהלים בלבד</p>';
     return;
   }
@@ -2377,7 +2375,7 @@ async function renderRequestsSection() {
  *  3. שולח מייל ברכה
  */
 async function approveAccessRequest(requestId, email, name) {
-  if (!adminUser || !ADMIN_EMAILS.some(e => e.toLowerCase() === (adminUser.email || '').toLowerCase())) {
+  if (!adminUser || adminUser.role !== 'admin') {
     toast('גישה נדחתה — מנהלים בלבד', 'error');
     return;
   }
