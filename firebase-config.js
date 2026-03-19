@@ -12,12 +12,6 @@ const firebaseConfig = {
   measurementId: "G-SF9W1XBZZK"
 };
 
-var ADMIN_EMAILS = [
-  "sean.sirota.2002.09@gmail.com",
-  "gmorag1@gmail.com",
-  "dor17170101@gmail.com"
-];
-
 var PILOT_STUDENTS = [
   "studetn@mail.tau.ac.il"
 ];
@@ -31,6 +25,13 @@ if (!firebase.apps.length) {
 const db      = firebase.firestore();
 const auth    = firebase.auth();
 const storage = typeof firebase.storage === 'function' ? firebase.storage() : null;
+
+// Connect to Firebase Emulator when running locally
+if (location.hostname === 'localhost' || location.hostname === '127.0.0.1') {
+  db.useEmulator('localhost', 8080);
+  auth.useEmulator('http://localhost:9099');
+  if (storage) storage.useEmulator('localhost', 9199);
+}
 
 async function fetchCourses() {
   const snap = await db.collection('courses').orderBy('name').get();
@@ -75,6 +76,7 @@ async function fetchUserData(uid, email) {
   const defaults = {
     uid,
     email: email ? email.toLowerCase().trim() : null,
+    role: 'student',
     starredQuestions: [],
     difficultyVotes: {}
   };
@@ -96,9 +98,8 @@ function genId() {
 /**
  * Check whether a given email is authorized to access the app.
  * Priority:
- *   1. ADMIN_EMAILS  — always allowed (static, no network).
- *   2. Firestore `authorized_users/{email}` with active:true.
- *   3. Falls back to static PILOT_STUDENTS if Firestore is unreachable.
+ *   1. Firestore `authorized_users/{email}` with active:true.
+ *   2. Falls back to static PILOT_STUDENTS if Firestore is unreachable.
  *
  * @param {string} email  — raw email, will be normalized internally
  * @returns {Promise<boolean>}
@@ -107,12 +108,7 @@ async function isUserAuthorized(email) {
   if (!email) return false;
   const normalized = email.toLowerCase().trim();
 
-  // 1. Admins always pass — no Firestore round-trip needed
-  if ((window.ADMIN_EMAILS || []).some(e => e.toLowerCase() === normalized)) {
-    return true;
-  }
-
-  // 2. Dynamic check via Firestore
+  // Dynamic check via Firestore
   try {
     // source:'server' bypasses the local Firestore cache — ensures we always
     // get the latest authorization status, not a stale 'document not found'.
@@ -120,7 +116,7 @@ async function isUserAuthorized(email) {
     return doc.exists && doc.data()?.active === true;
   } catch (err) {
     console.warn('isUserAuthorized: Firestore unreachable, falling back to static list', err);
-    // 3. Offline / rules-error fallback — use the static list
+    // Offline / rules-error fallback — use the static list
     return (window.PILOT_STUDENTS || []).some(e => e.toLowerCase() === normalized);
   }
 }

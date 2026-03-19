@@ -7,9 +7,20 @@ node_modules/
 # Environment variables (secrets)
 .env
 
+# Firebase service account key (NEVER commit — contains production secrets)
+service-account.json
+
 # Firebase
 .firebase/
 firebase-debug.log
+ui-debug.log
+firestore-debug.log
+storage-debug.log
+emulator-data/
+firebase-export-*/
+
+# Local emulator rules (open rules, emulator only — never deploy)
+*.rules.local
 
 # OS generated files (Mac/Windows hidden files)
 .DS_Store

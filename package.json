@@ -1,5 +1,13 @@
 {
+  "scripts": {
+    "emulator": "firebase --config firebase.emulator.json emulators:start --import=./emulator-data --export-on-exit=./emulator-data",
+    "seed": "node seed/seed.js",
+    "dev": "netlify dev"
+  },
   "dependencies": {
     "@sendgrid/mail": "^8.1.6"
+  },
+  "devDependencies": {
+    "firebase-admin": "^13.7.0"
   }
 }
