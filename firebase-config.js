@@ -15,7 +15,7 @@ const firebaseConfig = {
 var ADMIN_EMAILS = [
   "sean.sirota.2002.09@gmail.com",
   "gmorag1@gmail.com",
-   "dor17170101@gmail.com"
+  "dor17170101@gmail.com"
 ];
 
 var PILOT_STUDENTS = [
