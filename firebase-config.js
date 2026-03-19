@@ -15,7 +15,7 @@ const firebaseConfig = {
 var ADMIN_EMAILS = [
   "***REMOVED***",
   "***REMOVED***",
-   "***REMOVED***"
+  "***REMOVED***"
 ];
 
 var PILOT_STUDENTS = [
