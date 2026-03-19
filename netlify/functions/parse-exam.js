@@ -8,7 +8,7 @@
    ============================================================ */
 
 const CLAUDE_API = 'https://api.anthropic.com/v1/messages';
-const MODEL      = 'claude-sonnet-4-20250514';
+const MODEL      = 'claude-opus-4-5';
 const MAX_TOKENS = 8192; // math exams with LaTeX can be verbose
 
 /* ── CORS headers ── */
@@ -38,7 +38,11 @@ function isRateLimited(ip) {
   return record.count > RATE_LIMIT_MAX;
 }
 
-/* ── Prompt builder ── */
+/* ── Prompt builders ── */
+
+/**
+ * Original text/PDF-document prompt — questions only.
+ */
 function buildPrompt(text, titleHint) {
   const hint = titleHint ? `שם/קוד המבחן: "${titleHint}".\n` : '';
   const textSection = text
@@ -77,6 +81,123 @@ letter יהיה: "1","2","3" או "א","ב","ג" — בהתאם לפורמט ה�
 • "parts" ריק ([]) אם לשאלה אין סעיפים.
 • "text" ריק ("") אם כל תוכן השאלה נמצא בסעיפים בלבד.
 • אל תכלול הוראות בחינה, כותרת עמוד, שם מרצה, שאלות בונוס שאינן שאלות — רק שאלות תוכן.${textSection}`;
+}
+
+/**
+ * Parse exam metadata from the PDF filename.
+ * Patterns: "2025AB.pdf" → year=2025, semester=א(A), moed=ב(B)
+ */
+function parseFilename(filename) {
+  if (!filename) return {};
+  const f = filename.replace(/\.[^/.]+$/, ''); // strip extension
+  const result = {};
+
+  // Year: 4-digit number starting with 20
+  const yearMatch = f.match(/20\d{2}/);
+  if (yearMatch) result.year = parseInt(yearMatch[0]);
+
+  // Semester + Moed: YYYY followed immediately by two letters  e.g. 2025AB
+  const shortCode = f.match(/20\d{2}([A-Za-z])([A-Za-z])/);
+  if (shortCode) {
+    const semLetter  = shortCode[1].toUpperCase();
+    const moedLetter = shortCode[2].toUpperCase();
+    const semMap  = { A: 'א', B: 'ב', S: 'קיץ', C: 'קיץ' };
+    const moedMap = { A: 'א', B: 'ב', C: 'ג' };
+    if (semMap[semLetter])   result.semester = semMap[semLetter];
+    if (moedMap[moedLetter]) result.moed     = moedMap[moedLetter];
+  }
+
+  // Fallback: explicit keywords
+  if (!result.semester) {
+    if      (/sem[_-]?[a1]|semester[_-]?a|סמסטר[_-]?א/i.test(f)) result.semester = 'א';
+    else if (/sem[_-]?[b2]|semester[_-]?b|סמסטר[_-]?ב/i.test(f)) result.semester = 'ב';
+    else if (/summer|קיץ/i.test(f)) result.semester = 'קיץ';
+  }
+  if (!result.moed) {
+    if      (/moed[_-]?[a1]|מועד[_-]?א/i.test(f)) result.moed = 'א';
+    else if (/moed[_-]?[b2]|מועד[_-]?ב/i.test(f)) result.moed = 'ב';
+    else if (/moed[_-]?[c3]|מועד[_-]?ג/i.test(f)) result.moed = 'ג';
+  }
+
+  return result;
+}
+
+/**
+ * Vision prompt — sent with page images.
+ * Year/semester/moed are resolved from filename; only lecturers+courseName from image.
+ */
+function buildVisionPrompt(filenameHint) {
+  const known = parseFilename(filenameHint);
+
+  const knownLines = [];
+  if (known.year)     knownLines.push(`year: ${known.year}`);
+  if (known.semester) knownLines.push(`semester: "${known.semester}"`);
+  if (known.moed)     knownLines.push(`moed: "${known.moed}"`);
+
+  const knownBlock = knownLines.length
+    ? `\n⚠️ פרטים ידועים משם הקובץ ("${filenameHint}") — העתק אותם ישירות ל-JSON: ${knownLines.join(', ')}\n`
+    : (filenameHint ? `\nשם הקובץ: "${filenameHint}"\n` : '');
+
+  const yearEx  = known.year     || 2024;
+  const semEx   = known.semester || 'א';
+  const moedEx  = known.moed     || 'ב';
+  const yearNote  = known.year     ? ` (${known.year} — אל תשנה)` : ' — 4 ספרות';
+  const semNote   = known.semester ? ` ("${known.semester}" — אל תשנה)` : ' — "א"/"ב"/"קיץ"/null';
+  const moedNote  = known.moed     ? ` ("${known.moed}" — אל תשנה)` : ' — "א"/"ב"/"ג"/null';
+
+  return `אתה מומחה לחילוץ מידע ממבחנים אקדמיים בעברית.
+קיבלת תמונות של עמודי מבחן.${knownBlock}
+
+════ חלק א — מטאדאטה ════
+
+▸ courseName — שם הקורס המלא כפי שמופיע בכותרת המבחן.
+
+▸ lecturers — הוראות מדויקות:
+  1. מצא בעמוד הראשון את השורה שמכילה "מרצים:" או "מרצה:" (עם נקודותיים).
+  2. קח את כל הטקסט שמופיע אחרי הנקודותיים באותה שורה.
+  3. פצל את הטקסט לפי פסיקים (,) — כל חתיכה בין פסיק לפסיק היא שם מרצה אחד.
+  4. לכל שם: הסר תואר שמופיע לפניו בלבד — ד"ר / פרופ' / פרופסור / Prof. / Dr. / Assoc.
+     השאר שם פרטי + שם משפחה.
+  5. כל שם → פריט נפרד במערך.
+  ⚠️ חשוב: אם יש 3 שמות מופרדים בפסיקים — המערך צריך להכיל 3 פריטים. אל תשמיט אף שם!
+  דוגמה מדויקת: "מרצים: פרופ' יעקב יעקובוב, פרופ' אסף נחמיאס, פרופ' ארז פייטן"
+  → ["יעקב יעקובוב", "אסף נחמיאס", "ארז פייטן"]   (3 פריטים, לא פחות!)
+
+▸ year${yearNote}
+▸ semester${semNote}
+▸ moed${moedNote}
+
+════ חלק ב — שאלות ════
+⚠️ אל תוסיף ניקוד לאף מילה — כתוב בדיוק כפי שמופיע בדף.
+⚠️ אל תכלול ניקוד נקודות כגון "(12 נק')" או "(10 points)" בתוך שדה text של שאלה או סעיף.
+
+• $...$ בשורה, $$...$$ בשורה נפרדת
+• \\begin{pmatrix}...\\end{pmatrix} למטריצות
+• \\begin{cases}...\\end{cases} למערכות
+• \\frac{}{}, \\sqrt{}, ^ ו-_
+• סעיפים (א)(ב)(ג) / (1)(2)(3) / .א .ב .ג → שדה letter
+• שאלת בונוס → isBonus: true
+• אל תכלול הוראות בחינה, לוגו, מספרי עמוד
+
+════ פלט JSON בלבד ════
+ללא markdown, ללא \`\`\`, ללא טקסט לפני/אחרי.
+{
+  "metadata": {
+    "courseName": "שם הקורס",
+    "lecturers": ["שם פרטי שם משפחה"],
+    "year": ${yearEx},
+    "semester": "${semEx}",
+    "moed": "${moedEx}"
+  },
+  "questions": [
+    {
+      "number": 1,
+      "text": "טקסט ראשי ללא ניקוד",
+      "isBonus": false,
+      "parts": [{ "letter": "א", "text": "טקסט סעיף ללא ניקוד" }]
+    }
+  ]
+}`;
 }
 
 /* ── Main handler ── */
@@ -132,13 +253,13 @@ exports.handler = async (event) => {
     };
   }
 
-  const { text, titleHint, isPDF, base64 } = body;
+  const { text, titleHint, isPDF, base64, images, filenameHint } = body;
 
-  if (!text && !base64) {
+  if (!text && !base64 && !images) {
     return {
       statusCode: 400,
       headers: CORS,
-      body: JSON.stringify({ error: 'Missing required field: text or base64' }),
+      body: JSON.stringify({ error: 'Missing required field: text, base64, or images' }),
     };
   }
 
@@ -154,7 +275,24 @@ exports.handler = async (event) => {
   /* ── Build Claude messages ── */
   let messages;
 
-  if (isPDF && base64) {
+  if (images && Array.isArray(images) && images.length > 0) {
+    /* Vision mode — send each page as a separate image block */
+    const content = [
+      { type: 'text', text: buildVisionPrompt(filenameHint || '') },
+    ];
+    images.forEach((imgBase64, i) => {
+      content.push({
+        type: 'text',
+        text: `\n=== עמוד ${i + 1} ===`,
+      });
+      content.push({
+        type: 'image',
+        source: { type: 'base64', media_type: 'image/jpeg', data: imgBase64 },
+      });
+    });
+    messages = [{ role: 'user', content }];
+
+  } else if (isPDF && base64) {
     /* Vision mode — send PDF as base64 document */
     messages = [{
       role: 'user',
@@ -244,7 +382,8 @@ exports.handler = async (event) => {
       headers: { ...CORS, 'Content-Type': 'application/json' },
       body: JSON.stringify({
         questions: parsed.questions,
-        usage:     data.usage, // tokens used — useful for monitoring
+        metadata:  parsed.metadata || null,  // included in vision mode, null otherwise
+        usage:     data.usage,
       }),
     };
 

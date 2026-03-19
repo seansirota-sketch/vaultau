@@ -193,6 +193,7 @@ async function initAdmin() {
     _loadRequestsBadge();
     await renderCoursesList();
     setupUploadZone();
+    setupBulkZone();
     _renderLecturersWidget();
     // ── Auto-add lecturer when user leaves the input field ───────
     const lecInp = document.getElementById('ae-lecturer-input');
@@ -239,7 +240,7 @@ async function populateAllSelects() {
     const opts = courses.map(c =>
       `<option value="${c.id}">${esc(c.name)} (${esc(c.code)})</option>`
     ).join('');
-    ['ae-course', 'manage-filter', 'an-filter'].forEach(id => {
+    ['ae-course', 'manage-filter', 'an-filter', 'bulk-course'].forEach(id => {
       const el = document.getElementById(id);
       if (el) el.innerHTML =
         (id === 'manage-filter' || id === 'an-filter' ? '<option value="">כל הקורסים</option>' :
@@ -248,6 +249,323 @@ async function populateAllSelects() {
   } catch (e) {
     console.error(e);
   }
+}
+
+/* ══════════════════════════════════════════════════════════
+   LECTURER NORMALIZATION
+   Compares detected names against all existing lecturer
+   names in Firestore to reduce OCR errors.
+══════════════════════════════════════════════════════════ */
+
+let _knownLecturers = null; // cached flat list of all lecturer names in the system
+
+async function loadKnownLecturers() {
+  if (_knownLecturers) return _knownLecturers;
+  try {
+    const snap = await db.collection('exams').get();
+    const names = new Set();
+    snap.docs.forEach(d => {
+      const lecs = d.data().lecturers;
+      if (Array.isArray(lecs)) lecs.forEach(n => { if (n) names.add(n.trim()); });
+    });
+    _knownLecturers = [...names];
+  } catch (e) {
+    _knownLecturers = [];
+  }
+  return _knownLecturers;
+}
+
+/**
+ * Read the manual lecturer list from the bulk textarea.
+ * Returns a cleaned array of names (one per line, no titles).
+ */
+function getBulkKnownLecturers() {
+  const ta = document.getElementById('bulk-known-lecturers');
+  if (!ta || !ta.value.trim()) return [];
+  return ta.value
+    .split('\n')
+    .map(line => line
+      .trim()
+      .replace(/^(ד"ר|פרופ'|פרופסור|Prof\.|Dr\.|Assoc\.)\s*/i, '')
+      .trim()
+    )
+    .filter(Boolean);
+}
+
+/**
+ * For each detected lecturer name, check if it is similar enough
+ * to a known name in the system and replace it if so.
+ * manualList (optional) takes priority over Firestore names.
+ */
+async function normalizeLecturerNames(detectedNames, manualList) {
+  if (!detectedNames || !detectedNames.length) return detectedNames;
+
+  const hasManual = manualList && manualList.length > 0;
+
+  if (hasManual) {
+    // Manual list: only keep names that match something in the list.
+    // Use word-level matching so partial OCR names still match.
+    return detectedNames
+      .map(detected => {
+        let bestName  = null;
+        let bestScore = 0;
+        manualList.forEach(k => {
+          const score = _lecturerMatchScore(detected, k);
+          if (score > bestScore) { bestScore = score; bestName = k; }
+        });
+        return bestScore >= 0.40 ? bestName : null;
+      })
+      .filter(Boolean);
+  }
+
+  // No manual list → Firestore fallback, keep original if no match
+  const firestoreNames = await loadKnownLecturers();
+  if (!firestoreNames.length) return detectedNames;
+
+  return detectedNames.map(detected => {
+    let bestName  = detected;
+    let bestScore = 0;
+    firestoreNames.forEach(k => {
+      const score = _lecturerMatchScore(detected, k);
+      if (score > bestScore) { bestScore = score; bestName = k; }
+    });
+    return bestScore >= 0.40 ? bestName : detected;
+  });
+}
+
+/* ══════════════════════════════════════════════════════════
+   BULK UPLOAD
+══════════════════════════════════════════════════════════ */
+
+let _bulkFiles = []; // Array of File objects
+
+function onBulkFilesSelected(input) {
+  const files = Array.from(input.files || []);
+  if (!files.length) return;
+  files.forEach(f => {
+    if (!_bulkFiles.find(x => x.name === f.name)) _bulkFiles.push(f);
+  });
+  renderBulkFileList();
+  input.value = ''; // reset so same file can be re-added after clear
+}
+
+function renderBulkFileList() {
+  const list = document.getElementById('bulk-file-list');
+  const btn  = document.getElementById('bulk-start-btn');
+  if (!list) return;
+
+  if (!_bulkFiles.length) {
+    list.style.display = 'none';
+    if (btn) btn.disabled = true;
+    return;
+  }
+
+  list.style.display = 'flex';
+  if (btn) btn.disabled = false;
+
+  list.innerHTML = _bulkFiles.map((f, i) => `
+    <div id="bulk-file-row-${i}" style="display:flex;align-items:center;gap:.6rem;padding:.5rem .75rem;
+         background:var(--bg,#f9fafb);border:1.5px solid var(--border,#e5e7eb);border-radius:8px">
+      <span style="font-size:1.1rem">📄</span>
+      <span style="flex:1;font-size:.85rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(f.name)}</span>
+      <span style="font-size:.75rem;color:var(--muted)">${(f.size/1024).toFixed(0)} KB</span>
+      <span id="bulk-status-${i}" style="font-size:.8rem;min-width:60px;text-align:center"></span>
+      <button class="btn btn-danger btn-sm" onclick="removeBulkFile(${i})" style="flex-shrink:0">✕</button>
+    </div>`).join('');
+
+  // Setup drag-and-drop on zone
+  const zone = document.getElementById('bulk-zone');
+  if (zone) {
+    zone.querySelector('.uz-text').textContent = `${_bulkFiles.length} קבצים נבחרו`;
+    zone.querySelector('.uz-sub').textContent  = 'לחץ להוספת קבצים נוספים';
+  }
+}
+
+function removeBulkFile(i) {
+  _bulkFiles.splice(i, 1);
+  renderBulkFileList();
+}
+
+function clearBulkFiles() {
+  _bulkFiles = [];
+  const zone = document.getElementById('bulk-zone');
+  if (zone) {
+    zone.querySelector('.uz-text').textContent = 'גרור מספר קבצי PDF לכאן';
+    zone.querySelector('.uz-sub').textContent  = 'או לחץ לבחירה — ניתן לבחור מספר קבצים בו-זמנית';
+  }
+  renderBulkFileList();
+  const logCard = document.getElementById('bulk-log-card');
+  if (logCard) logCard.style.display = 'none';
+}
+
+function bulkLog(msg, type = '') {
+  const log = document.getElementById('bulk-log');
+  if (!log) return;
+  const colors = { success: '#065f46', error: '#991b1b', info: 'var(--text)', warn: '#92400e' };
+  const icons  = { success: '✅', error: '❌', warn: '⚠️', info: '·' };
+  const el = document.createElement('div');
+  el.style.cssText = `color:${colors[type]||colors.info};padding:.15rem 0;border-bottom:1px solid var(--border,#f3f4f6)`;
+  el.textContent = `${icons[type]||''} ${msg}`;
+  log.appendChild(el);
+  log.scrollTop = log.scrollHeight;
+}
+
+function setBulkFileStatus(i, icon, color) {
+  const el = document.getElementById(`bulk-status-${i}`);
+  if (el) { el.textContent = icon; el.style.color = color; }
+}
+
+async function startBulkUpload() {
+  const courseId = document.getElementById('bulk-course').value;
+  if (!courseId) { toast('נא לבחור קורס', 'error'); return; }
+  if (!_bulkFiles.length) { toast('לא נבחרו קבצים', 'error'); return; }
+
+  const btn = document.getElementById('bulk-start-btn');
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ מעלה...'; }
+
+  // Show log
+  const logCard = document.getElementById('bulk-log-card');
+  const logEl   = document.getElementById('bulk-log');
+  if (logCard) logCard.style.display = '';
+  if (logEl)   logEl.innerHTML = '';
+
+  // Invalidate lecturer cache so we pick up any newly added names
+  _knownLecturers = null;
+
+  // Collect manual lecturer list once before the loop
+  const manualLecturers = getBulkKnownLecturers();
+  if (manualLecturers.length) {
+    bulkLog(`רשימת מרצים ידועים: ${manualLecturers.join(', ')}`, 'info');
+  }
+
+  let succeeded = 0;
+  let failed    = 0;
+
+  for (let i = 0; i < _bulkFiles.length; i++) {
+    const file = _bulkFiles[i];
+    const label = document.getElementById(`bulk-progress-label`);
+    if (label) label.textContent = `${i + 1} / ${_bulkFiles.length}`;
+
+    setBulkFileStatus(i, '⏳', '#d97706');
+    bulkLog(`מתחיל: ${file.name}`, 'info');
+
+    try {
+      // 1. Render PDF to images
+      showSpinner(`🖼️ ${file.name} — ממיר לתמונות...`);
+      let images = null;
+      try {
+        images = await renderPdfToBase64Images(file, 15);
+      } catch (e) {
+        bulkLog(`  ⚠️ pdf.js נכשל, עובר למצב base64`, 'warn');
+      }
+
+      // 2. Parse with Claude Vision
+      let result;
+      if (images && images.length) {
+        showSpinner(`🤖 ${file.name} — Claude Vision מנתח...`);
+        result = await processWithVision(images, file.name);
+      } else {
+        showSpinner(`🤖 ${file.name} — Claude מנתח PDF...`);
+        const base64 = await new Promise((res, rej) => {
+          const r = new FileReader();
+          r.onload  = () => res(r.result.split(',')[1]);
+          r.onerror = () => rej(new Error('קריאת קובץ נכשלה'));
+          r.readAsDataURL(file);
+        });
+        result = await processWithClaude('', { isPDF: true, base64 });
+        if (!result.questions) result = { questions: result, metadata: null };
+      }
+
+      const meta      = result.metadata || {};
+      const questions = (result.questions || []).filter(q => q.text || q.subs?.length);
+
+      // 3. Normalize lecturer names against manual list + Firestore
+      let lecturers = meta.lecturers || [];
+      lecturers = await normalizeLecturerNames(lecturers, manualLecturers);
+
+      // 4. Build title from filename
+      const known = parseFilenameForBulk(file.name);
+      const title = generateExamTitle(known.year || meta.year, known.semester || meta.semester, known.moed || meta.moed);
+
+      bulkLog(`  זוהו ${questions.length} שאלות | כותרת: ${title || '(ללא)'} | מרצים: ${lecturers.join(', ') || '—'}`, 'info');
+
+      // 5. Upload PDF to Storage
+      showSpinner(`📤 ${file.name} — מעלה PDF...`);
+      const examId = genId();
+      let pdfUrl = null;
+      try {
+        const stor = typeof storage !== 'undefined' && storage ? storage : firebase.storage();
+        const ref  = stor.ref(`exam-pdfs/${examId}.pdf`);
+        await ref.put(file);
+        pdfUrl = await ref.getDownloadURL();
+      } catch (e) {
+        bulkLog(`  ⚠️ העלאת PDF נכשלה: ${e.message}`, 'warn');
+      }
+
+      // 6. Check for duplicate title in this course
+      const finalTitle = title || file.name.replace(/\.[^/.]+$/, '');
+      const dupSnap = await db.collection('exams')
+        .where('courseId', '==', courseId)
+        .where('title', '==', finalTitle)
+        .get();
+      if (!dupSnap.empty) {
+        setBulkFileStatus(i, '⚠️', '#d97706');
+        bulkLog(`  דולג — מבחן בשם "${finalTitle}" כבר קיים בקורס`, 'warn');
+        failed++;
+        continue;
+      }
+
+      // 7. Save exam to Firestore
+      const exam = {
+        id: examId, courseId,
+        title: finalTitle,
+        year:      known.year     || meta.year     || null,
+        semester:  known.semester || meta.semester || null,
+        moed:      known.moed     || meta.moed     || null,
+        lecturers: lecturers.length ? lecturers : null,
+        pdfUrl,
+        questions: questions.map(q => ({
+          id: q.id || genId(), text: q.text, isBonus: q.isBonus === true,
+          subs: (q.subs || []).map(s => ({ id: s.id || genId(), label: s.label, text: s.text }))
+        })),
+        createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+        updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+        createdBy: adminUser?.email || 'admin',
+      };
+
+      await db.collection('exams').doc(examId).set(exam);
+
+      // Invalidate cache so next file benefits from this lecturer
+      _knownLecturers = null;
+
+      setBulkFileStatus(i, '✅', '#065f46');
+      bulkLog(`  הועלה בהצלחה → ${title}`, 'success');
+      succeeded++;
+
+    } catch (err) {
+      console.error(err);
+      setBulkFileStatus(i, '❌', '#991b1b');
+      bulkLog(`  שגיאה: ${err.message}`, 'error');
+      failed++;
+    }
+  }
+
+  hideSpinner();
+  if (btn) { btn.disabled = false; btn.textContent = '🚀 התחל העלאה'; }
+
+  const label = document.getElementById('bulk-progress-label');
+  if (label) label.textContent = `הסתיים — ${succeeded} הצליחו, ${failed} נכשלו`;
+
+  bulkLog(`━━━ סיום: ${succeeded}/${_bulkFiles.length} הועלו בהצלחה ━━━`, succeeded === _bulkFiles.length ? 'success' : 'warn');
+  toast(`הועלו ${succeeded}/${_bulkFiles.length} מבחנים`, succeeded === _bulkFiles.length ? 'success' : '');
+
+  await refreshDashboard();
+  await populateAllSelects();
+}
+
+// Thin wrapper so bulk upload can call parseFilename without circular issues
+function parseFilenameForBulk(filename) {
+  return typeof parseFilename === 'function' ? parseFilename(filename) : {};
 }
 
 /* ══════════════════════════════════════════════════════════
@@ -411,10 +729,219 @@ function inferExamMeta(title) {
 ══════════════════════════════════════════════════════════ */
 
 /**
+ * Generate exam title code like "2025AB":
+ * year + semester letter (A=א, B=ב, S=קיץ) + moed letter (A=א, B=ב, C=ג)
+ */
+function generateExamTitle(year, semester, moed) {
+  if (!year) return '';
+  const semMap  = { 'א': 'A', 'ב': 'B', 'קיץ': 'S' };
+  const moedMap = { 'א': 'A', 'ב': 'B', 'ג': 'C' };
+  const s = semMap[semester]  || '';
+  const m = moedMap[moed]     || '';
+  return `${year}${s}${m}`;
+}
+
+/**
+ * Apply extracted metadata to the form fields.
+ */
+function applyExamMetadata(metadata) {
+  if (!metadata) return;
+
+  // Year
+  if (metadata.year) {
+    const el = document.getElementById('ae-year');
+    if (el && !el.value) el.value = metadata.year;
+  }
+
+  // Semester
+  if (metadata.semester) {
+    const el = document.getElementById('ae-sem');
+    if (el && !el.value) el.value = metadata.semester;
+  }
+
+  // Moed
+  if (metadata.moed) {
+    const el = document.getElementById('ae-moed');
+    if (el && !el.value) el.value = metadata.moed;
+  }
+
+  // Lecturers — normalize against known names then add to widget
+  if (Array.isArray(metadata.lecturers) && metadata.lecturers.length) {
+    normalizeLecturerNames(metadata.lecturers).then(normalized => {
+      normalized.forEach(n => {
+        const name = (n || '').trim();
+        if (name && !_lecturers.includes(name)) _lecturers.push(name);
+      });
+      _renderLecturersWidget();
+    });
+  }
+
+  // Auto-generate title if not already set
+  const titleEl = document.getElementById('ae-title');
+  if (titleEl && !titleEl.value.trim()) {
+    const title = generateExamTitle(metadata.year, metadata.semester, metadata.moed);
+    if (title) titleEl.value = title;
+  }
+
+  // Course matching — try to match courseName to an existing course in the select
+  let courseMatched = false;
+  if (metadata.courseName) {
+    const sel = document.getElementById('ae-course');
+    if (sel && !sel.value) {
+      const needle = _normalizeForMatch(metadata.courseName);
+      let bestOption = null;
+      let bestScore  = 0;
+
+      Array.from(sel.options).forEach(opt => {
+        if (!opt.value) return; // skip placeholder
+        const score = _matchScore(needle, _normalizeForMatch(opt.text));
+        if (score > bestScore) { bestScore = score; bestOption = opt; }
+      });
+
+      // Accept if similarity is good enough (>0.45)
+      if (bestOption && bestScore > 0.45) {
+        sel.value    = bestOption.value;
+        courseMatched = true;
+      }
+    }
+  }
+
+  // Banner
+  const filled = [];
+  if (metadata.courseName) {
+    filled.push(courseMatched
+      ? `קורס: ${metadata.courseName} ✓`
+      : `קורס שזוהה: "${metadata.courseName}" (לא נמצא — בחר ידנית)`);
+  }
+  if (metadata.year)              filled.push(`שנה: ${metadata.year}`);
+  if (metadata.semester)          filled.push(`סמסטר: ${metadata.semester}`);
+  if (metadata.moed)              filled.push(`מועד: ${metadata.moed}`);
+  if (metadata.lecturers?.length) filled.push(`מרצים: ${metadata.lecturers.join(', ')}`);
+
+  if (filled.length) {
+    const banner = document.getElementById('meta-autofill-banner');
+    if (banner) {
+      banner.textContent = '✨ זוהה אוטומטית: ' + filled.join(' | ');
+      banner.style.display = 'block';
+      setTimeout(() => { banner.style.display = 'none'; }, 8000);
+    }
+  }
+}
+
+/** Normalize string for fuzzy matching: lowercase, strip punctuation/spaces */
+function _normalizeForMatch(s) {
+  return (s || '').toLowerCase()
+    .replace(/['"״׳\-–]/g, '')
+    .replace(/\b(ד"ר|דר|פרופ|פרופסור|prof|dr|assoc|mr|ms|mrs)\b\.?/gi, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/**
+ * General similarity score (used for course matching).
+ */
+function _matchScore(a, b) {
+  if (!a || !b) return 0;
+  if (a === b)  return 1;
+  if (b.includes(a) || a.includes(b)) return 0.92;
+  const wordsA = a.split(' ').filter(Boolean);
+  const wordsB = b.split(' ').filter(Boolean);
+  const setA   = new Set(wordsA);
+  const setB   = new Set(wordsB);
+  const lastA  = wordsA[wordsA.length - 1];
+  const lastB  = wordsB[wordsB.length - 1];
+  if (lastA && lastB && lastA === lastB) return 0.88;
+  let common = 0;
+  setA.forEach(w => { if (setB.has(w)) common++; });
+  if (common > 0 && (wordsA.length === 1 || wordsB.length === 1)) return 0.85;
+  return (2 * common) / (setA.size + setB.size);
+}
+
+/**
+ * Lecturer-specific match: returns the best known name for a detected name.
+ * Strategy: any significant word (≥2 chars) shared between detected and known
+ * name counts as a match. This handles OCR returning partial names.
+ */
+function _lecturerMatchScore(detected, known) {
+  if (!detected || !known) return 0;
+  const d = _normalizeForMatch(detected);
+  const k = _normalizeForMatch(known);
+  if (!d || !k) return 0;
+  if (d === k) return 1;
+  if (k.includes(d) || d.includes(k)) return 0.95;
+
+  const wordsD = d.split(' ').filter(w => w.length >= 2);
+  const wordsK = k.split(' ').filter(w => w.length >= 2);
+  const setK   = new Set(wordsK);
+
+  // Any word from detected found in known name → strong match
+  const anyMatch = wordsD.some(w => setK.has(w));
+  if (anyMatch) return 0.85;
+
+  // Partial word match: a word from detected starts with/contains a word from known
+  const partialMatch = wordsD.some(wd =>
+    wordsK.some(wk => wd.startsWith(wk) || wk.startsWith(wd))
+  );
+  if (partialMatch) return 0.70;
+
+  return 0;
+}
+
+/**
+ * Render PDF pages to base64 JPEG images using pdf.js canvas.
+ * This replicates app.py's image-based Vision approach in the browser.
+ */
+async function renderPdfToBase64Images(file, maxPages = 15) {
+  if (!pdfjsLib) initPdfJs();
+  if (!pdfjsLib) throw new Error('pdf.js לא נטען');
+
+  const arrayBuffer = await file.arrayBuffer();
+  const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+  const total = Math.min(pdf.numPages, maxPages);
+  const images = [];
+
+  for (let i = 1; i <= total; i++) {
+    showSpinner(`🖼️ מעבד עמוד ${i}/${total}...`);
+    const page    = await pdf.getPage(i);
+    const scale   = 2.0;                  // ~200 DPI equivalent
+    const viewport = page.getViewport({ scale });
+    const canvas  = document.createElement('canvas');
+    canvas.width  = viewport.width;
+    canvas.height = viewport.height;
+    const ctx = canvas.getContext('2d');
+    await page.render({ canvasContext: ctx, viewport }).promise;
+    // toDataURL gives "data:image/jpeg;base64,..."
+    const dataUrl = canvas.toDataURL('image/jpeg', 0.90);
+    images.push(dataUrl.split(',')[1]);   // strip the prefix, keep base64 only
+  }
+  return images;
+}
+
+/**
+ * Send images array to Claude backend and receive parsed questions + metadata.
+ */
+async function processWithVision(images, filenameHint) {
+  const response = await fetch(CLAUDE_ENDPOINT, {
+    method:  'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body:    JSON.stringify({ images, filenameHint: filenameHint || '' }),
+  });
+
+  if (!response.ok) {
+    const errData = await response.json().catch(() => ({}));
+    throw new Error(errData.error || errData.message || `שגיאת שרת (${response.status})`);
+  }
+
+  const data = await response.json();
+  // Vision response contains both questions and metadata
+  return _normalizeResult(data);
+}
+
+/**
  * Send exam text to your Claude backend and receive parsed questions JSON.
  * @param {string} text  - Raw exam text (LaTeX / plain)
  * @param {Object} [opts] - Optional: { isPDF, base64, titleHint }
- * @returns {Promise<Array>} - Array of question objects
+ * @returns {Promise<{questions: Array, metadata: Object|null}>}
  */
 async function processWithClaude(text, opts = {}) {
   const titleHint = opts.titleHint ? `שם/קוד המבחן: "${opts.titleHint}". ` : '';
@@ -465,7 +992,7 @@ ${text}`;
     // Anthropic-style passthrough
     jsonStr = (data.content.find(c => c.type === 'text')?.text || '').trim();
   } else if (data.questions) {
-    return _normalizeQuestions(data);
+    return _normalizeResult(data);
   }
 
   // Strip markdown fences if present
@@ -481,25 +1008,50 @@ ${text}`;
     else throw new Error('תגובת AI לא תקנית — לא ניתן לפרסר JSON');
   }
 
-  return _normalizeQuestions(parsed);
+  return _normalizeResult(parsed);
 }
 
-function _normalizeQuestions(parsed) {
-  return (parsed.questions || []).map((q, i) => {
-    const textLower = (q.text || '').toLowerCase();
-    const bonus = q.isBonus === true || BONUS_REGEX.test(q.text || '');
+/**
+ * Normalize parsed result from any mode into { questions, metadata }.
+ */
+/**
+ * Strip points notation from question/part text.
+ * Handles all positions (start, end, after colon) and formats:
+ *   (12 נק') / (12 נקודות) / (12 pts) / [10 points] / 12 נק'
+ */
+function stripPoints(text) {
+  if (!text) return '';
+  // Pattern matches the points block in any format
+  const pts = /\(?\s*\d+\.?\d*\s*(נק'|נקודות|pts?|points?|נק)\s*\)?/gi;
+  return text
+    .replace(pts, '')   // remove all occurrences anywhere in the string
+    .replace(/^\s*[-–—:,]\s*/, '')  // clean leftover leading punctuation
+    .replace(/\s*[-–—:,]\s*$/, '')  // clean leftover trailing punctuation
+    .replace(/\s{2,}/g, ' ')        // collapse double spaces
+    .trim();
+}
+
+function _normalizeResult(parsed) {
+  const questions = (parsed.questions || []).map((q, i) => {
+    const text  = stripPoints(q.text || '');
+    const bonus = q.isBonus === true || BONUS_REGEX.test(text);
     return {
       id:      genId(),
       index:   q.number || i + 1,
-      text:    q.text || '',
+      text,
       isBonus: bonus,
       subs:    (q.parts || []).map(p => ({
         id:    genId(),
         label: '(' + (p.letter || '') + ')',
-        text:  p.text || ''
+        text:  stripPoints(p.text || '')
       }))
     };
   });
+  return { questions, metadata: parsed.metadata || null };
+}
+
+function _normalizeQuestions(parsed) {
+  return _normalizeResult(parsed).questions;
 }
 
 /* ══════════════════════════════════════════════════════════
@@ -581,6 +1133,23 @@ function setupUploadZone() {
   });
 }
 
+function setupBulkZone() {
+  const zone = document.getElementById('bulk-zone');
+  if (!zone) return;
+  zone.addEventListener('dragover',  e => { e.preventDefault(); zone.classList.add('drag'); });
+  zone.addEventListener('dragleave', () => zone.classList.remove('drag'));
+  zone.addEventListener('dragenter', e => { e.preventDefault(); zone.classList.add('drag'); });
+  zone.addEventListener('drop', e => {
+    e.preventDefault(); zone.classList.remove('drag');
+    const files = Array.from(e.dataTransfer.files).filter(f =>
+      f.type === 'application/pdf' || f.name.toLowerCase().endsWith('.pdf'));
+    if (files.length) {
+      files.forEach(f => { if (!_bulkFiles.find(x => x.name === f.name)) _bulkFiles.push(f); });
+      renderBulkFileList();
+    }
+  });
+}
+
 async function handleFileInput(file) {
   const statusEl = document.getElementById('upload-status');
   const zone     = document.getElementById('upload-zone');
@@ -595,56 +1164,82 @@ async function handleFileInput(file) {
     const t = zone.querySelector('.uz-text');
     const s = zone.querySelector('.uz-sub');
     if (t) t.textContent = `📎 ${file.name}`;
-    if (s) s.textContent = `${(file.size / 1024).toFixed(0)} KB — ממתין לניתוח AI...`;
+    if (s) s.textContent = `${(file.size / 1024).toFixed(0)} KB — ממתין לניתוח Vision...`;
   }
 
-  setStatus('📤 ממיר קובץ...');
-  setProgress(15);
-  showSpinner('📤 קורא קובץ...');
+  const isPDF = file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf');
+
+  setStatus('📤 קורא קובץ...');
+  setProgress(10);
+  showSpinner('📄 קורא קובץ...');
 
   try {
-    const base64 = await new Promise((res, rej) => {
-      const r = new FileReader();
-      r.onload  = () => res(r.result.split(',')[1]);
-      r.onerror = () => rej(new Error('קריאת קובץ נכשלה'));
-      r.readAsDataURL(file);
-    });
+    let result; // { questions, metadata }
 
-    setProgress(30);
-    showSpinner('🤖 Claude מנתח את המבחן...');
-    setStatus('🤖 Claude מנתח את המבחן...');
-
-    const isPDF = file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf');
-    const titleHint = document.getElementById('ae-title')?.value?.trim() || '';
-
-    // Extract text from PDF first (for text PDFs), then send to Claude
-    let rawText = '';
     if (isPDF) {
+      /* ── Vision path: render pages → images → Claude Vision ── */
+      setStatus('🖼️ ממיר PDF לתמונות...');
+      setProgress(20);
+
+      let images;
       try {
-        rawText = await extractTextFromPDF(file);
-        if (rawText.trim().length < 80) rawText = ''; // likely scanned
-      } catch { rawText = ''; }
-    }
+        images = await renderPdfToBase64Images(file, 15);
+      } catch (renderErr) {
+        // pdf.js not available or render failed — fall back to base64 PDF mode
+        console.warn('Vision render failed, falling back to PDF base64 mode:', renderErr.message);
+        images = null;
+      }
 
-    setProgress(50);
+      if (images && images.length > 0) {
+        setProgress(45);
+        setStatus(`🤖 Claude Vision מנתח ${images.length} עמודים...`);
+        showSpinner(`🤖 Claude Vision מנתח ${images.length} עמודים...`);
+        result = await processWithVision(images, file.name);
+      } else {
+        // Fallback: send PDF as base64 document
+        setProgress(45);
+        setStatus('🤖 Claude מנתח PDF...');
+        showSpinner('🤖 Claude מנתח PDF...');
+        const base64 = await new Promise((res, rej) => {
+          const r = new FileReader();
+          r.onload  = () => res(r.result.split(',')[1]);
+          r.onerror = () => rej(new Error('קריאת קובץ נכשלה'));
+          r.readAsDataURL(file);
+        });
+        const data = await processWithClaude('', { isPDF: true, base64 });
+        result = typeof data === 'object' && data.questions ? data : { questions: data, metadata: null };
+      }
 
-    let questions;
-    if (rawText.trim().length > 80) {
-      // Text-based PDF — send extracted text to Claude
-      questions = await processWithClaude(rawText, { titleHint });
     } else {
-      // Binary PDF or very short — send base64
-      questions = await processWithClaude('', { isPDF: true, base64, titleHint });
+      /* ── Text / LaTeX file ── */
+      setProgress(30);
+      showSpinner('📖 קורא טקסט...');
+      const text = await file.text();
+      document.getElementById('raw-text').value = text;
+      setProgress(50);
+      setStatus('🤖 Claude מנתח טקסט...');
+      showSpinner('🤖 Claude מנתח טקסט...');
+      const titleHint = document.getElementById('ae-title')?.value?.trim() || '';
+      const data = await processWithClaude(text, { titleHint });
+      result = typeof data === 'object' && data.questions ? data : { questions: data, metadata: null };
     }
 
-    setProgress(90);
-    parsedQuestions = questions;
+    setProgress(95);
 
-    if (titleHint) {
-      const meta = inferExamMeta(titleHint);
-      if (meta.year     && !document.getElementById('ae-year').value)  document.getElementById('ae-year').value     = meta.year;
-      if (meta.semester && !document.getElementById('ae-sem').value)   document.getElementById('ae-sem').value      = meta.semester;
-      if (meta.moed     && !document.getElementById('ae-moed').value)  document.getElementById('ae-moed').value     = meta.moed;
+    parsedQuestions = result.questions || [];
+
+    // Auto-fill metadata into form fields
+    if (result.metadata) {
+      applyExamMetadata(result.metadata);
+    }
+
+    // Auto-set this PDF as the download file for students
+    if (isPDF) {
+      _examPdfFile = file;
+      const nameEl  = document.getElementById('ae-pdf-name');
+      const clearEl = document.getElementById('ae-pdf-clear');
+      if (nameEl)  nameEl.textContent = file.name;
+      if (clearEl) clearEl.style.display = '';
     }
 
     setProgress(100);
@@ -757,12 +1352,15 @@ async function runParser() {
 
   try {
     const titleHint = document.getElementById('ae-title')?.value?.trim() || '';
-    parsedQuestions = await processWithClaude(raw, { titleHint });
+    const result = await processWithClaude(raw, { titleHint });
+    const questions = result.questions || result; // backward compat
 
     setProgress(100);
+    parsedQuestions = Array.isArray(questions) ? questions : [];
+    if (result.metadata) applyExamMetadata(result.metadata);
     if (statusEl) statusEl.textContent = `✅ זוהו ${parsedQuestions.length} שאלות`;
 
-    if (titleHint) {
+    if (titleHint && !result.metadata) {
       const meta = inferExamMeta(titleHint);
       if (meta.year     && !document.getElementById('ae-year').value)  document.getElementById('ae-year').value     = meta.year;
       if (meta.semester && !document.getElementById('ae-sem').value)   document.getElementById('ae-sem').value      = meta.semester;

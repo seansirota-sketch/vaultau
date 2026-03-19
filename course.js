@@ -1,5 +1,30 @@
 console.log('✅ course.js LOADED - version with status filter');
 function nl2br(html){if(!html)return '';return html.replace(/\n/g,'<br>');}
+
+/**
+ * Format question/sub text for display:
+ * - Splits at display math ($$...$$  or  \[...\])
+ * - Wraps display math in a centered block div
+ * - Converts newlines to <br> only in text segments
+ * - Trims blank lines immediately adjacent to display math blocks
+ */
+function formatMathText(text) {
+  if (!text) return '';
+
+  // Split preserving the delimiter (display math blocks)
+  const DISPLAY_RE = /(\$\$[\s\S]*?\$\$|\\\[[\s\S]*?\\\])/g;
+  const parts = text.split(DISPLAY_RE);
+
+  return parts.map(part => {
+    if (part.startsWith('$$') || part.startsWith('\\[')) {
+      // Display math — centered block, LTR for MathJax
+      return `<div class="math-display">${part}</div>`;
+    }
+    // Regular text — trim blank lines adjacent to display blocks, then nl2br
+    const trimmed = part.replace(/^\s*\n/, '').replace(/\n\s*$/, '');
+    return trimmed ? nl2br(trimmed) : '';
+  }).join('');
+}
 /* ============================================================
    EXAM BANK  —  course.js  (Firebase edition)
    Requires: firebase-config.js loaded first (via script tag)
@@ -1188,10 +1213,10 @@ function renderStarredTab(exams, starred) {
     const { q } = it;
     const subs  = q.subs || q.parts || [];
     const qEl   = tc.querySelector(`#sc-${q.id} .qv-text`);
-    if (qEl) qEl.innerHTML = nl2br(q.text || '');
+    if (qEl) qEl.innerHTML = formatMathText(q.text || '');
     subs.forEach(s => {
       const sEl = tc.querySelector(`#sc-si-${s.id} .qv-part-text`);
-      if (sEl) sEl.innerHTML = nl2br(s.text || '');
+      if (sEl) sEl.innerHTML = formatMathText(s.text || '');
     });
   });
 
@@ -1285,10 +1310,10 @@ async function renderExam() {
     questions.forEach(q => {
       const subs   = q.subs || q.parts || [];
       const textEl = page.querySelector(`#qc-${q.id} .qv-text`);
-      if (textEl) textEl.innerHTML = nl2br(q.text || '');
+      if (textEl) textEl.innerHTML = formatMathText(q.text || '');
       subs.forEach(s => {
         const subEl = page.querySelector(`#si-${s.id} .qv-part-text`);
-        if (subEl) subEl.innerHTML = nl2br(s.text || '');
+        if (subEl) subEl.innerHTML = formatMathText(s.text || '');
       });
     });
 
