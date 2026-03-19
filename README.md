@@ -1,3 +1,6 @@
+
+follow this flow in the pdf to install the emulator - https://drive.google.com/file/d/1p__LqvVg8e-2BXFK6hxlGNzr4R3XSr86/view?usp=sharing
+
 # VaulTau — Exam Bank for TAU Students
 
 A Firebase-backed exam bank app for Tel Aviv University students. Students can browse and filter past exams; admins can upload, manage, and set permissions.
