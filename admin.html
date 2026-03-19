@@ -40,6 +40,26 @@
   };
 </script>
 <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js" async></script>
+<style>
+.icon-pick-btn {
+  background: none;
+  border: 2px solid transparent;
+  border-radius: 8px;
+  font-size: 1.4rem;
+  padding: .2rem .3rem;
+  cursor: pointer;
+  transition: border-color .15s, background .15s;
+  line-height: 1;
+}
+.icon-pick-btn:hover {
+  background: var(--bg, #f3f4f6);
+  border-color: var(--border, #d1d5db);
+}
+.icon-pick-btn.selected {
+  border-color: var(--primary, #667eea);
+  background: rgba(102,126,234,.1);
+}
+</style>
 </head>
 <body>
 
