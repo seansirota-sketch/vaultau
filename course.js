@@ -90,7 +90,7 @@ document.addEventListener('DOMContentLoaded', () => {
       STATE.doneExams       = STATE.userData?.doneExams       || [];
       STATE.inProgressExams = STATE.userData?.inProgressExams || [];
 
-      if (typeof gtag === 'function') {
+      if (typeof gtag === 'function' && location.hostname !== 'localhost' && location.hostname !== '127.0.0.1') {
         gtag('config', 'G-SF9W1XBZZK', { user_id: user.uid });
       }
 
@@ -744,10 +744,7 @@ async function renderHome() {
 
   try {
     // Check if user is admin
-    const userEmail = (STATE.fireUser?.email || '').toLowerCase().trim();
-    const isAdmin = ADMIN_EMAILS.some(e => e.toLowerCase() === userEmail);
-    
-    console.log('renderHome - userEmail:', userEmail, 'isAdmin:', isAdmin);
+    const isAdmin = STATE.userData?.role === 'admin';
     
     // Fetch courses from Firestore with server-side filtering
     let snap;
@@ -815,8 +812,7 @@ async function renderCourse() {
 
   try {
     // Check if user is admin
-    const userEmail = (STATE.fireUser?.email || '').toLowerCase().trim();
-    const isAdmin = ADMIN_EMAILS.some(e => e.toLowerCase() === userEmail);
+    const isAdmin = STATE.userData?.role === 'admin';
     
     // Fetch the course directly by ID
     const courseDoc = await db.collection('courses').doc(STATE.courseId).get();
@@ -1212,8 +1208,7 @@ async function renderExam() {
 
   try {
     // Check if user is admin
-    const userEmail = (STATE.fireUser?.email || '').toLowerCase().trim();
-    const isAdmin = ADMIN_EMAILS.some(e => e.toLowerCase() === userEmail);
+    const isAdmin = STATE.userData?.role === 'admin';
     
     // Fetch the course directly by ID
     const courseDoc = await db.collection('courses').doc(STATE.courseId).get();
