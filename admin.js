@@ -1275,7 +1275,7 @@ async function refreshDashboard() {
       <td><code>${esc(c.code)}</code></td>
       <td>${examsPerCourse[c.id] || 0}</td>
       <td>${qsPerCourse[c.id] || 0}</td>
-      <td><button class="btn btn-danger btn-sm" onclick="deleteCourse('${c.id}')">🗑️</button></td>
+      <td><button class="btn btn-secondary btn-sm" onclick="showSection('courses')">✏️</button></td>
     </tr>`).join('');
 
     dcl.innerHTML = `<table class="tbl">
@@ -1528,7 +1528,7 @@ async function renderCoursesList() {
           </button>
         </div>
       </td>
-      <td><button class="btn btn-danger btn-sm" onclick="deleteCourse('${c.id}')">🗑️</button></td>
+      <td><button class="btn btn-secondary btn-sm" onclick="openEditCourse('${c.id}','${esc(c.name)}','${esc(c.code)}','${esc(c.icon || '')}')">✏️ עריכה</button></td>
     </tr>`;
     }).join('');
 
@@ -1574,25 +1574,111 @@ async function updateCourseStatus(courseId, status) {
   }
 }
 
-async function deleteCourse(id) {
-  if (!confirm('מחיקת קורס תמחק גם את כל מבחניו. להמשיך?')) return;
-  showSpinner('🗑️ מוחק קורס...');
-  try {
-    // Delete all exams in this course
-    const examSnap = await db.collection('exams').where('courseId', '==', id).get();
-    const batch = db.batch();
-    examSnap.docs.forEach(d => batch.delete(d.ref));
-    batch.delete(db.collection('courses').doc(id));
-    await batch.commit();
+/* ── Edit Course Modal ─────────────────────────────────────── */
 
-    toast('🗑️ קורס נמחק', 'error');
+const COURSE_ICONS = ['📐','📊','⚛️','🧮','🔬','🧬','💻','🌍','🏛️','📖',
+                      '🎓','🔭','📈','🧪','🔢','📜','🗓️','🖥️','🎯','⚙️',
+                      '🔑','🌐','📡','🧲','🔐','🗂️','📋','📌','🏗️','🔍'];
+
+function openEditCourse(id, name, code, icon) {
+  // Remove existing modal if any
+  const existing = document.getElementById('edit-course-modal');
+  if (existing) existing.remove();
+
+  const iconsHtml = COURSE_ICONS.map(ic => `
+    <button type="button" class="icon-pick-btn ${ic === icon ? 'selected' : ''}"
+            onclick="selectCourseIcon(this, '${ic}')">${ic}</button>
+  `).join('');
+
+  const modal = document.createElement('div');
+  modal.id = 'edit-course-modal';
+  modal.style.cssText = `
+    position:fixed;inset:0;z-index:9999;
+    background:rgba(0,0,0,.55);
+    display:flex;align-items:center;justify-content:center;
+    padding:1rem;
+  `;
+  modal.innerHTML = `
+    <div style="background:var(--card,#fff);border-radius:16px;padding:2rem;
+                width:100%;max-width:480px;box-shadow:0 8px 32px rgba(0,0,0,.2);
+                direction:rtl;position:relative">
+      <button onclick="document.getElementById('edit-course-modal').remove()"
+              style="position:absolute;top:1rem;left:1rem;background:none;border:none;
+                     font-size:1.3rem;cursor:pointer;color:var(--muted,#888)">✕</button>
+      <h3 style="margin:0 0 1.5rem;font-size:1.1rem;font-weight:700">✏️ עריכת קורס</h3>
+
+      <input type="hidden" id="edit-course-id" value="${esc(id)}">
+
+      <div class="form-group">
+        <label style="font-weight:600">שם קורס</label>
+        <input id="edit-course-name" type="text" value="${esc(name)}"
+               placeholder="אנליזה 1">
+      </div>
+
+      <div class="form-group">
+        <label style="font-weight:600">קוד קורס</label>
+        <input id="edit-course-code" type="text" value="${esc(code)}"
+               placeholder="104031" dir="ltr">
+      </div>
+
+      <div class="form-group">
+        <label style="font-weight:600">אייקון</label>
+        <div id="edit-course-icon-selected"
+             style="font-size:2rem;margin:.35rem 0 .75rem;min-height:2.5rem">${esc(icon) || '🎓'}</div>
+        <input type="hidden" id="edit-course-icon" value="${esc(icon) || '🎓'}">
+        <div style="display:flex;flex-wrap:wrap;gap:.35rem;max-height:160px;
+                    overflow-y:auto;padding:.5rem;border:1.5px solid var(--border,#e5e7eb);
+                    border-radius:10px">
+          ${iconsHtml}
+        </div>
+      </div>
+
+      <div style="display:flex;gap:.75rem;justify-content:flex-end;margin-top:1.5rem">
+        <button class="btn btn-secondary"
+                onclick="document.getElementById('edit-course-modal').remove()">ביטול</button>
+        <button class="btn btn-primary" onclick="saveEditCourse()">💾 שמור שינויים</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(modal);
+  // Close on backdrop click
+  modal.addEventListener('click', e => { if (e.target === modal) modal.remove(); });
+}
+
+function selectCourseIcon(btn, icon) {
+  document.querySelectorAll('.icon-pick-btn').forEach(b => b.classList.remove('selected'));
+  btn.classList.add('selected');
+  document.getElementById('edit-course-icon').value = icon;
+  document.getElementById('edit-course-icon-selected').textContent = icon;
+}
+
+async function saveEditCourse() {
+  const id   = document.getElementById('edit-course-id').value;
+  const name = document.getElementById('edit-course-name').value.trim();
+  const code = document.getElementById('edit-course-code').value.trim();
+  const icon = document.getElementById('edit-course-icon').value;
+
+  if (!name || !code) { toast('נא למלא שם וקוד', 'error'); return; }
+
+  const saveBtn = document.querySelector('#edit-course-modal .btn-primary');
+  if (saveBtn) { saveBtn.disabled = true; saveBtn.textContent = 'שומר...'; }
+
+  try {
+    await db.collection('courses').doc(id).update({
+      name,
+      code,
+      icon,
+      updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+      updatedBy: adminUser?.email || 'unknown',
+    });
+    document.getElementById('edit-course-modal').remove();
+    toast('✅ הקורס עודכן בהצלחה', 'success');
     await renderCoursesList();
     await populateAllSelects();
     await refreshDashboard();
   } catch (e) {
-    toast('שגיאת מחיקה: ' + e.message, 'error');
-  } finally {
-    hideSpinner();
+    toast('שגיאה בעדכון: ' + e.message, 'error');
+    if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = '💾 שמור שינויים'; }
   }
 }
 
