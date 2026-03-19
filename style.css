@@ -904,9 +904,8 @@ mjx-container { direction: ltr; }
 .qv-btn.on { background: var(--accent-l); border-color: #e0c070; }
 .qv-btn:active { transform: scale(.93); }
 .qv-text {
-  padding: 1rem 1.2rem; font-size: .975rem; line-height: 1.85;
+  padding: 1.1rem 1.2rem; font-size: .975rem; line-height: 1.9;
   color: #1a2635; border-bottom: 1px solid #edf0f4; direction: rtl;
-  white-space: pre-wrap;
 }
 .qv-parts { padding: .45rem 1.2rem .7rem; }
 .qv-part { padding: .7rem 0; border-bottom: 1px solid #edf0f4; }
@@ -920,9 +919,30 @@ mjx-container { direction: ltr; }
   flex-shrink: 0; min-width: 2rem;
 }
 .qv-part-text {
-  font-size: .95rem; line-height: 1.85;
+  font-size: .95rem; line-height: 1.9;
   color: #1a2635; direction: rtl; padding-right: .2rem;
-  white-space: pre-wrap;
+}
+
+/* ── Display math blocks ($$...$$) ── */
+.math-display {
+  display: block;
+  direction: ltr;
+  text-align: center;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: .55rem .5rem;
+  margin: .3rem 0;
+  /* subtle scroll hint on mobile */
+  -webkit-overflow-scrolling: touch;
+}
+
+/* MathJax inline stays inline; display math block fills width */
+.qv-text .MathJax_Display,
+.qv-part-text .MathJax_Display,
+.math-display .MathJax_Display {
+  margin: 0 !important;
+  direction: ltr;
+  display: block !important;
 }
 .qv-text .MathJax,
 .qv-part-text .MathJax { direction: ltr; display: inline-block; }
