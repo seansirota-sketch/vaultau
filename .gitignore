@@ -16,6 +16,9 @@ storage-debug.log
 emulator-data/
 firebase-export-*/
 
+# Local emulator rules (open rules, emulator only — never deploy)
+*.rules.local
+
 # OS generated files (Mac/Windows hidden files)
 .DS_Store
 Thumbs.db
