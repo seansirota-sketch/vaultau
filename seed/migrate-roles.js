@@ -7,10 +7,7 @@
  *   node seed/migrate-roles.js              ← run against production
  */
 
-const https = require('https');
-const http  = require('http');
-
-// ── Config ─────────────────────────────────────────────────────────────────
+const path  = require('path');
 
 const ADMIN_EMAILS = [
   '***REMOVED***',
@@ -18,22 +15,38 @@ const ADMIN_EMAILS = [
   '***REMOVED***',
 ];
 
-const PROJECT_ID   = 'eaxmbank';
-const IS_DRY_RUN   = process.argv.includes('--dry-run');
-const IS_EMULATOR  = process.argv.includes('--emulator');
+const PROJECT_ID  = 'eaxmbank';
+const IS_DRY_RUN  = process.argv.includes('--dry-run');
+const IS_EMULATOR = process.argv.includes('--emulator');
 
-const HOST    = IS_EMULATOR ? 'localhost' : 'firestore.googleapis.com';
-const PORT    = IS_EMULATOR ? 8080 : 443;
-const PROTO   = IS_EMULATOR ? http : https;
-const BASE    = IS_EMULATOR
-  ? `http://localhost:${PORT}/v1`
-  : `https://firestore.googleapis.com/v1`;
+// ── Init ───────────────────────────────────────────────────────────────────
 
-// ── Helpers ────────────────────────────────────────────────────────────────
+let db;
 
-function request(options, body) {
+async function init() {
+  if (IS_EMULATOR) {
+    // Use plain HTTP for emulator (no Admin SDK needed)
+    return;
+  }
+
+  const admin = require('firebase-admin');
+  const serviceAccount = require(path.resolve(__dirname, '../service-account.json'));
+
+  admin.initializeApp({
+    credential: admin.credential.cert(serviceAccount),
+    projectId: PROJECT_ID,
+  });
+
+  db = admin.firestore();
+}
+
+// ── Emulator helpers (plain HTTP) ──────────────────────────────────────────
+
+const http = require('http');
+
+function httpRequest(options, body) {
   return new Promise((resolve, reject) => {
-    const req = PROTO.request(options, res => {
+    const req = http.request(options, res => {
       let data = '';
       res.on('data', chunk => data += chunk);
       res.on('end', () => {
@@ -47,38 +60,20 @@ function request(options, body) {
   });
 }
 
-function toFirestoreValue(val) {
-  if (val === null || val === undefined) return { nullValue: null };
-  if (typeof val === 'boolean')          return { booleanValue: val };
-  if (typeof val === 'number')           return Number.isInteger(val) ? { integerValue: String(val) } : { doubleValue: val };
-  if (typeof val === 'string')           return { stringValue: val };
-  return { stringValue: String(val) };
-}
-
-async function listUsers(pageToken) {
-  const path = `/v1/projects/${PROJECT_ID}/databases/(default)/documents/users${pageToken ? `?pageToken=${pageToken}` : ''}`;
-  const res = await request({
-    hostname: HOST,
-    port: PORT,
-    path,
-    method: 'GET',
-    headers: {}
-  });
+async function listEmulatorUsers(pageToken) {
+  const p = `/v1/projects/${PROJECT_ID}/databases/(default)/documents/users${pageToken ? `?pageToken=${pageToken}` : ''}`;
+  const res = await httpRequest({ hostname: 'localhost', port: 8080, path: p, method: 'GET', headers: {} });
   if (res.status >= 400) throw new Error(`List users failed: ${res.status} ${JSON.stringify(res.body)}`);
   return res.body;
 }
 
-async function patchUserRole(docName, role) {
-  // docName is the full resource name e.g. projects/.../documents/users/{uid}
-  const path = `/v1/${docName}?updateMask.fieldPaths=role`;
-  const res = await request({
-    hostname: HOST,
-    port: PORT,
-    path,
-    method: 'PATCH',
+async function patchEmulatorRole(docName, role) {
+  const p = `/v1/${docName}?updateMask.fieldPaths=role`;
+  const res = await httpRequest({
+    hostname: 'localhost', port: 8080, path: p, method: 'PATCH',
     headers: { 'Content-Type': 'application/json' }
-  }, { fields: { role: toFirestoreValue(role) } });
-  if (res.status >= 400) throw new Error(`Patch failed for ${docName}: ${res.status} ${JSON.stringify(res.body)}`);
+  }, { fields: { role: { stringValue: role } } });
+  if (res.status >= 400) throw new Error(`Patch failed: ${res.status} ${JSON.stringify(res.body)}`);
 }
 
 // ── Main ───────────────────────────────────────────────────────────────────
@@ -93,46 +88,69 @@ async function main() {
     await new Promise(r => setTimeout(r, 5000));
   }
 
-  let allDocs = [];
-  let pageToken = null;
-
-  // Paginate through all users
-  do {
-    const res = await listUsers(pageToken);
-    if (res.documents) allDocs = allDocs.concat(res.documents);
-    pageToken = res.nextPageToken || null;
-  } while (pageToken);
-
-  console.log(`📋 Found ${allDocs.length} users\n`);
+  await init();
 
   let adminCount   = 0;
   let studentCount = 0;
   let skipCount    = 0;
 
-  for (const doc of allDocs) {
-    const fields = doc.fields || {};
-    const email  = fields.email?.stringValue || '';
-    const uid    = doc.name.split('/').pop();
-    const currentRole = fields.role?.stringValue;
+  if (IS_EMULATOR) {
+    // ── Emulator path ──────────────────────────────────────────────────────
+    let allDocs  = [];
+    let pageToken = null;
+    do {
+      const res = await listEmulatorUsers(pageToken);
+      if (res.documents) allDocs = allDocs.concat(res.documents);
+      pageToken = res.nextPageToken || null;
+    } while (pageToken);
 
-    if (currentRole) {
-      console.log(`   ⏭  skip  ${email || uid} — already has role: ${currentRole}`);
-      skipCount++;
-      continue;
+    console.log(`📋 Found ${allDocs.length} users\n`);
+
+    for (const doc of allDocs) {
+      const fields      = doc.fields || {};
+      const email       = fields.email?.stringValue || '';
+      const uid         = doc.name.split('/').pop();
+      const currentRole = fields.role?.stringValue;
+
+      if (currentRole) {
+        console.log(`   ⏭  skip  ${email || uid} — already has role: ${currentRole}`);
+        skipCount++; continue;
+      }
+
+      const role = ADMIN_EMAILS.includes(email.toLowerCase()) ? 'admin' : 'student';
+      role === 'admin'
+        ? console.log(`   👑 admin   ${email}`) && adminCount++
+        : console.log(`   🎓 student ${email || uid}`) && studentCount++;
+
+      if (role === 'admin') adminCount++; else studentCount++;
+      if (!IS_DRY_RUN) await patchEmulatorRole(doc.name, role);
     }
 
-    const role = ADMIN_EMAILS.includes(email.toLowerCase()) ? 'admin' : 'student';
+  } else {
+    // ── Production path (Admin SDK) ────────────────────────────────────────
+    const snap = await db.collection('users').get();
+    console.log(`📋 Found ${snap.size} users\n`);
 
-    if (role === 'admin') {
-      console.log(`   👑 admin   ${email}`);
-      adminCount++;
-    } else {
-      console.log(`   🎓 student ${email || uid}`);
-      studentCount++;
-    }
+    for (const doc of snap.docs) {
+      const data        = doc.data();
+      const email       = (data.email || '').toLowerCase();
+      const currentRole = data.role;
 
-    if (!IS_DRY_RUN) {
-      await patchUserRole(doc.name, role);
+      if (currentRole) {
+        console.log(`   ⏭  skip  ${email || doc.id} — already has role: ${currentRole}`);
+        skipCount++; continue;
+      }
+
+      const role = ADMIN_EMAILS.includes(email) ? 'admin' : 'student';
+      if (role === 'admin') {
+        console.log(`   👑 admin   ${email}`);
+        adminCount++;
+      } else {
+        console.log(`   🎓 student ${email || doc.id}`);
+        studentCount++;
+      }
+
+      if (!IS_DRY_RUN) await doc.ref.update({ role });
     }
   }
 
@@ -152,7 +170,7 @@ async function main() {
 main().catch(err => {
   console.error('\n❌ Migration failed:', err.message);
   if (!IS_EMULATOR) {
-    console.error('   For production, make sure you are authenticated: firebase login');
+    console.error('   Make sure service-account.json is in the project root.');
   } else {
     console.error('   Make sure the emulator is running: npm run emulator');
   }

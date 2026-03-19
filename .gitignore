@@ -7,6 +7,9 @@ node_modules/
 # Environment variables (secrets)
 .env
 
+# Firebase service account key (NEVER commit — contains production secrets)
+service-account.json
+
 # Firebase
 .firebase/
 firebase-debug.log

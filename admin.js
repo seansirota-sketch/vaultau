@@ -2171,6 +2171,9 @@ async function renderPermissionsSection() {
     if (listEl) listEl.innerHTML = '<p style="color:var(--danger)">גישה נדחתה — מנהלים בלבד</p>';
     return;
   }
+
+  try {
+    const snap   = await db.collection('authorized_users').get();
     const emails = snap.docs
       .filter(d => d.data().active !== false)
       .map(d => d.id)
