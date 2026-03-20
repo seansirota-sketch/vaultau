@@ -86,14 +86,16 @@ document.addEventListener('DOMContentLoaded', () => {
 
       const email = (user.email || '').toLowerCase().trim();
 
-      // ── 0. Email verification gate ──────────────────────────
-      if (!user.emailVerified) {
+      // ── 1. Authorization check (Firestore-backed) ───────────
+      // Check authorization FIRST — existing authorized users bypass email verification.
+      // Only new/unknown users must verify their email before requesting access.
+      const authorized = await isUserAuthorized(email);
+
+      // ── 0. Email verification gate (new users only) ─────────
+      if (!user.emailVerified && !authorized) {
         renderEmailVerificationScreen(user);
         return;
       }
-
-      // ── 1. Authorization check (Firestore-backed) ───────────
-      const authorized = await isUserAuthorized(email);
 
       if (!authorized) {
         // Sign out (keep account alive) — after admin approves, user can just log in.
@@ -125,9 +127,17 @@ document.addEventListener('DOMContentLoaded', () => {
       }
 
       // ── 2. Terms check ─────────────────────────────────────
+      // Existing users (already have a userData doc) get terms auto-accepted silently.
       if (!STATE.userData?.acceptedTerms) {
-        renderTermsModal();
-        return; // block until accepted
+        const isExistingUser = !!(STATE.userData?.createdAt || STATE.userData?.doneExams || STATE.userData?.starredQuestions?.length);
+        if (isExistingUser) {
+          // Silently accept terms for existing users — don't block their login
+          saveUserData(user.uid, { acceptedTerms: true }).catch(() => {});
+          STATE.userData = { ...STATE.userData, acceptedTerms: true };
+        } else {
+          renderTermsModal();
+          return;
+        }
       }
 
       // ── 3. Survey check ────────────────────────────────────
