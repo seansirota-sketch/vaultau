@@ -1027,6 +1027,12 @@ async function renderHome() {
             <div class="cc">${esc(c.code)}</div>
             <div class="cm">לחץ לצפייה במבחנים</div>
           </div>`).join('')}
+        <div class="course-card" onclick="openContactModal()">
+          <span class="ci">✉️</span>
+          <div class="cn">צור איתנו קשר</div>
+          <div class="cc">פנייה לצוות</div>
+          <div class="cm">הוספת קורס, משוב ועוד</div>
+        </div>
       </div></div>`;
   } catch (e) {
     page.innerHTML = `<div class="container">
@@ -1241,6 +1247,9 @@ function applyFilters() {
           <path d="M12 3v13M5 16l7 7 7-7"/><line x1="3" y1="22" x2="21" y2="22"/>
         </svg>
       </a>` : ''}
+      <button class="qv-btn" onclick="event.stopPropagation(); openExamBugModal('${e.id}','${STATE.courseId}',${JSON.stringify(e.title || e.id)})" title="בעיה במבחן" style="margin-left:.25rem">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#9ca3af" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+      </button>
       <button class="inprogress-toggle-btn ${isInProgress ? 'inprogress-active' : ''}"
         onclick="event.stopPropagation(); toggleInProgress('${e.id}')"
         title="${isInProgress ? 'בטל בתהליך' : 'סמן כבתהליך'}">
@@ -1508,9 +1517,20 @@ async function renderExam() {
           </div>
         </div>
 
-        <div class="ev-banner">
+        <div class="ev-banner" style="position:relative">
           <h1 class="ev-banner-title">${esc(examTitle)}</h1>
           ${metaLine ? `<p class="ev-banner-meta">${esc(metaLine)}</p>` : ''}
+          <button onclick="openExamBugModal('${STATE.examId}','${STATE.courseId}',${JSON.stringify(examTitle)})"
+            title="בעיה במבחן"
+            style="position:absolute;bottom:0;left:0;background:none;border:1.5px solid #cbd5e1;border-radius:8px;
+                   padding:.35rem .7rem;font-size:.78rem;color:#64748b;cursor:pointer;
+                   display:inline-flex;align-items:center;gap:.35rem;white-space:nowrap;
+                   transition:border-color .15s,color .15s"
+            onmouseover="this.style.borderColor='#ef4444';this.style.color='#ef4444'"
+            onmouseout="this.style.borderColor='#cbd5e1';this.style.color='#64748b'">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+            בעיה במבחן
+          </button>
         </div>
 
         <div class="ev-body" id="ev-questions-body">
@@ -1519,50 +1539,7 @@ async function renderExam() {
             : questions.map((q, qi) => renderQuestionCard(q, qi, starred, userVotes)).join('')}
         </div>
 
-        ${questions.length ? `
-        <div style="margin:2rem 0 2.5rem;padding:1.5rem 2rem;
-          background:linear-gradient(135deg,#fef2f2 0%,#fff1f0 100%);
-          border:1.5px solid #fecaca;border-radius:16px;
-          display:flex;align-items:center;gap:1.25rem;flex-wrap:wrap">
-          <div style="flex:1;min-width:200px">
-            <div style="font-weight:700;font-size:.97rem;color:#991b1b;margin-bottom:.25rem">
-              🐛 שמת לב לבעיה?
-            </div>
-            <div style="font-size:.84rem;color:#b91c1c;line-height:1.5">
-              חסר מבחן, שם מרצה שגוי, PDF לא עובד, שאלה לא ברורה — פנה אלינו על כל דבר, נטפל בזה.
-            </div>
-          </div>
-          <button onclick="openBugReportModal(null,null)"
-            style="background:#ef4444;color:#fff;border:none;border-radius:10px;
-                   padding:.65rem 1.4rem;font-size:.9rem;font-weight:700;cursor:pointer;
-                   box-shadow:0 4px 14px rgba(239,68,68,.35);white-space:nowrap;
-                   transition:transform .15s,box-shadow .15s"
-            onmouseover="this.style.transform='translateY(-1px)';this.style.boxShadow='0 6px 18px rgba(239,68,68,.45)'"
-            onmouseout="this.style.transform='';this.style.boxShadow='0 4px 14px rgba(239,68,68,.35)'">
-            דווח על תקלה ←
-          </button>
-        </div>` : ''}
-
-      </div>
-
-      <!-- Floating bug button -->
-      ${questions.length ? `
-      <button id="float-bug-btn" onclick="openBugReportModal(null,null)"
-        title="דווח על תקלה במבחן"
-        style="position:fixed;bottom:1.5rem;left:1.5rem;z-index:900;
-               background:#ef4444;color:#fff;border:none;border-radius:50px;
-               padding:.6rem 1.1rem;font-size:.82rem;font-weight:700;cursor:pointer;
-               box-shadow:0 4px 16px rgba(239,68,68,.4);
-               display:flex;align-items:center;gap:.45rem;
-               transition:transform .15s,box-shadow .15s"
-        onmouseover="this.style.transform='scale(1.06)';this.style.boxShadow='0 6px 20px rgba(239,68,68,.5)'"
-        onmouseout="this.style.transform='';this.style.boxShadow='0 4px 16px rgba(239,68,68,.4)'">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-          stroke-width="2.5"><circle cx="12" cy="12" r="10"/>
-          <line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>
-        </svg>
-        תקלה?
-      </button>` : ''}`;
+      </div>`;
 
     // Set text via innerHTML after DOM is built (safe for LaTeX/HTML)
     questions.forEach(q => {
@@ -1616,8 +1593,6 @@ function renderQuestionCard(q, qi, starred, userVotes = {}) {
     ? `<span class="qv-bonus-badge">⭐ שאלת בונוס לקבוצות B ו-C</span>`
     : '';
 
-  const bugSVG = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#9ca3af" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>`;
-  const genSVG  = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#9ca3af" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>`;
 
   let partsHtml = '';
   if (hasSubs) {
@@ -1652,8 +1627,6 @@ function renderQuestionCard(q, qi, starred, userVotes = {}) {
         <button class="qv-btn ${isStarredQ ? 'on' : ''}" id="qb-${q.id}"
           onclick="toggleStar('${q.id}')" title="סמן שאלה">${starSVG(isStarredQ)}</button>
         <button class="qv-btn" onclick="copyById('${qCopyId}',event)" title="העתק LaTeX">${copySVG}</button>
-        <button class="qv-btn" onclick="trackGenerateSimilar('${q.id}',${qi+1})" title="ג'נרט שאלה דומה">${genSVG}</button>
-        <button class="qv-btn" onclick="openBugReportModal('${q.id}',${qi+1})" title="דווח על תקלה">${bugSVG}</button>
       </div>
     </div>
     <div class="qv-text"></div>
@@ -1871,6 +1844,182 @@ async function trackGenerateSimilar(questionId, questionNum) {
     );
     logUserEvent(uid, 'generate_similar', { questionId, questionNum, examId: STATE.examId });
   } catch (e) { console.warn('trackGenerateSimilar:', e.message); }
+}
+
+/* ══════════════════════════════════════════════════════════
+   CONTACT US MODAL
+══════════════════════════════════════════════════════════ */
+
+function openContactModal() {
+  document.getElementById('contact-modal')?.remove();
+  const modal = document.createElement('div');
+  modal.id = 'contact-modal';
+  modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center;z-index:10000;padding:1rem;backdrop-filter:blur(2px)';
+  modal.innerHTML = `
+    <div style="background:#fff;border-radius:16px;width:min(92vw,460px);padding:1.75rem;
+      box-shadow:0 24px 60px rgba(0,0,0,.3);direction:rtl;max-height:90vh;overflow-y:auto">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1.1rem">
+        <div>
+          <h3 style="margin:0 0 .2rem;font-size:1.05rem;font-weight:700;color:#1e293b">✉️ צור איתנו קשר</h3>
+          <p style="margin:0;font-size:.78rem;color:#64748b">נשמח לשמוע ממך</p>
+        </div>
+        <button onclick="document.getElementById('contact-modal').remove()"
+          style="background:none;border:none;font-size:1.4rem;cursor:pointer;color:#9ca3af;line-height:1;padding:.2rem">✕</button>
+      </div>
+
+      <div class="form-group" style="margin-bottom:.75rem">
+        <label style="font-size:.85rem;font-weight:600">נושא הפנייה</label>
+        <select id="contact-topic" style="width:100%;padding:.55rem .75rem;border:1.5px solid var(--border);border-radius:8px;font-size:.88rem;color:var(--text)">
+          <option value="add_course">בקשה להוספת קורס</option>
+          <option value="feedback">חוות דעת על האתר</option>
+          <option value="bug">דיווח על תקלה טכנית</option>
+          <option value="other">אחר</option>
+        </select>
+      </div>
+
+      <div class="form-group" style="margin-bottom:1rem">
+        <label style="font-size:.85rem;font-weight:600">הודעה <span style="color:var(--danger)">*</span></label>
+        <textarea id="contact-text" rows="4" placeholder="כתוב את פנייתך כאן..."
+          style="width:100%;padding:.65rem .75rem;border:1.5px solid var(--border);border-radius:8px;
+            font-size:.88rem;resize:vertical;box-sizing:border-box;font-family:inherit;
+            color:var(--text);line-height:1.6"></textarea>
+      </div>
+
+      <div id="contact-err" class="form-error"></div>
+      <div style="display:flex;gap:.75rem;justify-content:flex-end">
+        <button class="btn btn-secondary btn-sm" onclick="document.getElementById('contact-modal').remove()">ביטול</button>
+        <button class="btn btn-primary btn-sm" onclick="submitContactForm()">שלח ←</button>
+      </div>
+    </div>`;
+  document.body.appendChild(modal);
+  modal.addEventListener('click', e => { if (e.target === modal) modal.remove(); });
+  document.getElementById('contact-text')?.focus();
+}
+
+async function submitContactForm() {
+  const errEl = document.getElementById('contact-err');
+  if (errEl) errEl.classList.remove('show');
+  const topic = document.getElementById('contact-topic')?.value || 'other';
+  const text  = (document.getElementById('contact-text')?.value || '').trim();
+  if (!text) {
+    if (errEl) { errEl.textContent = 'נא לכתוב הודעה'; errEl.classList.add('show'); }
+    return;
+  }
+  const uid   = STATE.fireUser?.uid || null;
+  const email = STATE.fireUser?.email || '';
+  try {
+    await db.collection('bug_reports').add({
+      bugType:      'contact_' + topic,
+      bugText:      text,
+      questionId:   null,
+      questionNum:  null,
+      examId:       '',
+      courseId:     '',
+      reportedBy:   uid,
+      reporterEmail: email,
+      status:       'open',
+      createdAt:    firebase.firestore.FieldValue.serverTimestamp(),
+    });
+    document.getElementById('contact-modal')?.remove();
+    toast('✅ פנייתך נשלחה — תודה!', 'success');
+  } catch (e) {
+    if (errEl) { errEl.textContent = 'שגיאה בשליחה: ' + e.message; errEl.classList.add('show'); }
+  }
+}
+
+/* ══════════════════════════════════════════════════════════
+   EXAM BUG REPORT MODAL
+══════════════════════════════════════════════════════════ */
+
+function openExamBugModal(examId, courseId, examTitle) {
+  document.getElementById('exam-bug-modal')?.remove();
+  const modal = document.createElement('div');
+  modal.id = 'exam-bug-modal';
+  modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center;z-index:10000;padding:1rem;backdrop-filter:blur(2px)';
+  modal.innerHTML = `
+    <div style="background:#fff;border-radius:16px;width:min(92vw,460px);padding:1.75rem;
+      box-shadow:0 24px 60px rgba(0,0,0,.3);direction:rtl;max-height:90vh;overflow-y:auto">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1.1rem">
+        <div>
+          <h3 style="margin:0 0 .2rem;font-size:1.05rem;font-weight:700;color:#1e293b">🐛 בעיה במבחן</h3>
+          <p style="margin:0;font-size:.78rem;color:#64748b">${esc(examTitle)}</p>
+        </div>
+        <button onclick="document.getElementById('exam-bug-modal').remove()"
+          style="background:none;border:none;font-size:1.4rem;cursor:pointer;color:#9ca3af;line-height:1;padding:.2rem">✕</button>
+      </div>
+
+      <div class="form-group" style="margin-bottom:.75rem">
+        <label style="font-size:.85rem;font-weight:600">מספר שאלה (אופציונלי)</label>
+        <input id="exam-bug-qnum" type="number" min="1" placeholder="השאר ריק אם הבעיה כללית"
+          style="width:100%;padding:.55rem .75rem;border:1.5px solid var(--border);border-radius:8px;font-size:.88rem;color:var(--text);box-sizing:border-box">
+      </div>
+
+      <div class="form-group" style="margin-bottom:.75rem">
+        <label style="font-size:.85rem;font-weight:600">סוג הבעיה</label>
+        <select id="exam-bug-type" style="width:100%;padding:.55rem .75rem;border:1.5px solid var(--border);border-radius:8px;font-size:.88rem;color:var(--text)">
+          <option value="wrong_lecturer">שם מרצה שגוי</option>
+          <option value="wrong_pdf">PDF שגוי / לא נפתח</option>
+          <option value="wrong_meta">פרטי מבחן שגויים (שנה / סמסטר / מועד)</option>
+          <option value="unclear">שאלה לא ברורה / טקסט חסר</option>
+          <option value="other">אחר</option>
+        </select>
+      </div>
+
+      <div class="form-group" style="margin-bottom:1rem">
+        <label style="font-size:.85rem;font-weight:600">תיאור הבעיה <span style="color:var(--danger)">*</span></label>
+        <textarea id="exam-bug-text" rows="3" placeholder="תאר את הבעיה בקצרה..."
+          style="width:100%;padding:.65rem .75rem;border:1.5px solid var(--border);border-radius:8px;
+            font-size:.88rem;resize:vertical;box-sizing:border-box;font-family:inherit;
+            color:var(--text);line-height:1.6"></textarea>
+      </div>
+
+      <div id="exam-bug-err" class="form-error"></div>
+      <div style="display:flex;gap:.75rem;justify-content:flex-end">
+        <button class="btn btn-secondary btn-sm" onclick="document.getElementById('exam-bug-modal').remove()">ביטול</button>
+        <button class="btn btn-primary btn-sm" onclick="submitExamBugReport('${examId}','${courseId}')">שלח דיווח ←</button>
+      </div>
+    </div>`;
+  document.body.appendChild(modal);
+  modal.addEventListener('click', e => { if (e.target === modal) modal.remove(); });
+  document.getElementById('exam-bug-text')?.focus();
+}
+
+async function submitExamBugReport(examId, courseId) {
+  const errEl = document.getElementById('exam-bug-err');
+  if (errEl) errEl.classList.remove('show');
+  const bugText = (document.getElementById('exam-bug-text')?.value || '').trim();
+  if (!bugText) {
+    if (errEl) { errEl.textContent = 'נא לתאר את הבעיה'; errEl.classList.add('show'); }
+    return;
+  }
+  const bugType    = document.getElementById('exam-bug-type')?.value || 'other';
+  const questionNum = parseInt(document.getElementById('exam-bug-qnum')?.value, 10) || null;
+  const uid   = STATE.fireUser?.uid || null;
+  const email = STATE.fireUser?.email || '';
+  try {
+    await db.collection('bug_reports').add({
+      bugType,
+      bugText,
+      questionId:   null,
+      questionNum,
+      examId:       examId || '',
+      courseId:     courseId || '',
+      reportedBy:   uid,
+      reporterEmail: email,
+      status:       'open',
+      createdAt:    firebase.firestore.FieldValue.serverTimestamp(),
+    });
+    document.getElementById('exam-bug-modal')?.remove();
+    toast('✅ הדיווח נשלח — תודה!', 'success');
+    if (uid) {
+      db.collection('users').doc(uid).set(
+        { bugReportCount: firebase.firestore.FieldValue.increment(1) },
+        { merge: true }
+      ).catch(() => {});
+    }
+  } catch (e) {
+    if (errEl) { errEl.textContent = 'שגיאה בשליחת הדיווח: ' + e.message; errEl.classList.add('show'); }
+  }
 }
 
 /* ══════════════════════════════════════════════════════════
