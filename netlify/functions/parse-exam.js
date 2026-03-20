@@ -8,9 +8,8 @@
    ============================================================ */
 
 const CLAUDE_API = 'https://api.anthropic.com/v1/messages';
-//const MODEL      = 'claude-opus-4-5';
-const MODEL = 'claude-sonnet-4-6';
-const MAX_TOKENS = 8192; // math exams with LaTeX can be verbose
+const MODEL      = 'claude-sonnet-4-6';  // Sonnet 4.6 — accurate + fast, fits 60s Pro timeout
+const MAX_TOKENS = 4096; // math exams with LaTeX can be verbose
 
 /* ── CORS headers ── */
 const CORS = {
@@ -22,7 +21,7 @@ const CORS = {
 /* ── Rate limiting (in-memory, resets on cold start) ── */
 const rateLimitMap = new Map();
 const RATE_LIMIT_WINDOW_MS = 60_000; // 1 minute
-const RATE_LIMIT_MAX       = 10;     // max 10 requests per minute per IP
+const RATE_LIMIT_MAX       = 30;     // max 30 requests per minute per IP (bulk upload needs more)
 
 function isRateLimited(ip) {
   const now    = Date.now();
@@ -220,6 +219,7 @@ exports.handler = async (event) => {
 
   /* ── API key guard ── */
   const apiKey = process.env.ANTHROPIC_API_KEY;
+  //const apiKey = "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";
   if (!apiKey) {
     console.error('ANTHROPIC_API_KEY is not set in Netlify environment variables!');
     return {
@@ -294,7 +294,11 @@ exports.handler = async (event) => {
     messages = [{ role: 'user', content }];
 
   } else if (isPDF && base64) {
-    /* Vision mode — send PDF as base64 document */
+    /* PDF document mode — send PDF directly to Claude */
+    /* Use vision prompt when filenameHint is present (bulk upload) for metadata extraction */
+    const promptText = filenameHint
+      ? buildVisionPrompt(filenameHint)
+      : buildPrompt('(ראה מסמך המצורף)', titleHint || '');
     messages = [{
       role: 'user',
       content: [
@@ -304,7 +308,7 @@ exports.handler = async (event) => {
         },
         {
           type: 'text',
-          text:  buildPrompt('(ראה מסמך המצורף)', titleHint || ''),
+          text: promptText,
         },
       ],
     }];
@@ -318,6 +322,16 @@ exports.handler = async (event) => {
 
   /* ── Call Claude API ── */
   try {
+    const requestBody = JSON.stringify({
+      model:      MODEL,
+      max_tokens: MAX_TOKENS,
+      messages,
+    });
+
+    // Log request size for debugging
+    const bodySizeMB = (requestBody.length / 1_048_576).toFixed(2);
+    console.log(`Claude request: model=${MODEL}, body=${bodySizeMB}MB, mode=${images ? 'images(' + images.length + ')' : (isPDF ? 'pdf-direct' : 'text')}`);
+
     const response = await fetch(CLAUDE_API, {
       method:  'POST',
       headers: {
@@ -325,22 +339,22 @@ exports.handler = async (event) => {
         'x-api-key':          apiKey,
         'anthropic-version':  '2023-06-01',
       },
-      body: JSON.stringify({
-        model:      MODEL,
-        max_tokens: MAX_TOKENS,
-        messages,
-      }),
+      body: requestBody,
     });
 
     /* ── Forward error from Anthropic ── */
     if (!response.ok) {
-      const errData = await response.json().catch(() => ({}));
-      console.error('Anthropic API error:', response.status, errData);
+      const errText = await response.text().catch(() => '');
+      let errData = {};
+      try { errData = JSON.parse(errText); } catch {}
+      const errMsg = errData.error?.message || errText.slice(0, 200) || `Anthropic HTTP ${response.status}`;
+      console.error(`Anthropic API error: ${response.status} — ${errMsg}`);
       return {
         statusCode: response.status,
         headers: CORS,
         body: JSON.stringify({
-          error:   errData.error?.message || 'Anthropic API error',
+          error:   errMsg,
+          status:  response.status,
           details: errData,
         }),
       };
