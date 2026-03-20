@@ -219,7 +219,6 @@ exports.handler = async (event) => {
 
   /* ── API key guard ── */
   const apiKey = process.env.ANTHROPIC_API_KEY;
-  //const apiKey = "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";
   if (!apiKey) {
     console.error('ANTHROPIC_API_KEY is not set in Netlify environment variables!');
     return {
