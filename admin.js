@@ -25,6 +25,149 @@ const ICONS = ['📐','📊','⚛️','🧮','🔬','🧬','💻','🌍','🏛�
                '🎓','🔭','📈','🧪','🔢','📜','🗓️','🖥️','🎯','⚙️'];
 function randIcon() { return ICONS[Math.floor(Math.random() * ICONS.length)]; }
 
+/* ══════════════════════════════════════════════════════════════
+   DIRECT CLAUDE API — calls Anthropic directly from browser.
+   No Netlify function, no timeout. Tries Opus → Sonnet → Haiku.
+   ═══════════════════════════════════════════════════════════ */
+const CLAUDE_API_URL = 'https://api.anthropic.com/v1/messages';
+const CLAUDE_MODELS  = [
+  'claude-opus-4-6',
+  'claude-sonnet-4-6',
+  'claude-haiku-4-5-20251001',
+];
+const CLAUDE_MAX_TOK = 8192;
+let _anthropicKey    = null;
+
+async function loadAnthropicKey() {
+  try {
+    const doc = await db.collection('settings').doc('api_keys').get();
+    if (doc.exists && doc.data().anthropic) {
+      _anthropicKey = doc.data().anthropic;
+      console.log('✅ Anthropic API key loaded');
+    } else {
+      console.warn('⚠️ Anthropic key missing — set settings/api_keys.anthropic in Firestore');
+    }
+  } catch (e) { console.warn('Could not load Anthropic key:', e.message); }
+}
+
+/**
+ * Call Claude API directly from browser. Tries models in order until one succeeds.
+ * @param {Array} messages — Claude messages array
+ * @param {Function} [onAttempt] — optional callback(modelName, attemptIndex)
+ * @returns {Promise<{questions, metadata, usage}>}
+ */
+async function callClaudeDirect(messages, onAttempt) {
+  if (!_anthropicKey) throw new Error('מפתח Anthropic לא נטען — הגדר settings/api_keys.anthropic ב-Firestore');
+
+  let lastErr = null;
+
+  for (let i = 0; i < CLAUDE_MODELS.length; i++) {
+    const model = CLAUDE_MODELS[i];
+    if (onAttempt) onAttempt(model, i);
+
+    try {
+      const response = await fetch(CLAUDE_API_URL, {
+        method: 'POST',
+        headers: {
+          'Content-Type':      'application/json',
+          'x-api-key':         _anthropicKey,
+          'anthropic-version': '2023-06-01',
+          'anthropic-dangerous-direct-browser-access': 'true',
+        },
+        body: JSON.stringify({ model, max_tokens: CLAUDE_MAX_TOK, messages }),
+      });
+
+      if (!response.ok) {
+        const errText = await response.text().catch(() => '');
+        let errMsg = `${model}: HTTP ${response.status}`;
+        try { const d = JSON.parse(errText); errMsg = d.error?.message || errMsg; } catch {}
+
+        // 529 = overloaded, 529/500/503 = retry with next model
+        if (response.status === 529 || response.status >= 500) {
+          console.warn(`⚠️ ${errMsg} — trying next model...`);
+          lastErr = new Error(errMsg);
+          continue;
+        }
+        throw new Error(errMsg);
+      }
+
+      const data = await response.json();
+      let jsonStr = (data.content?.find(c => c.type === 'text')?.text || '').trim();
+
+      // Strip markdown fences
+      const fence = jsonStr.match(/```(?:json)?\s*([\s\S]*?)```/);
+      if (fence) jsonStr = fence[1].trim();
+
+      let parsed;
+      try { parsed = JSON.parse(jsonStr); } catch {
+        const m = jsonStr.match(/\{[\s\S]*\}/);
+        if (m) try { parsed = JSON.parse(m[0]); } catch {}
+      }
+
+      if (!parsed || !Array.isArray(parsed.questions)) {
+        console.warn(`⚠️ ${model}: invalid JSON — trying next model...`);
+        lastErr = new Error(`${model}: תשובה לא תקנית`);
+        continue;
+      }
+
+      console.log(`✅ ${model}: ${parsed.questions.length} questions parsed`);
+      return { questions: parsed.questions, metadata: parsed.metadata || null, usage: data.usage, model };
+
+    } catch (err) {
+      console.warn(`⚠️ ${model}: ${err.message}`);
+      lastErr = err;
+      // Network error / timeout → try next model
+      continue;
+    }
+  }
+
+  throw lastErr || new Error('כל המודלים נכשלו');
+}
+
+/* ── Prompt builder for vision/PDF ────────────────────────── */
+function _parseFilenameHint(filename) {
+  if (!filename) return {};
+  const f = filename.replace(/\.[^/.]+$/, '');
+  const result = {};
+  const ym = f.match(/20\d{2}/); if (ym) result.year = parseInt(ym[0]);
+  const sc = f.match(/20\d{2}([A-Za-z])([A-Za-z])/);
+  if (sc) {
+    const sm = { A:'א',B:'ב',S:'קיץ',C:'קיץ' }, mm = { A:'א',B:'ב',C:'ג' };
+    if (sm[sc[1].toUpperCase()]) result.semester = sm[sc[1].toUpperCase()];
+    if (mm[sc[2].toUpperCase()]) result.moed = mm[sc[2].toUpperCase()];
+  }
+  return result;
+}
+
+function _buildDirectPrompt(filenameHint) {
+  const k = _parseFilenameHint(filenameHint);
+  const kl = [];
+  if (k.year) kl.push(`year: ${k.year}`);
+  if (k.semester) kl.push(`semester: "${k.semester}"`);
+  if (k.moed) kl.push(`moed: "${k.moed}"`);
+  const kb = kl.length ? `\n⚠️ פרטים משם הקובץ: ${kl.join(', ')}\n` : '';
+  const ye = k.year||2024, se = k.semester||'א', me = k.moed||'ב';
+
+  return `אתה מומחה לחילוץ מידע ממבחנים אקדמיים בעברית.${kb}
+
+════ מטאדאטה ════
+▸ courseName — שם הקורס המלא מכותרת המבחן.
+▸ lecturers — מצא "מרצים:"/"מרצה:" → פצל לפי פסיקים → הסר תארים → שם פרטי + משפחה בלבד.
+▸ year — ${k.year ? k.year+' (אל תשנה)' : '4 ספרות'}
+▸ semester — ${k.semester ? '"'+k.semester+'" (אל תשנה)' : '"א"/"ב"/"קיץ"/null'}
+▸ moed — ${k.moed ? '"'+k.moed+'" (אל תשנה)' : '"א"/"ב"/"ג"/null'}
+
+════ שאלות ════
+⚠️ אל תוסיף ניקוד. אל תכלול "(X נק')".
+• LaTeX: $...$ inline, $$...$$ display, \\begin{pmatrix}, \\frac, \\sqrt
+• סעיפים (א)(ב)(ג) / (1)(2)(3) → parts[].letter
+• שאלת בונוס → isBonus: true
+• אל תכלול הוראות בחינה, לוגו, מספרי עמוד
+
+════ JSON בלבד — ללא markdown, ללא \`\`\` ════
+{"metadata":{"courseName":"...","lecturers":["..."],"year":${ye},"semester":"${se}","moed":"${me}"},"questions":[{"number":1,"text":"...","isBonus":false,"parts":[{"letter":"א","text":"..."}]}]}`;
+}
+
 /* ── Multi-lecturer widget ─────────────────────────────── */
 let _lecturers = [];
 
@@ -186,6 +329,7 @@ document.addEventListener('DOMContentLoaded', () => {
 /* ── INIT ─────────────────────────────────────────────────── */
 async function initAdmin() {
   try {
+    await loadAnthropicKey();
     await populateAllSelects();
     await refreshDashboard();
     await renderManageTable();
@@ -450,31 +594,19 @@ async function startBulkUpload() {
     bulkLog(`מתחיל: ${file.name}`, 'info');
 
     try {
-      // 1. Render PDF to images
-      showSpinner(`🖼️ ${file.name} — ממיר לתמונות...`);
-      let images = null;
-      try {
-        images = await renderPdfToBase64Images(file, 15);
-      } catch (e) {
-        bulkLog(`  ⚠️ pdf.js נכשל, עובר למצב base64`, 'warn');
-      }
+      // 1. Read PDF as base64 (send directly — no image rendering needed)
+      showSpinner(`📄 ${file.name} — קורא PDF...`);
+      const base64 = await new Promise((res, rej) => {
+        const r = new FileReader();
+        r.onload  = () => res(r.result.split(',')[1]);
+        r.onerror = () => rej(new Error('קריאת קובץ נכשלה'));
+        r.readAsDataURL(file);
+      });
 
-      // 2. Parse with Claude Vision
-      let result;
-      if (images && images.length) {
-        showSpinner(`🤖 ${file.name} — Claude Vision מנתח...`);
-        result = await processWithVision(images, file.name);
-      } else {
-        showSpinner(`🤖 ${file.name} — Claude מנתח PDF...`);
-        const base64 = await new Promise((res, rej) => {
-          const r = new FileReader();
-          r.onload  = () => res(r.result.split(',')[1]);
-          r.onerror = () => rej(new Error('קריאת קובץ נכשלה'));
-          r.readAsDataURL(file);
-        });
-        result = await processWithClaude('', { isPDF: true, base64 });
-        if (!result.questions) result = { questions: result, metadata: null };
-      }
+      // 2. Parse with Claude (Opus → Sonnet → Haiku)
+      showSpinner(`🤖 ${file.name} — Claude מנתח...`);
+      let result = await processWithClaude('', { isPDF: true, base64, filenameHint: file.name });
+      if (!result.questions) result = { questions: result, metadata: null };
 
       const meta      = result.metadata || {};
       const questions = (result.questions || []).filter(q => q.text || q.subs?.length);
@@ -487,7 +619,7 @@ async function startBulkUpload() {
       const known = parseFilenameForBulk(file.name);
       const title = generateExamTitle(known.year || meta.year, known.semester || meta.semester, known.moed || meta.moed);
 
-      bulkLog(`  זוהו ${questions.length} שאלות | כותרת: ${title || '(ללא)'} | מרצים: ${lecturers.join(', ') || '—'}`, 'info');
+      bulkLog(`  זוהו ${questions.length} שאלות | כותרת: ${title || '(ללא)'} | מרצים: ${lecturers.join(', ') || '—'} | מודל: ${result.model || '?'}`, 'info');
 
       // 5. Upload PDF to Storage
       showSpinner(`📤 ${file.name} — מעלה PDF...`);
@@ -524,6 +656,8 @@ async function startBulkUpload() {
         moed:      known.moed     || meta.moed     || null,
         lecturers: lecturers.length ? lecturers : null,
         pdfUrl,
+        parsedModel: result.model || null,
+        verified: false,
         questions: questions.map(q => ({
           id: q.id || genId(), text: q.text, isBonus: q.isBonus === true,
           subs: (q.subs || []).map(s => ({ id: s.id || genId(), label: s.label, text: s.text }))
@@ -918,97 +1052,56 @@ async function renderPdfToBase64Images(file, maxPages = 15) {
 }
 
 /**
- * Send images array to Claude backend and receive parsed questions + metadata.
+ * Send images to Claude directly (Opus → Sonnet → Haiku).
  */
 async function processWithVision(images, filenameHint) {
-  const response = await fetch(CLAUDE_ENDPOINT, {
-    method:  'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body:    JSON.stringify({ images, filenameHint: filenameHint || '' }),
+  const content = [
+    { type: 'text', text: _buildDirectPrompt(filenameHint || '') },
+  ];
+  images.forEach((imgBase64, i) => {
+    content.push({ type: 'text', text: `\n=== עמוד ${i + 1} ===` });
+    content.push({ type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: imgBase64 } });
   });
 
-  if (!response.ok) {
-    const errData = await response.json().catch(() => ({}));
-    throw new Error(errData.error || errData.message || `שגיאת שרת (${response.status})`);
-  }
-
-  const data = await response.json();
-  // Vision response contains both questions and metadata
+  const data = await callClaudeDirect(
+    [{ role: 'user', content }],
+    (model, i) => showSpinner(`🤖 ניסיון ${i+1}/3: ${model}...`)
+  );
   return _normalizeResult(data);
 }
 
 /**
- * Send exam text to your Claude backend and receive parsed questions JSON.
- * @param {string} text  - Raw exam text (LaTeX / plain)
- * @param {Object} [opts] - Optional: { isPDF, base64, titleHint }
- * @returns {Promise<{questions: Array, metadata: Object|null}>}
+ * Send exam PDF/text to Claude directly (Opus → Sonnet → Haiku).
  */
 async function processWithClaude(text, opts = {}) {
-  const titleHint = opts.titleHint ? `שם/קוד המבחן: "${opts.titleHint}". ` : '';
+  let messages;
 
-  const prompt = `${titleHint}אתה מנתח מבחן אקדמי. שלוף את כל השאלות והסעיפים.
-
-החזר JSON בלבד (ללא markdown, ללא טקסט נוסף) בפורמט הזה בדיוק:
-{"questions":[{"number":1,"text":"טקסט שאלה ראשית (ריק אם אין)","isBonus":false,"parts":[{"letter":"א","text":"טקסט סעיף"}]}]}
-
-הוראות:
-- שלוף את כל השאלות
-- אם לשאלה יש סעיפים (א)(ב)(ג) — כלול ב-parts
-- אם אין סעיפים — parts יהיה []
-- נוסחאות מתמטיות: LaTeX עם $...$ או $$...$$
-- שמור על הטקסט העברי המקורי
-- אם השאלה מכילה "שאלת בונוס" בכותרתה — הגדר isBonus:true
-- החזר JSON תקני בלבד
+  if (opts.isPDF && opts.base64) {
+    messages = [{
+      role: 'user',
+      content: [
+        { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: opts.base64 } },
+        { type: 'text', text: _buildDirectPrompt(opts.filenameHint || opts.titleHint || '') },
+      ],
+    }];
+  } else {
+    const hint = opts.titleHint ? `שם/קוד המבחן: "${opts.titleHint}". ` : '';
+    messages = [{
+      role: 'user',
+      content: `${hint}אתה מנתח מבחן אקדמי. שלוף שאלות וסעיפים והחזר JSON בלבד.
+פורמט: {"questions":[{"number":1,"text":"...","isBonus":false,"parts":[{"letter":"א","text":"..."}]}]}
+הוראות: שלוף הכל, LaTeX ב-$...$, שמור עברית מקורית, החזר JSON תקני בלבד.
 
 טקסט המבחן:
-${text}`;
-
-  const body = {
-    text: prompt,
-    ...(opts.isPDF  && { isPDF:  true }),
-    ...(opts.base64 && { base64: opts.base64 }),
-  };
-
-  const response = await fetch(CLAUDE_ENDPOINT, {
-    method:  'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body:    JSON.stringify(body),
-  });
-
-  if (!response.ok) {
-    const errData = await response.json().catch(() => ({}));
-    throw new Error(errData.error || errData.message || `שגיאת שרת (${response.status})`);
+${text}`,
+    }];
   }
 
-  const data = await response.json();
-
-  // Support multiple response shapes from different backends
-  let jsonStr = '';
-  if (typeof data === 'string') {
-    jsonStr = data;
-  } else if (data.result) {
-    jsonStr = typeof data.result === 'string' ? data.result : JSON.stringify(data.result);
-  } else if (data.content) {
-    // Anthropic-style passthrough
-    jsonStr = (data.content.find(c => c.type === 'text')?.text || '').trim();
-  } else if (data.questions) {
-    return _normalizeResult(data);
-  }
-
-  // Strip markdown fences if present
-  const fenceMatch = jsonStr.match(/```(?:json)?\s*([\s\S]*?)```/);
-  if (fenceMatch) jsonStr = fenceMatch[1].trim();
-
-  let parsed;
-  try {
-    parsed = JSON.parse(jsonStr);
-  } catch {
-    const m = jsonStr.match(/\{[\s\S]*\}/);
-    if (m) parsed = JSON.parse(m[0]);
-    else throw new Error('תגובת AI לא תקנית — לא ניתן לפרסר JSON');
-  }
-
-  return _normalizeResult(parsed);
+  const data = await callClaudeDirect(
+    messages,
+    (model, i) => showSpinner(`🤖 ניסיון ${i+1}/3: ${model}...`)
+  );
+  return _normalizeResult(data);
 }
 
 /**
@@ -1047,7 +1140,7 @@ function _normalizeResult(parsed) {
       }))
     };
   });
-  return { questions, metadata: parsed.metadata || null };
+  return { questions, metadata: parsed.metadata || null, model: parsed.model || null };
 }
 
 function _normalizeQuestions(parsed) {
@@ -1227,6 +1320,7 @@ async function handleFileInput(file) {
     setProgress(95);
 
     parsedQuestions = result.questions || [];
+    _parsedModel   = result.model || null;
 
     // Auto-fill metadata into form fields
     if (result.metadata) {
@@ -1262,6 +1356,7 @@ async function handleFileInput(file) {
 let parsedQuestions = [];
 let _editingExamId  = null;  // tracks the exam being edited (for safe update, not delete-first)
 let _examPdfFile    = null;  // File object selected for PDF download upload
+let _parsedModel    = null;  // which Claude model parsed the current exam
 
 function onExamPdfSelected(input) {
   const file = input.files[0];
@@ -1594,6 +1689,8 @@ async function submitAddExam() {
       moed:      moed || null,
       lecturers: lecturers.length ? lecturers : null,
       pdfUrl:    pdfUrl || null,
+      parsedModel: _parsedModel || null,
+      verified:  false,
       questions: questions.map(q => ({
         id:      q.id || genId(),
         text:    q.text,
@@ -1635,6 +1732,7 @@ function resetForm() {
   clearExamPdf();
   parsedQuestions = [];
   _editingExamId  = null;
+  _parsedModel    = null;
   clearImport();
   document.getElementById('ae-error')?.classList.remove('show');
   // Hide edit banner
@@ -1890,6 +1988,16 @@ async function refreshDashboard() {
    MANAGE EXAMS TABLE
 ══════════════════════════════════════════════════════════ */
 
+let _manageTab = 'all'; // 'all' | 'verified' | 'unverified'
+
+function setManageTab(tab) {
+  _manageTab = tab;
+  document.querySelectorAll('.manage-tab').forEach(b => b.classList.remove('active'));
+  const btn = document.getElementById(`tab-${tab}`);
+  if (btn) btn.classList.add('active');
+  renderManageTable();
+}
+
 async function renderManageTable() {
   const container = document.getElementById('manage-table');
   if (!container) return;
@@ -1904,13 +2012,43 @@ async function renderManageTable() {
     if (filter) q = q.where('courseId', '==', filter);
     const snap = await q.get();
 
-    if (snap.empty) {
-      container.innerHTML = '<div class="empty"><span class="ei">📭</span><h3>אין מבחנים</h3></div>';
+    // Stats
+    const allDocs    = snap.docs;
+    const totalCount = allDocs.length;
+    const verifiedCount   = allDocs.filter(d => d.data().verified === true).length;
+    const unverifiedCount = totalCount - verifiedCount;
+
+    // Update stats bar
+    const statsEl = document.getElementById('manage-stats');
+    if (statsEl) {
+      statsEl.innerHTML = `
+        <span class="stat-chip" style="background:#f3f4f6;color:#374151">📋 סה"כ: <strong>${totalCount}</strong></span>
+        <span class="stat-chip" style="background:#d1fae5;color:#065f46">✅ נבדקו: <strong>${verifiedCount}</strong></span>
+        <span class="stat-chip" style="background:#fef9c3;color:#92400e">❌ לא נבדקו: <strong>${unverifiedCount}</strong></span>
+      `;
+    }
+
+    // Update tab labels with counts
+    const tabAll = document.getElementById('tab-all');
+    const tabV   = document.getElementById('tab-verified');
+    const tabU   = document.getElementById('tab-unverified');
+    if (tabAll) tabAll.textContent = `הכל (${totalCount})`;
+    if (tabV)   tabV.textContent   = `✅ נבדקו (${verifiedCount})`;
+    if (tabU)   tabU.textContent   = `❌ לא נבדקו (${unverifiedCount})`;
+
+    // Filter by tab
+    let filteredDocs = allDocs;
+    if (_manageTab === 'verified')   filteredDocs = allDocs.filter(d => d.data().verified === true);
+    if (_manageTab === 'unverified') filteredDocs = allDocs.filter(d => !d.data().verified);
+
+    if (!filteredDocs.length) {
+      const emptyMsg = _manageTab === 'verified' ? 'אין מבחנים שנבדקו' : _manageTab === 'unverified' ? 'כל המבחנים נבדקו! 🎉' : 'אין מבחנים';
+      container.innerHTML = `<div class="empty"><span class="ei">📭</span><h3>${emptyMsg}</h3></div>`;
       return;
     }
 
-    // Sort client-side: newest first, fallback to title for exams without createdAt
-    const sortedDocs = snap.docs.slice().sort((a, b) => {
+    // Sort client-side: newest first
+    const sortedDocs = filteredDocs.slice().sort((a, b) => {
       const ta = a.data().createdAt?.toMillis?.() || a.data().updatedAt?.toMillis?.() || 0;
       const tb = b.data().createdAt?.toMillis?.() || b.data().updatedAt?.toMillis?.() || 0;
       return tb - ta;
@@ -1919,7 +2057,11 @@ async function renderManageTable() {
     const rows = sortedDocs.map(d => {
       const e = { ...d.data(), id: d.id };
       const qIds = (e.questions || []).map(q => q.id).filter(Boolean).join(',');
-      return `<tr>
+      const modelShort = (e.parsedModel || '').replace('claude-','').split('-202')[0] || '—';
+      const modelColor = e.parsedModel?.includes('opus') ? '#7c3aed'
+                       : e.parsedModel?.includes('sonnet') ? '#2563eb'
+                       : e.parsedModel?.includes('haiku') ? '#059669' : '#6b7280';
+      return `<tr style="background:${e.verified ? '#d1fae5' : '#fef9c3'}">
         <td><strong>${esc(e.title)}</strong></td>
         <td>${esc(courseMap[e.courseId] || e.courseId)}</td>
         <td>${e.year || '-'}</td>
@@ -1927,6 +2069,10 @@ async function renderManageTable() {
         <td>${esc(e.moed) || '-'}</td>
         <td>${_fmtLecturers(e.lecturers || e.lecturer)}</td>
         <td><span class="badge b-gray">${(e.questions || []).length}</span></td>
+        <td><span class="badge" style="font-size:.7rem;background:${modelColor};color:#fff">${esc(modelShort)}</span></td>
+        <td style="text-align:center">
+          <input type="checkbox" ${e.verified ? 'checked' : ''} onchange="toggleVerified('${e.id}',this.checked,this)" title="סמן כנבדק" style="width:18px;height:18px;cursor:pointer">
+        </td>
         <td id="votes-${e.id}" class="votes-cell">
           <button class="btn btn-sm btn-secondary" onclick="loadExamVoteStats('${e.id}','${qIds}',this)">הצג</button>
         </td>
@@ -1937,9 +2083,8 @@ async function renderManageTable() {
       </tr>`;
     }).join('');
 
-
     container.innerHTML = `<table class="tbl">
-      <thead><tr><th>כותרת</th><th>קורס</th><th>שנה</th><th>סמסטר</th><th>מועד</th><th>מרצה</th><th>שאלות</th><th>קושי</th><th></th></tr></thead>
+      <thead><tr><th>כותרת</th><th>קורס</th><th>שנה</th><th>סמסטר</th><th>מועד</th><th>מרצה</th><th>שאלות</th><th>מודל</th><th>נבדק</th><th>קושי</th><th></th></tr></thead>
       <tbody>${rows}</tbody></table>`;
   } catch (e) {
     container.innerHTML = `<p style="color:var(--danger)">שגיאה: ${e.message}</p>`;
@@ -1956,6 +2101,27 @@ async function deleteExam(examId) {
     refreshDashboard();
   } catch (e) {
     toast('שגיאת מחיקה: ' + e.message, 'error');
+  }
+}
+
+async function toggleVerified(examId, checked, cb) {
+  try {
+    // Instant visual feedback
+    const row = cb?.closest?.('tr');
+    if (row) row.style.background = checked ? '#d1fae5' : '#fef9c3';
+
+    await db.collection('exams').doc(examId).update({
+      verified: checked,
+      verifiedAt: checked ? firebase.firestore.FieldValue.serverTimestamp() : null,
+      verifiedBy: checked ? (adminUser?.email || 'admin') : null,
+    });
+    toast(checked ? '✅ מבחן סומן כנבדק' : '↩️ סימון נבדק הוסר');
+  } catch (e) {
+    toast('שגיאה: ' + e.message, 'error');
+    // Revert on error
+    if (cb) cb.checked = !checked;
+    const row = cb?.closest?.('tr');
+    if (row) row.style.background = !checked ? '#d1fae5' : '#fef9c3';
   }
 }
 
