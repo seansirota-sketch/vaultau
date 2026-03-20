@@ -8,7 +8,8 @@
    ============================================================ */
 
 const CLAUDE_API = 'https://api.anthropic.com/v1/messages';
-const MODEL      = 'claude-opus-4-5';
+//const MODEL      = 'claude-opus-4-5';
+const MODEL = 'claude-sonnet-4-6';
 const MAX_TOKENS = 8192; // math exams with LaTeX can be verbose
 
 /* ── CORS headers ── */
