@@ -507,15 +507,35 @@ async function startBulkUpload() {
 
       // 6. Check for duplicate title in this course
       const finalTitle = title || file.name.replace(/\.[^/.]+$/, '');
-      const dupSnap = await db.collection('exams')
-        .where('courseId', '==', courseId)
-        .where('title', '==', finalTitle)
-        .get();
-      if (!dupSnap.empty) {
-        setBulkFileStatus(i, '⚠️', '#d97706');
-        bulkLog(`  דולג — מבחן בשם "${finalTitle}" כבר קיים בקורס`, 'warn');
-        failed++;
-        continue;
+      const allowSameLecturer = document.getElementById('bulk-allow-same-lecturer')?.checked;
+      const allowDiffLecturer = document.getElementById('bulk-allow-diff-lecturer')?.checked;
+
+      if (!allowSameLecturer) {
+        const dupSnap = await db.collection('exams')
+          .where('courseId', '==', courseId)
+          .where('title', '==', finalTitle)
+          .get();
+        if (!dupSnap.empty) {
+          // Check if the existing exam has the same lecturer
+          const newLecturers = (known.lecturers || (known.lecturer ? [known.lecturer] : [])).map(l => l.trim().toLowerCase());
+          const hasSameLecturer = dupSnap.docs.some(d => {
+            const existingLecturers = (d.data().lecturers || (d.data().lecturer ? [d.data().lecturer] : [])).map(l => l.trim().toLowerCase());
+            return newLecturers.length === 0 || existingLecturers.some(el => newLecturers.includes(el));
+          });
+
+          if (hasSameLecturer && !allowSameLecturer) {
+            setBulkFileStatus(i, '⚠️', '#d97706');
+            bulkLog(`  דולג — מבחן זהה בשם "${finalTitle}" עם אותו מרצה כבר קיים בקורס`, 'warn');
+            failed++;
+            continue;
+          }
+          if (!hasSameLecturer && !allowDiffLecturer) {
+            setBulkFileStatus(i, '⚠️', '#d97706');
+            bulkLog(`  דולג — מבחן בשם "${finalTitle}" קיים בקורס עם מרצה שונה. הפעל את האפשרות "אפשר מרצה שונה" כדי לאפשר`, 'warn');
+            failed++;
+            continue;
+          }
+        }
       }
 
       // 7. Save exam to Firestore
@@ -3364,12 +3384,17 @@ const BUG_TYPE_LABELS = {
   wrong_answer:   'תשובה שגויה',
   typo:           'שגיאת כתיב',
   math:           'בעיה בנוסחה',
-  // General
-  missing_exam:   'מבחן חסר',
-  wrong_pdf:      'PDF שגוי',
-  wrong_lecturer: 'מרצה שגוי',
-  wrong_meta:     'פרטי מבחן שגויים',
-  other:          'אחר',
+  // General / Exam-level
+  missing_exam:        'מבחן חסר',
+  wrong_pdf:           'PDF שגוי',
+  wrong_lecturer:      'מרצה שגוי',
+  wrong_meta:          'פרטי מבחן שגויים',
+  other:               'אחר',
+  // Contact Us
+  contact_add_course:  'פנייה: בקשת קורס',
+  contact_feedback:    'פנייה: חוות דעת',
+  contact_bug:         'פנייה: תקלה טכנית',
+  contact_other:       'פנייה: אחר',
 };
 
 async function renderBugReports() {
