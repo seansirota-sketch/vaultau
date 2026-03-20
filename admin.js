@@ -333,8 +333,10 @@ async function initAdmin() {
     await populateAllSelects();
     await refreshDashboard();
     await renderManageTable();
-    // טעינת בדאג' בקשות גישה ברקע
+    // טעינת בדאג' בקשות גישה ודיווחי תקלות ברקע
     _loadRequestsBadge();
+    _loadBugReportsBadge();
+    _setupBugReportListener();
     await renderCoursesList();
     setupUploadZone();
     setupBulkZone();
@@ -370,6 +372,7 @@ function _applySectionUI(name) {
   if (name === 'survey')      renderSurveyManager();
   if (name === 'permissions') renderPermissionsSection();
   if (name === 'requests')    renderRequestsSection();
+  if (name === 'bug-reports') renderBugReports();
 }
 
 // Public — called from nav clicks; pushes history entry
@@ -636,15 +639,35 @@ async function startBulkUpload() {
 
       // 6. Check for duplicate title in this course
       const finalTitle = title || file.name.replace(/\.[^/.]+$/, '');
-      const dupSnap = await db.collection('exams')
-        .where('courseId', '==', courseId)
-        .where('title', '==', finalTitle)
-        .get();
-      if (!dupSnap.empty) {
-        setBulkFileStatus(i, '⚠️', '#d97706');
-        bulkLog(`  דולג — מבחן בשם "${finalTitle}" כבר קיים בקורס`, 'warn');
-        failed++;
-        continue;
+      const allowSameLecturer = document.getElementById('bulk-allow-same-lecturer')?.checked;
+      const allowDiffLecturer = document.getElementById('bulk-allow-diff-lecturer')?.checked;
+
+      if (!allowSameLecturer) {
+        const dupSnap = await db.collection('exams')
+          .where('courseId', '==', courseId)
+          .where('title', '==', finalTitle)
+          .get();
+        if (!dupSnap.empty) {
+          // Check if the existing exam has the same lecturer
+          const newLecturers = (known.lecturers || (known.lecturer ? [known.lecturer] : [])).map(l => l.trim().toLowerCase());
+          const hasSameLecturer = dupSnap.docs.some(d => {
+            const existingLecturers = (d.data().lecturers || (d.data().lecturer ? [d.data().lecturer] : [])).map(l => l.trim().toLowerCase());
+            return newLecturers.length === 0 || existingLecturers.some(el => newLecturers.includes(el));
+          });
+
+          if (hasSameLecturer && !allowSameLecturer) {
+            setBulkFileStatus(i, '⚠️', '#d97706');
+            bulkLog(`  דולג — מבחן זהה בשם "${finalTitle}" עם אותו מרצה כבר קיים בקורס`, 'warn');
+            failed++;
+            continue;
+          }
+          if (!hasSameLecturer && !allowDiffLecturer) {
+            setBulkFileStatus(i, '⚠️', '#d97706');
+            bulkLog(`  דולג — מבחן בשם "${finalTitle}" קיים בקורס עם מרצה שונה. הפעל את האפשרות "אפשר מרצה שונה" כדי לאפשר`, 'warn');
+            failed++;
+            continue;
+          }
+        }
       }
 
       // 7. Save exam to Firestore
@@ -1804,11 +1827,15 @@ async function renderUserStats() {
     // Default: email alphabetical (already sorted above)
     // Build table HTML
     const tableRows = rows.map((u, idx) => {
-      const starred    = (u.starredQuestions || []).length;
-      const done       = (u.completedExams || u.doneExams || []).length;
-      const inProgress = (u.inProgressExams || []).length;
-      const copies     = u.copyCount || 0;
-      const accepted   = u.acceptedTerms === true;
+      const starred      = (u.starredQuestions || []).length;
+      const done         = (u.completedExams || u.doneExams || []).length;
+      const inProgress   = (u.inProgressExams || []).length;
+      const copies       = u.copyCount || 0;
+      const diffVotes    = Object.keys(u.difficultyVotes || {}).length;
+      const genSimilar   = u.generateSimilarCount || 0;
+      const bugReports   = u.bugReportCount || 0;
+      const accepted     = u.acceptedTerms === true;
+      const studyProgram = u.studyProgram || '';
 
       // Email cell — show email if available, else UID
       const identifier = u.email || u.uid || u._docId || '—';
@@ -1830,6 +1857,10 @@ async function renderUserStats() {
           ${emailCell}
         </td>
         <td style="font-size:.85rem;color:var(--text)">${esc(u.displayName || '—')}</td>
+        <td style="font-size:.82rem;color:var(--muted);max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"
+            title="${esc(studyProgram)}">
+          ${studyProgram ? esc(studyProgram) : '<span style="color:var(--light)">—</span>'}
+        </td>
         <td style="text-align:center">
           ${copies > 0
             ? `<span class="badge" style="background:#eff6ff;color:#1d4ed8;border:1px solid #bfdbfe;font-weight:600">${copies}</span>`
@@ -1851,6 +1882,21 @@ async function renderUserStats() {
             : `<span style="color:var(--light);font-size:.8rem">0</span>`}
         </td>
         <td style="text-align:center">
+          ${diffVotes > 0
+            ? `<span class="badge" style="background:#fdf4ff;color:#7e22ce;border:1px solid #e9d5ff;font-weight:600">🎯 ${diffVotes}</span>`
+            : `<span style="color:var(--light);font-size:.8rem">0</span>`}
+        </td>
+        <td style="text-align:center">
+          ${genSimilar > 0
+            ? `<span class="badge" style="background:#f0fdf4;color:#166534;border:1px solid #86efac;font-weight:600">⚡ ${genSimilar}</span>`
+            : `<span style="color:var(--light);font-size:.8rem">0</span>`}
+        </td>
+        <td style="text-align:center">
+          ${bugReports > 0
+            ? `<span class="badge" style="background:#fef2f2;color:#991b1b;border:1px solid #fca5a5;font-weight:600">🚨 ${bugReports}</span>`
+            : `<span style="color:var(--light);font-size:.8rem">0</span>`}
+        </td>
+        <td style="text-align:center">
           ${accepted
             ? `<span class="badge" style="background:#dcfce7;color:#166534;border:1px solid #86efac">✓ אישר</span>`
             : `<span class="badge" style="background:#fef2f2;color:#991b1b;border:1px solid #fca5a5">✗ טרם</span>`}
@@ -1864,6 +1910,8 @@ async function renderUserStats() {
     const totalInProgress = rows.reduce((s, u) => s + (u.inProgressExams || []).length, 0);
     const totalStarred    = rows.reduce((s, u) => s + (u.starredQuestions || []).length, 0);
     const totalAccepted   = rows.filter(u => u.acceptedTerms === true).length;
+    const totalDiffVotes  = rows.reduce((s, u) => s + Object.keys(u.difficultyVotes || {}).length, 0);
+    const totalBugReports = rows.reduce((s, u) => s + (u.bugReportCount || 0), 0);
 
     wrap.innerHTML = `
       <!-- Summary stats -->
@@ -1873,9 +1921,11 @@ async function renderUserStats() {
           ['✅', 'מבחנים שהושלמו', totalDone,        '#f0fdf4','#166534','#86efac'],
           ['⏳', 'בתהליך סה"כ',    totalInProgress,  '#fefce8','#854d0e','#fde047'],
           ['⭐', 'כוכביות סה"כ',   totalStarred,     '#fff7ed','#9a3412','#fdba74'],
+          ['🎯', 'הצבעות קושי',    totalDiffVotes,   '#fdf4ff','#7e22ce','#e9d5ff'],
+          ['🚨', 'דיווחי תקלות',   totalBugReports,  '#fef2f2','#991b1b','#fca5a5'],
           ['📜', 'אישרו תנאים',    `${totalAccepted}/${rows.length}`, '#f5f3ff','#5b21b6','#c4b5fd'],
         ].map(([icon, lbl, val, bg, fg, border]) => `
-          <div style="flex:1;min-width:110px;background:${bg};border:1px solid ${border};
+          <div style="flex:1;min-width:100px;background:${bg};border:1px solid ${border};
                       border-radius:10px;padding:.65rem .9rem;text-align:center">
             <div style="font-size:1.1rem;font-weight:700;color:${fg}">${icon} ${val}</div>
             <div style="font-size:.72rem;color:${fg};opacity:.8;margin-top:.15rem">${lbl}</div>
@@ -1884,15 +1934,19 @@ async function renderUserStats() {
 
       <!-- Table -->
       <div style="overflow-x:auto">
-        <table class="tbl" style="min-width:680px">
+        <table class="tbl" style="min-width:860px">
           <thead>
             <tr>
               <th>אימייל / UID</th>
               <th>שם</th>
-              <th style="text-align:center" title="מספר פעמים שלחץ על העתק">📋 העתקות</th>
+              <th>תוכנית לימודים</th>
+              <th style="text-align:center" title="לחיצות על העתק שאלה">📋 העתקות</th>
               <th style="text-align:center" title="מבחנים שסומנו כבוצע">✅ הושלמו</th>
               <th style="text-align:center" title="מבחנים שסומנו בתהליך">⏳ בתהליך</th>
               <th style="text-align:center" title="שאלות מסומנות בכוכבית">⭐ כוכביות</th>
+              <th style="text-align:center" title="הצבעות על רמת קושי">🎯 קושי</th>
+              <th style="text-align:center" title="לחיצות על ג'נרט שאלה דומה">⚡ ג'נרט</th>
+              <th style="text-align:center" title="דיווחי תקלות שנשלחו">🚨 דיווחים</th>
               <th style="text-align:center">📜 הצהרה</th>
             </tr>
           </thead>
@@ -1945,11 +1999,34 @@ async function refreshDashboard() {
     });
     const totalUsers = _uniqueEmails.size + _noEmailCount;
 
+    // Fetch event counts from user_events collection
+    let evCopies = 0, evStars = 0, evVotes = 0, evGenSimilar = 0,
+        evExamComplete = 0, evExamInProgress = 0;
+    try {
+      const evSnap = await db.collection('user_events').get();
+      evSnap.docs.forEach(d => {
+        switch (d.data().eventType) {
+          case 'copy_question':   evCopies++;          break;
+          case 'star_question':   evStars++;           break;
+          case 'vote_difficulty': evVotes++;           break;
+          case 'generate_similar':evGenSimilar++;      break;
+          case 'exam_complete':   evExamComplete++;    break;
+          case 'exam_in_progress':evExamInProgress++;  break;
+        }
+      });
+    } catch (_) {}
+
     if (sg) sg.innerHTML = [
-      ['📚', courses.length, 'קורסים'],
-      ['📄', totalExams,    'מבחנים'],
-      ['❓', totalQs,       'שאלות'],
-      ['👥', totalUsers,    'משתמשים'],
+      ['📚', courses.length,  'קורסים'],
+      ['📄', totalExams,      'מבחנים'],
+      ['❓', totalQs,         'שאלות'],
+      ['👥', totalUsers,      'משתמשים'],
+      ['📋', evCopies,        'העתקות שאלה'],
+      ['⭐', evStars,         'שאלות מסומנות'],
+      ['📊', evVotes,         'הצבעות קושי'],
+      ['🤖', evGenSimilar,    'יצירת שאלה דומה'],
+      ['✅', evExamComplete,  'מבחנים שהושלמו'],
+      ['⏳', evExamInProgress,'מבחנים בתהליך'],
     ].map(([icon, val, lbl]) =>
       `<div class="stat-card"><div class="stat-val">${icon} ${val}</div><div class="stat-lbl">${lbl}</div></div>`
     ).join('');
@@ -3150,10 +3227,18 @@ async function renderRequestsSection() {
       .where('status', '==', 'pending')
       .get();
 
-    // Sort client-side to avoid requiring a Firestore composite index
-    const requests = snap.docs
+    // Sort newest first, then deduplicate by email — keep only the latest per email
+    const allRequests = snap.docs
       .map(d => ({ id: d.id, ...d.data() }))
       .sort((a, b) => (b.timestamp?.toMillis?.() || 0) - (a.timestamp?.toMillis?.() || 0));
+
+    const seen = new Set();
+    const requests = allRequests.filter(r => {
+      const key = (r.email || '').toLowerCase().trim();
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
 
     // Update badge in sidebar
     if (badge) {
@@ -3187,14 +3272,24 @@ async function renderRequestsSection() {
         <tr id="req-row-${esc(req.id)}">
           <td style="font-weight:600">${esc(req.name || '—')}</td>
           <td style="font-size:.84rem;font-family:monospace;direction:ltr;text-align:left">${esc(req.email)}</td>
-          <td>${esc(req.lecturer || '—')}</td>
+          <td style="font-size:.85rem">${esc(req.program || '—')}</td>
+          <td style="font-size:.84rem;max-width:220px">
+            ${req.reason
+              ? `<span title="${esc(req.reason)}"
+                   style="display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;
+                          overflow:hidden;line-height:1.45;color:var(--text)">${esc(req.reason)}</span>`
+              : '<span style="color:var(--light)">—</span>'}
+          </td>
           <td style="font-size:.8rem;color:var(--muted);white-space:nowrap">${dateStr}</td>
           <td>
             <span class="badge" style="background:#fff7ed;color:#9a3412;border:1px solid #fdba74">ממתין</span>
           </td>
-          <td>
+          <td style="white-space:nowrap">
             <button class="btn btn-success btn-sm" onclick="approveAccessRequest('${esc(req.id)}','${esc(req.email)}','${esc(req.name || '')}')">
-              ✅ אשר גישה
+              ✅ אשר
+            </button>
+            <button class="btn btn-danger btn-sm" style="margin-right:.35rem" onclick="rejectAccessRequest('${esc(req.id)}','${esc(req.email)}')">
+              ✕ דחה
             </button>
           </td>
         </tr>`;
@@ -3206,7 +3301,8 @@ async function renderRequestsSection() {
           <tr>
             <th>שם</th>
             <th style="direction:ltr;text-align:left">אימייל</th>
-            <th>מרצה</th>
+            <th>תוכנית לימוד</th>
+            <th>סיבת הבקשה</th>
             <th>תאריך</th>
             <th>סטטוס</th>
             <th></th>
@@ -3239,12 +3335,14 @@ async function approveAccessRequest(requestId, email, name) {
   try {
     const normalizedEmail = email.toLowerCase().trim();
 
+    const adminEmail = auth.currentUser?.email || adminUser?.email || 'admin';
+
     // 1. הוסף ל-authorized_users
     await db.collection('authorized_users').doc(normalizedEmail).set({
       active:     true,
       email:      normalizedEmail,
       name:       name || '',
-      addedBy:    adminUser.email,
+      addedBy:    adminEmail,
       addedAt:    firebase.firestore.FieldValue.serverTimestamp(),
       source:     'access_request',
     }, { merge: true });
@@ -3252,7 +3350,7 @@ async function approveAccessRequest(requestId, email, name) {
     // 2. עדכן סטטוס הבקשה
     await db.collection('access_requests').doc(requestId).set({
       status:     'approved',
-      approvedBy: adminUser.email,
+      approvedBy: adminEmail,
       approvedAt: firebase.firestore.FieldValue.serverTimestamp(),
     }, { merge: true });
 
@@ -3316,5 +3414,265 @@ async function _loadRequestsBadge() {
   } catch (e) {
     // non-critical — ignore silently
     console.warn('_loadRequestsBadge:', e.message);
+  }
+}
+
+/* ── Real-time bug report listener ──────────────────────── */
+let _bugListener         = null;
+let _bugListenerReady    = false;
+let _knownBugIds         = new Set();
+
+function _setupBugReportListener() {
+  if (_bugListener) _bugListener(); // unsubscribe existing
+
+  _bugListenerReady = false;
+  _knownBugIds      = new Set();
+
+  _bugListener = db.collection('bug_reports')
+    .where('status', '==', 'open')
+    .onSnapshot(snapshot => {
+      snapshot.docChanges().forEach(change => {
+        if (change.type === 'added') {
+          const id   = change.doc.id;
+          const data = change.doc.data();
+          if (_bugListenerReady && !_knownBugIds.has(id)) {
+            _showBugNotification(data);
+          }
+          _knownBugIds.add(id);
+        }
+        if (change.type === 'removed') {
+          _knownBugIds.delete(change.doc.id);
+        }
+      });
+      _bugListenerReady = true;
+
+      // Update badge count
+      const badge = document.getElementById('bug-reports-badge');
+      if (badge) {
+        const openCount = snapshot.size;
+        badge.textContent   = openCount;
+        badge.style.display = openCount > 0 ? 'inline-block' : 'none';
+      }
+    }, err => console.warn('bugReportListener error:', err.message));
+}
+
+function _showBugNotification(bug) {
+  // Remove existing notification if any (avoid stacking)
+  document.getElementById('bug-notif-banner')?.remove();
+
+  const banner = document.createElement('div');
+  banner.id = 'bug-notif-banner';
+  banner.style.cssText = `
+    position:fixed;top:1rem;left:50%;transform:translateX(-50%);
+    background:#fef2f2;border:2px solid #ef4444;border-radius:12px;
+    padding:.85rem 1.2rem;box-shadow:0 8px 32px rgba(239,68,68,.25);
+    z-index:99999;display:flex;align-items:center;gap:.9rem;
+    max-width:480px;width:calc(100% - 2rem);animation:_slideDown .3s ease;
+  `;
+
+  const typeLabel = BUG_TYPE_LABELS?.[bug.bugType] || bug.bugType || 'תקלה';
+  const preview   = (bug.bugText || '').substring(0, 60) + ((bug.bugText || '').length > 60 ? '...' : '');
+
+  banner.innerHTML = `
+    <span style="font-size:1.5rem;flex-shrink:0">🚨</span>
+    <div style="flex:1;min-width:0">
+      <div style="font-weight:700;color:#991b1b;font-size:.9rem">דיווח תקלה חדש!</div>
+      <div style="font-size:.8rem;color:#7f1d1d;margin-top:.15rem">
+        <strong>${esc(typeLabel)}</strong> — שאלה ${bug.questionNum || '?'}
+        ${bug.examId ? `<span style="opacity:.7">· ${esc(bug.examId)}</span>` : ''}
+      </div>
+      ${preview ? `<div style="font-size:.78rem;color:#991b1b;margin-top:.2rem;opacity:.85;
+        white-space:nowrap;overflow:hidden;text-overflow:ellipsis">"${esc(preview)}"</div>` : ''}
+    </div>
+    <button onclick="showSection('bug-reports');document.getElementById('bug-notif-banner')?.remove()"
+      style="background:#ef4444;color:#fff;border:none;border-radius:8px;padding:.4rem .75rem;
+             cursor:pointer;font-size:.8rem;font-weight:600;white-space:nowrap;flex-shrink:0">
+      צפה ←
+    </button>
+    <button onclick="this.closest('#bug-notif-banner').remove()"
+      style="background:none;border:none;color:#9ca3af;cursor:pointer;font-size:1.2rem;
+             line-height:1;flex-shrink:0;padding:.1rem .2rem">✕</button>
+  `;
+
+  document.body.appendChild(banner);
+
+  // Auto-dismiss after 12 seconds
+  setTimeout(() => banner?.remove(), 12000);
+}
+
+async function _loadBugReportsBadge() {
+  try {
+    const snap = await db.collection('bug_reports')
+      .where('status', '==', 'open')
+      .get();
+    const badge = document.getElementById('bug-reports-badge');
+    if (!badge) return;
+    if (snap.size > 0) {
+      badge.textContent   = snap.size;
+      badge.style.display = 'inline-block';
+    } else {
+      badge.style.display = 'none';
+    }
+  } catch (e) {
+    console.warn('_loadBugReportsBadge:', e.message);
+  }
+}
+
+/* ══════════════════════════════════════════════════════════
+   REJECT ACCESS REQUEST
+══════════════════════════════════════════════════════════ */
+
+async function rejectAccessRequest(requestId, email) {
+  if (!adminUser || adminUser.role !== 'admin') return;
+  if (!confirm(`לדחות את בקשת הגישה של ${email}?`)) return;
+  try {
+    await db.collection('access_requests').doc(requestId).set({
+      status:     'rejected',
+      rejectedBy: auth.currentUser?.email || adminUser?.email || 'admin',
+      rejectedAt: firebase.firestore.FieldValue.serverTimestamp(),
+    }, { merge: true });
+    toast(`❌ בקשת ${email} נדחתה`, 'info');
+    const row = document.getElementById(`req-row-${requestId}`);
+    if (row) { row.style.opacity = '0'; setTimeout(() => row.remove(), 300); }
+  } catch (e) {
+    toast('שגיאה בדחיית הבקשה: ' + e.message, 'error');
+  }
+}
+
+/* ══════════════════════════════════════════════════════════
+   BUG REPORTS PANEL
+══════════════════════════════════════════════════════════ */
+
+const BUG_TYPE_LABELS = {
+  // Question-level
+  unclear:        'שאלה לא ברורה',
+  missing:        'חסר טקסט',
+  wrong_answer:   'תשובה שגויה',
+  typo:           'שגיאת כתיב',
+  math:           'בעיה בנוסחה',
+  // General / Exam-level
+  missing_exam:        'מבחן חסר',
+  wrong_pdf:           'PDF שגוי',
+  wrong_lecturer:      'מרצה שגוי',
+  wrong_meta:          'פרטי מבחן שגויים',
+  other:               'אחר',
+  // Contact Us
+  contact_add_course:  'פנייה: בקשת קורס',
+  contact_feedback:    'פנייה: חוות דעת',
+  contact_bug:         'פנייה: תקלה טכנית',
+  contact_other:       'פנייה: אחר',
+};
+
+async function renderBugReports() {
+  const wrap = document.getElementById('bug-reports-wrap');
+  if (!wrap) return;
+  wrap.innerHTML = '<div class="spinner" style="margin:2rem auto"></div>';
+
+  try {
+    const snap = await db.collection('bug_reports')
+      .orderBy('createdAt', 'desc')
+      .get();
+
+    // Update badge
+    const openCount = snap.docs.filter(d => d.data().status === 'open').length;
+    const badge = document.getElementById('bug-reports-badge');
+    if (badge) {
+      badge.textContent   = openCount;
+      badge.style.display = openCount > 0 ? 'inline-block' : 'none';
+    }
+
+    if (snap.empty) {
+      wrap.innerHTML = `<div class="empty" style="padding:2rem;text-align:center">
+        <span style="font-size:2rem;display:block;margin-bottom:.5rem">✅</span>
+        <h3 style="font-weight:600">אין דיווחי תקלות</h3>
+        <p style="color:var(--muted);font-size:.88rem">מעולה — הכל תקין!</p>
+      </div>`;
+      return;
+    }
+
+    // Fetch course names for display
+    const courses = await fetchCourses();
+    const courseMap = Object.fromEntries(courses.map(c => [c.id, c.name]));
+
+    // Group reports by courseId
+    const grouped = {};
+    snap.docs.forEach(d => {
+      const r = { id: d.id, ...d.data() };
+      const key = r.courseId || '__none__';
+      if (!grouped[key]) grouped[key] = [];
+      grouped[key].push(r);
+    });
+
+    function _bugRow(r) {
+      const ts = r.createdAt?.toDate?.();
+      const dateStr = ts
+        ? ts.toLocaleDateString('he-IL', { day:'2-digit', month:'2-digit', year:'numeric', hour:'2-digit', minute:'2-digit' })
+        : '—';
+      const isOpen    = r.status === 'open';
+      const typeLabel = BUG_TYPE_LABELS[r.bugType] || r.bugType || '—';
+      return `<tr id="bug-row-${esc(r.id)}" style="${isOpen ? '' : 'opacity:.55'}">
+        <td style="font-size:.8rem;color:var(--muted);white-space:nowrap">${dateStr}</td>
+        <td style="font-size:.82rem">מבחן <code>${esc(r.examId || '—')}</code> · שאלה ${r.questionNum || '?'}</td>
+        <td><span class="badge b-gray" style="font-size:.75rem">${esc(typeLabel)}</span></td>
+        <td style="font-size:.84rem;max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"
+            title="${esc(r.bugText)}">${esc(r.bugText)}</td>
+        <td style="font-size:.78rem;color:var(--muted)">${esc(r.reporterEmail || r.reportedBy || '—')}</td>
+        <td>
+          ${isOpen
+            ? `<button class="btn btn-sm btn-secondary" onclick="resolveBugReport('${esc(r.id)}')">✓ סגור</button>`
+            : '<span class="badge" style="background:#dcfce7;color:#166534;border:1px solid #86efac;font-size:.75rem">✓ נסגר</span>'}
+        </td>
+      </tr>`;
+    }
+
+    const courseBlocks = Object.entries(grouped).map(([courseId, reports]) => {
+      const courseName = courseId === '__none__' ? 'ללא קורס' : (courseMap[courseId] || courseId);
+      const openInCourse = reports.filter(r => r.status === 'open').length;
+      return `
+        <div style="margin-bottom:1.5rem">
+          <div style="display:flex;align-items:center;gap:.6rem;margin-bottom:.5rem;
+                      padding:.5rem .75rem;background:#fef2f2;border-radius:8px;
+                      border-right:4px solid #ef4444">
+            <span style="font-weight:700;color:#991b1b;font-size:.9rem">${esc(courseName)}</span>
+            ${openInCourse > 0
+              ? `<span style="background:#ef4444;color:#fff;border-radius:10px;
+                             padding:.1rem .45rem;font-size:.72rem;font-weight:700">
+                   ${openInCourse} פתוחות
+                 </span>`
+              : '<span style="color:#16a34a;font-size:.8rem">✓ הכל סגור</span>'}
+            <span style="color:var(--muted);font-size:.78rem;margin-right:auto">${reports.length} סה"כ</span>
+          </div>
+          <div style="overflow-x:auto">
+            <table class="tbl">
+              <thead><tr>
+                <th>תאריך</th><th>מיקום</th><th>סוג</th><th>תיאור</th><th>מדווח</th><th></th>
+              </tr></thead>
+              <tbody>${reports.map(_bugRow).join('')}</tbody>
+            </table>
+          </div>
+        </div>`;
+    }).join('');
+
+    wrap.innerHTML = `
+      <p style="font-size:.82rem;color:var(--muted);margin:0 0 1rem">
+        ${openCount} דיווחים פתוחים · ${snap.size} סה"כ · ${Object.keys(grouped).length} קורסים
+      </p>
+      ${courseBlocks}`;
+  } catch (e) {
+    wrap.innerHTML = `<p style="color:var(--danger);padding:1rem">${esc(e.message)}</p>`;
+    console.error('renderBugReports error:', e);
+  }
+}
+
+async function resolveBugReport(reportId) {
+  try {
+    await db.collection('bug_reports').doc(reportId).set(
+      { status: 'resolved', resolvedBy: adminUser?.email, resolvedAt: firebase.firestore.FieldValue.serverTimestamp() },
+      { merge: true }
+    );
+    toast('✅ דיווח סומן כנפתר', 'success');
+    renderBugReports();
+  } catch (e) {
+    toast('שגיאה: ' + e.message, 'error');
   }
 }

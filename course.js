@@ -86,17 +86,22 @@ document.addEventListener('DOMContentLoaded', () => {
 
       const email = (user.email || '').toLowerCase().trim();
 
+      // ── 0. Email verification gate ──────────────────────────
+      if (!user.emailVerified) {
+        renderEmailVerificationScreen(user);
+        return;
+      }
+
       // ── 1. Authorization check (Firestore-backed) ───────────
       const authorized = await isUserAuthorized(email);
 
       if (!authorized) {
-        // Delete the real account if it was just created (prevents ghost accounts).
-        // Then sign in anonymously so submitAccessRequest can write to Firestore
-        // (rule: allow create: if isLoggedIn()).
+        // Sign out (keep account alive) — after admin approves, user can just log in.
+        // Do NOT delete: if we delete, the user can't log in after approval.
         STATE._blockNextAuthRender = true;
-        try { await user.delete(); } catch (_) {}
-        try { await auth.signInAnonymously(); } catch (_) {}
-        renderAccessRequestForm(email, user.displayName || '');
+        const savedName = user.displayName || '';
+        try { await auth.signOut(); } catch (_) {}
+        renderAccessRequestForm(email, savedName);
         return;
       }
 
@@ -224,6 +229,11 @@ function renderAuth() {
           </div>
           <button id="login-btn" class="btn btn-primary" style="width:100%;justify-content:center"
             onclick="doLogin()">כניסה ←</button>
+          <button type="button" style="width:100%;background:none;border:none;cursor:pointer;
+            color:var(--muted);font-size:.82rem;margin-top:.55rem;padding:.3rem;text-align:center"
+            onclick="renderForgotPassword()">
+            שכחתי סיסמה
+          </button>
         </div>
 
         <!-- Signup form -->
@@ -246,6 +256,14 @@ function renderAuth() {
               </button>
             </div>
           </div>
+          <div class="form-group">
+            <label>תוכנית לימודים <span style="color:var(--danger)">*</span></label>
+            <input id="s-program" type="text"
+              placeholder="לדוגמה: מדעי המחשב, מדעי המחשב כלכלה, ביואינפורמטיקה...">
+            <p style="font-size:.78rem;color:var(--muted);margin:.3rem 0 0">
+              חובה — ציין את שם התוכנית שאתה לומד בה
+            </p>
+          </div>
           <button id="signup-btn" class="btn btn-primary" style="width:100%;justify-content:center"
             onclick="doSignup()">הרשמה ←</button>
         </div>
@@ -263,6 +281,99 @@ function renderAuth() {
 
 
 /* ══════════════════════════════════════════════════════════
+   EMAIL VERIFICATION SCREEN
+══════════════════════════════════════════════════════════ */
+
+function renderEmailVerificationScreen(user) {
+  const email = user?.email || '';
+  document.getElementById('app').innerHTML = `
+    <div class="auth-wrap">
+      <div class="auth-card">
+        <div class="auth-logo">
+          <span class="icon">📧</span>
+          <h1>אימות אימייל</h1>
+          <p>שלחנו קישור אימות לכתובת</p>
+          <p style="font-weight:700;color:var(--primary);font-size:.95rem;margin-top:.2rem">${esc(email)}</p>
+        </div>
+        <p style="text-align:center;color:var(--muted);font-size:.87rem;line-height:1.75;margin-bottom:1.2rem">
+          פתח את תיבת הדואר שלך ולחץ על קישור האימות.<br>
+          לאחר האימות, לחץ על הכפתור למטה כדי להיכנס.
+        </p>
+        <div id="ver-err" class="form-error"></div>
+        <button class="btn btn-primary" style="width:100%;justify-content:center" onclick="checkEmailVerified()">
+          אימתתי את המייל — כניסה ←
+        </button>
+        <button class="btn" style="width:100%;justify-content:center;margin-top:.75rem;
+          color:var(--muted);background:transparent;border-color:transparent;font-size:.85rem"
+          onclick="resendVerificationEmail()">
+          לא קיבלתי — שלח שוב
+        </button>
+        ${(location.hostname === 'localhost' || location.hostname === '127.0.0.1') ? `
+        <button class="btn btn-secondary" style="width:100%;justify-content:center;margin-top:.6rem;font-size:.82rem"
+          onclick="devEmulatorVerifyEmail()">
+          🔧 [DEV] אמת מייל ישירות (אמולטור)
+        </button>` : ''}
+        <button class="btn" style="width:100%;justify-content:center;margin-top:.2rem;
+          color:var(--muted);background:transparent;border-color:transparent;font-size:.82rem"
+          onclick="auth.signOut().catch(()=>{}).finally(()=>renderAuth())">
+          ← חזרה לכניסה
+        </button>
+      </div>
+    </div>`;
+}
+
+async function checkEmailVerified() {
+  const errEl = document.getElementById('ver-err');
+  if (errEl) errEl.classList.remove('show');
+  try {
+    await auth.currentUser.reload();
+    if (auth.currentUser?.emailVerified) {
+      // Reload triggers onAuthStateChanged which handles the rest
+      location.reload();
+    } else {
+      if (errEl) {
+        errEl.textContent = 'המייל טרם אומת. לחץ על הקישור שנשלח לדואר שלך ונסה שוב.';
+        errEl.classList.add('show');
+      }
+    }
+  } catch (e) {
+    if (errEl) { errEl.textContent = 'שגיאה: ' + e.message; errEl.classList.add('show'); }
+  }
+}
+
+async function resendVerificationEmail() {
+  try {
+    await auth.currentUser.sendEmailVerification();
+    toast('✉️ קישור אימות נשלח שוב לדואר שלך', 'info');
+  } catch (e) {
+    toast('שגיאה בשליחת מייל: ' + e.message, 'error');
+  }
+}
+
+// Dev-only: directly mark emailVerified=true via Firebase Auth emulator REST API
+async function devEmulatorVerifyEmail() {
+  try {
+    const user = auth.currentUser;
+    if (!user) { toast('אין משתמש מחובר', 'error'); return; }
+    const idToken = await user.getIdToken();
+    const res = await fetch(
+      'http://localhost:9099/identitytoolkit.googleapis.com/v1/accounts:update?key=fake-api-key',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ idToken, emailVerified: true }),
+      }
+    );
+    if (!res.ok) throw new Error('emulator update failed: ' + res.status);
+    await user.reload();
+    toast('✅ מייל אומת (אמולטור)', 'success');
+    location.reload();
+  } catch (e) {
+    toast('שגיאה: ' + e.message, 'error');
+  }
+}
+
+/* ══════════════════════════════════════════════════════════
    ACCESS REQUEST FORM  — shown when isUserAuthorized → false
 ══════════════════════════════════════════════════════════ */
 
@@ -274,10 +385,10 @@ function renderAccessRequestForm(email, name = '') {
         <!-- Header -->
         <div class="auth-logo" style="margin-bottom:1.2rem">
           <span class="icon">🔐</span>
-          <h1 style="font-size:1.2rem">אין לך הרשאת גישה למאגר המבחנים</h1>
+          <h1 style="font-size:1.2rem">בקשת גישה למאגר המבחנים</h1>
           <p style="font-size:.84rem;color:var(--muted);margin-top:.4rem;line-height:1.6">
-            המאגר פתוח כרגע לסטודנטים של מרצים נבחרים בלבד.<br>
-            אם הינך סטודנט בקורס, מלא את הפרטים הבאים כדי לקבל גישה.
+            מייל אוניברסיטאי (<strong>@mail.tau.ac.il</strong>) מקבל גישה אוטומטית.<br>
+            למייל אחר — מלא את הפרטים הבאים ומנהל יאשר את בקשתך.
           </p>
         </div>
 
@@ -304,18 +415,30 @@ function renderAccessRequestForm(email, name = '') {
           </div>
 
           <div class="form-group">
-            <label>אימייל אוניברסיטאי</label>
+            <label>אימייל</label>
             <input id="req-email" type="email" value="${esc(email)}"
-              placeholder="your@mail.tau.ac.il" autocomplete="email">
+              placeholder="your@email.com" autocomplete="email" readonly>
           </div>
 
           <div class="form-group">
-            <label>מרצה</label>
-            <select id="req-lecturer">
-              <option value="" disabled selected>בחר מרצה...</option>
-              <option value="סמיון אלסקר">סמיון אלסקר</option>
-              <option value="ענת אמיר">ענת אמיר</option>
-            </select>
+            <label>תוכנית לימודים <span style="color:var(--danger)">*</span></label>
+            <input id="req-program" type="text"
+              placeholder="לדוגמה: מדעי המחשב, מדעי המחשב כלכלה, ביואינפורמטיקה...">
+            <p style="font-size:.78rem;color:var(--muted);margin:.3rem 0 0">
+              חובה — ציין את שם התוכנית שאתה לומד בה
+            </p>
+          </div>
+
+          <div class="form-group">
+            <label>למה אתה מבקש גישה? <span style="color:var(--danger)">*</span></label>
+            <textarea id="req-reason" rows="3"
+              placeholder="תאר בקצרה את הסיבה לבקשתך..."
+              style="width:100%;border:1.5px solid var(--border);border-radius:8px;
+                     padding:.65rem .8rem;font-family:inherit;font-size:.88rem;
+                     resize:vertical;line-height:1.6;color:var(--text);box-sizing:border-box"></textarea>
+            <p style="font-size:.78rem;color:var(--muted);margin:.3rem 0 0">
+              חובה — תיאור קצר יעזור לנו לאשר את בקשתך מהר יותר
+            </p>
           </div>
 
           <button id="req-submit-btn" class="btn btn-primary"
@@ -345,9 +468,10 @@ function renderAccessRequestForm(email, name = '') {
 }
 
 async function submitAccessRequest() {
-  const name     = (document.getElementById('req-name')?.value     || '').trim();
-  const email    = (document.getElementById('req-email')?.value    || '').trim().toLowerCase();
-  const lecturer = (document.getElementById('req-lecturer')?.value || '').trim();
+  const name    = (document.getElementById('req-name')?.value    || '').trim();
+  const email   = (document.getElementById('req-email')?.value   || '').trim().toLowerCase();
+  const program = (document.getElementById('req-program')?.value || '').trim();
+  const reason  = (document.getElementById('req-reason')?.value  || '').trim();
 
   const errEl = document.getElementById('req-err');
   function showErr(msg) {
@@ -357,9 +481,15 @@ async function submitAccessRequest() {
   }
   if (errEl) errEl.classList.remove('show');
 
-  if (!name)     return showErr('נא להזין שם מלא');
-  if (!email)    return showErr('לא ניתן לזהות את האימייל');
-  if (!lecturer) return showErr('נא לבחור מרצה');
+  if (!name)    return showErr('נא להזין שם מלא');
+  if (!email)   return showErr('לא ניתן לזהות את האימייל');
+  if (!program) return showErr('נא להקליד את תוכנית הלימודים שלך');
+  if (!reason)  return showErr('נא לציין למה אתה מבקש גישה');
+
+  // Rate limit: max 3 access requests per 30 minutes per browser
+  if (!_rateCheck('rl_access_req', 3, 30 * 60 * 1000)) {
+    return showErr('שלחת יותר מדי בקשות — המתן חצי שעה ונסה שוב');
+  }
 
   // ── Loading state ────────────────────────────────────────
   const btn     = document.getElementById('req-submit-btn');
@@ -373,48 +503,14 @@ async function submitAccessRequest() {
   // that might change auth state.
   const currentUser = auth.currentUser;
 
-  /**
-   * Cleanup helper — always called at the end (success or failure).
-   * If the session is anonymous:
-   *   1. delete() — removes the account from Firebase Auth permanently (no ghost users).
-   *   2. Falls back to signOut() if delete fails (e.g. token expired).
-   * If the session is not anonymous (Google / email):
-   *   — do nothing; the user stays signed in normally.
-   */
-  async function _cleanupAnonymousSession() {
-    if (!currentUser?.isAnonymous) return;
-    try {
-      await currentUser.delete();
-    } catch (deleteErr) {
-      console.warn('Anonymous user delete failed, falling back to signOut:', deleteErr.message);
-      try { await auth.signOut(); } catch (_) {}
-    }
-  }
-
   try {
-    // ── Duplicate check (best-effort — only admins can list this collection) ──
-    try {
-      const existing = await db.collection('access_requests')
-        .where('email', '==', email)
-        .where('status', '==', 'pending')
-        .limit(1)
-        .get();
-      if (!existing.empty) {
-        // Already submitted — show success and clean up
-        document.getElementById('req-form').style.display    = 'none';
-        document.getElementById('req-success').style.display = 'block';
-        await _cleanupAnonymousSession();
-        return;
-      }
-    } catch (_dupErr) {
-      // Non-admin users can't query this collection — skip and proceed to create
-    }
-
     // ── Write to Firestore ───────────────────────────────
+    // rule: allow create: if true — works even when signed out
     await db.collection('access_requests').add({
       name,
       email,
-      lecturer,
+      program,
+      reason,
       timestamp: firebase.firestore.FieldValue.serverTimestamp(),
       status: 'pending',
     });
@@ -423,20 +519,12 @@ async function submitAccessRequest() {
     document.getElementById('req-form').style.display    = 'none';
     document.getElementById('req-success').style.display = 'block';
 
-    // Delete the anonymous account (or sign out as fallback).
-    // This prevents ghost accounts piling up in Firebase Auth,
-    // and ensures the user can sign in cleanly with Google after approval.
-    await _cleanupAnonymousSession();
-
   } catch (err) {
     console.error('submitAccessRequest error:', err);
     showErr('אירעה שגיאה בשליחת הבקשה. נסה שוב.');
     if (btn)     btn.disabled          = false;
     if (btnText) btnText.style.display = 'inline';
     if (btnSpin) btnSpin.style.display = 'none';
-    // Safety net: sign out even on failure so we're never stuck with
-    // a broken anonymous session.
-    try { await auth.signOut(); } catch (_) {}
   }
 }
 
@@ -499,22 +587,27 @@ async function doLogin() {
   const pass  = document.getElementById('l-pass').value;
   if (!email || !pass) return authErr('נא למלא את כל השדות');
 
+  // Rate limit: max 10 login attempts per 15 minutes per browser
+  if (!_rateCheck('rl_login', 10, 15 * 60 * 1000)) {
+    return authErr('יותר מדי ניסיונות כניסה — המתן מספר דקות ונסה שוב');
+  }
+
   authBusy(true);
   try {
     const cred = await auth.signInWithEmailAndPassword(email, pass);
 
+    // ── Email verification check ────────────────────────────────
+    if (!cred.user.emailVerified) {
+      authBusy(false);
+      STATE._blockNextAuthRender = true;
+      renderEmailVerificationScreen(cred.user);
+      return;
+    }
+
     // ── Authorization check after successful Firebase sign-in ──
-    // We stay signed in (so we know the email) but redirect unauthorized
-    // users to the access-request form instead of dropping them in limbo.
     const authorized = await isUserAuthorized(cred.user.email || email);
     if (!authorized) {
       authBusy(false);
-      // Keep the Firebase session alive — renderAccessRequestForm reads
-      // the email from the readonly field and submits to Firestore.
-      // onAuthStateChanged will NOT render anything because
-      // STATE._blockNextAuthRender is set inside renderAccessRequestForm's
-      // enclosing flow (set before this call path was reached in the sign-up
-      // route). For the login route we must set it here.
       STATE._blockNextAuthRender = true;
       renderAccessRequestForm(cred.user.email || email, cred.user.displayName || '');
       return;
@@ -534,12 +627,37 @@ async function doLogin() {
   }
 }
 
+/* ── Rate limiting (localStorage) ──────────────────────────
+ * _rateCheck(key, max, windowMs) — returns true if allowed.
+ * Stores timestamps of recent attempts; blocks if over max in window.
+ */
+function _rateCheck(key, max, windowMs) {
+  const now      = Date.now();
+  const attempts = JSON.parse(localStorage.getItem(key) || '[]')
+    .filter(t => now - t < windowMs);
+  if (attempts.length >= max) return false;
+  attempts.push(now);
+  localStorage.setItem(key, JSON.stringify(attempts));
+  return true;
+}
+
+function _rateReset(key) {
+  localStorage.removeItem(key);
+}
+
 async function doSignup() {
-  const name  = document.getElementById('s-name').value.trim();
-  const email = document.getElementById('s-email').value.trim().toLowerCase();
-  const pass  = document.getElementById('s-pass').value;
+  const name    = document.getElementById('s-name').value.trim();
+  const email   = document.getElementById('s-email').value.trim().toLowerCase();
+  const pass    = document.getElementById('s-pass').value;
+  const program = (document.getElementById('s-program')?.value || '').trim();
   if (!name || !email || !pass) return authErr('נא למלא את כל השדות');
+  if (!program) return authErr('נא לציין את תוכנית הלימודים שלך');
   if (pass.length < 6) return authErr('סיסמה חייבת להכיל לפחות 6 תווים');
+
+  // Rate limit: max 5 signup attempts per 10 minutes per browser
+  if (!_rateCheck('rl_signup', 5, 10 * 60 * 1000)) {
+    return authErr('יותר מדי ניסיונות הרשמה — המתן מספר דקות ונסה שוב');
+  }
 
   authBusy(true);
   try {
@@ -548,6 +666,15 @@ async function doSignup() {
     // paths. This avoids all anonymous-auth timing issues.
     const cred = await auth.createUserWithEmailAndPassword(email, pass);
     await cred.user.updateProfile({ displayName: name });
+    // Save study program immediately so it's available on first sign-in
+    try {
+      await db.collection('users').doc(cred.user.uid).set(
+        { studyProgram: program },
+        { merge: true }
+      );
+    } catch (_) {}
+    // Send verification email — onAuthStateChanged will check emailVerified
+    try { await cred.user.sendEmailVerification(); } catch (_) {}
     // onAuthStateChanged will handle the rest (save user data + route)
   } catch (e) {
     const messages = {
@@ -566,6 +693,92 @@ async function doLogout() {
             fireUser: null, userData: null, courses: null, exams: {}, examVotes: {},
             doneExams: [], inProgressExams: [], savedFilters: {} };
   renderAuth();
+}
+
+/* ══════════════════════════════════════════════════════════
+   FORGOT PASSWORD
+══════════════════════════════════════════════════════════ */
+
+function renderForgotPassword() {
+  const prefill = document.getElementById('l-email')?.value?.trim() || '';
+  document.getElementById('app').innerHTML = `
+    <div class="auth-wrap">
+      <div class="auth-card">
+        <div class="auth-logo">
+          <span class="icon">🔑</span>
+          <h1>איפוס סיסמה</h1>
+          <p>נשלח אליך קישור לאיפוס הסיסמה</p>
+        </div>
+
+        <div id="fp-success" style="display:none;text-align:center;padding:1rem 0">
+          <div style="font-size:2.5rem;margin-bottom:.75rem">✉️</div>
+          <h3 style="color:var(--success);font-size:1.05rem;margin-bottom:.5rem">המייל נשלח!</h3>
+          <p style="font-size:.88rem;color:var(--muted);line-height:1.7">
+            בדוק את תיבת הדואר שלך ולחץ על הקישור לאיפוס הסיסמה.
+          </p>
+          ${(location.hostname === 'localhost' || location.hostname === '127.0.0.1') ? `
+          <p style="font-size:.78rem;color:#d97706;background:#fefce8;border:1px solid #fde047;
+            border-radius:6px;padding:.5rem .75rem;margin-top:.75rem">
+            🔧 אמולטור: קישור האיפוס זמין ב-<br>
+            <a href="http://localhost:4000/auth" target="_blank" style="color:#d97706">
+              localhost:4000/auth
+            </a>
+          </p>` : ''}
+          <button class="btn btn-secondary" style="margin-top:1.2rem;width:100%;justify-content:center"
+            onclick="renderAuth()">חזרה לכניסה</button>
+        </div>
+
+        <div id="fp-form">
+          <div id="fp-err" class="form-error"></div>
+          <div class="form-group">
+            <label>אימייל</label>
+            <input id="fp-email" type="email" placeholder="your@email.com"
+              value="${esc(prefill)}" autocomplete="email">
+          </div>
+          <button id="fp-btn" class="btn btn-primary" style="width:100%;justify-content:center"
+            onclick="sendPasswordReset()">שלח קישור לאיפוס ←</button>
+          <button type="button" style="width:100%;background:none;border:none;cursor:pointer;
+            color:var(--muted);font-size:.82rem;margin-top:.55rem;padding:.3rem;text-align:center"
+            onclick="renderAuth()">← חזרה לכניסה</button>
+        </div>
+      </div>
+    </div>`;
+
+  document.getElementById('fp-email')?.addEventListener('keydown', e => {
+    if (e.key === 'Enter') sendPasswordReset();
+  });
+  document.getElementById('fp-email')?.focus();
+}
+
+async function sendPasswordReset() {
+  const email = (document.getElementById('fp-email')?.value || '').trim().toLowerCase();
+  const errEl = document.getElementById('fp-err');
+  if (errEl) errEl.classList.remove('show');
+
+  if (!email) {
+    if (errEl) { errEl.textContent = 'נא להזין כתובת אימייל'; errEl.classList.add('show'); }
+    return;
+  }
+
+  const btn = document.getElementById('fp-btn');
+  if (btn) { btn.disabled = true; btn.textContent = 'שולח...'; }
+
+  try {
+    await auth.sendPasswordResetEmail(email);
+    document.getElementById('fp-form').style.display    = 'none';
+    document.getElementById('fp-success').style.display = 'block';
+  } catch (e) {
+    const messages = {
+      'auth/user-not-found':  'אימייל לא קיים במערכת',
+      'auth/invalid-email':   'פורמט אימייל לא תקין',
+      'auth/too-many-requests': 'יותר מדי ניסיונות — נסה שוב מאוחר יותר',
+    };
+    if (errEl) {
+      errEl.textContent = messages[e.code] || 'שגיאה: ' + e.message;
+      errEl.classList.add('show');
+    }
+    if (btn) { btn.disabled = false; btn.textContent = 'שלח קישור לאיפוס ←'; }
+  }
 }
 
 /* ── NAVBAR ─────────────────────────────────────────────────── */
@@ -682,8 +895,7 @@ function renderTermsModal() {
           padding:1rem 1.2rem;font-size:.88rem;line-height:1.8;color:#334155;
           margin-bottom:1.2rem">
           <p style="margin:0 0 .6rem">
-            אני מצהיר/ה כי אני סטודנט/ית רשום/ה לקורס <strong>אלגברה לינארית 1א'</strong>
-            באוניברסיטת תל אביב.
+            אני מצהיר/ה כי אני סטודנט/ית רשום/ה <strong>באוניברסיטת תל אביב</strong>.
           </p>
           <p style="margin:0">
             ידוע לי שכל התכנים המופיעים באתר זה — שאלות מבחן, פתרונות וחומרי לימוד —
@@ -815,6 +1027,12 @@ async function renderHome() {
             <div class="cc">${esc(c.code)}</div>
             <div class="cm">לחץ לצפייה במבחנים</div>
           </div>`).join('')}
+        <div class="course-card" onclick="openContactModal()">
+          <span class="ci">✉️</span>
+          <div class="cn">צור איתנו קשר</div>
+          <div class="cc">פנייה לצוות</div>
+          <div class="cm">הוספת קורס, משוב ועוד</div>
+        </div>
       </div></div>`;
   } catch (e) {
     page.innerHTML = `<div class="container">
@@ -1029,6 +1247,9 @@ function applyFilters() {
           <path d="M12 3v13M5 16l7 7 7-7"/><line x1="3" y1="22" x2="21" y2="22"/>
         </svg>
       </a>` : ''}
+      <button class="qv-btn" onclick="event.stopPropagation(); openExamBugModal('${e.id}','${STATE.courseId}',${JSON.stringify(e.title || e.id)})" title="בעיה במבחן" style="margin-left:.25rem">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#9ca3af" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+      </button>
       <button class="inprogress-toggle-btn ${isInProgress ? 'inprogress-active' : ''}"
         onclick="event.stopPropagation(); toggleInProgress('${e.id}')"
         title="${isInProgress ? 'בטל בתהליך' : 'סמן כבתהליך'}">
@@ -1065,6 +1286,7 @@ async function toggleDone(examId) {
   if (adding) {
     done.push(examId);
     toast('✅ סומן כבוצע', 'info');
+    logUserEvent(uid, 'exam_complete', { examId, courseId: STATE.courseId });
     // הסר מ"בתהליך" אם היה שם
     const ipIdx = STATE.inProgressExams.indexOf(examId);
     if (ipIdx !== -1) {
@@ -1113,6 +1335,7 @@ async function toggleInProgress(examId) {
   if (adding) {
     ip.push(examId);
     toast('⏳ סומן כבתהליך', 'info');
+    logUserEvent(uid, 'exam_in_progress', { examId, courseId: STATE.courseId });
     // הסר מ"בוצע" אם היה שם
     const doneIdx = STATE.doneExams.indexOf(examId);
     if (doneIdx !== -1) {
@@ -1294,9 +1517,20 @@ async function renderExam() {
           </div>
         </div>
 
-        <div class="ev-banner">
+        <div class="ev-banner" style="position:relative">
           <h1 class="ev-banner-title">${esc(examTitle)}</h1>
           ${metaLine ? `<p class="ev-banner-meta">${esc(metaLine)}</p>` : ''}
+          <button onclick="openExamBugModal('${STATE.examId}','${STATE.courseId}',${JSON.stringify(examTitle)})"
+            title="בעיה במבחן"
+            style="position:absolute;bottom:0;left:0;background:none;border:1.5px solid #cbd5e1;border-radius:8px;
+                   padding:.35rem .7rem;font-size:.78rem;color:#64748b;cursor:pointer;
+                   display:inline-flex;align-items:center;gap:.35rem;white-space:nowrap;
+                   transition:border-color .15s,color .15s"
+            onmouseover="this.style.borderColor='#ef4444';this.style.color='#ef4444'"
+            onmouseout="this.style.borderColor='#cbd5e1';this.style.color='#64748b'">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+            בעיה במבחן
+          </button>
         </div>
 
         <div class="ev-body" id="ev-questions-body">
@@ -1304,6 +1538,7 @@ async function renderExam() {
             ? `<div class="empty"><span class="ei">📝</span><h3>אין שאלות עדיין</h3></div>`
             : questions.map((q, qi) => renderQuestionCard(q, qi, starred, userVotes)).join('')}
         </div>
+
       </div>`;
 
     // Set text via innerHTML after DOM is built (safe for LaTeX/HTML)
@@ -1357,6 +1592,7 @@ function renderQuestionCard(q, qi, starred, userVotes = {}) {
   const bonusBadge = isBonus
     ? `<span class="qv-bonus-badge">⭐ שאלת בונוס לקבוצות B ו-C</span>`
     : '';
+
 
   let partsHtml = '';
   if (hasSubs) {
@@ -1431,7 +1667,10 @@ async function toggleStar(id) {
 
   // Persist to Firestore (non-blocking)
   try {
-    await saveUserData(uid, { starredQuestions: starred });
+    const update = { starredQuestions: starred };
+    if (adding) update.starCount = firebase.firestore.FieldValue.increment(1);
+    await saveUserData(uid, update);
+    if (adding) logUserEvent(uid, 'star_question', { questionId: id, examId: STATE.examId });
   } catch (e) {
     console.error('Failed to save starred:', e);
     toast('שגיאה בשמירת סימון', 'error');
@@ -1527,7 +1766,13 @@ async function voteDifficulty(qid, level) {
       updates[level] = inc(1);
     }
     await db.collection('questionVotes').doc(qid).set(updates, { merge: true });
-    await saveUserData(uid, { difficultyVotes: userVotes });
+    const userUpdate = { difficultyVotes: userVotes };
+    // Track new vote (not removal)
+    if (prev !== level) {
+      userUpdate.diffVoteCount = firebase.firestore.FieldValue.increment(1);
+      logUserEvent(uid, 'vote_difficulty', { questionId: qid, level, examId: STATE.examId });
+    }
+    await saveUserData(uid, userUpdate);
   } catch(e) {
     console.error('voteDifficulty error:', e);
     toast('שגיאה בשמירת דירוג', 'error');
@@ -1578,10 +1823,375 @@ function _doCopy(text, event) {
         { copyCount: firebase.firestore.FieldValue.increment(1) },
         { merge: true }
       ).catch(e => console.warn('copyCount increment failed:', e));
+      logUserEvent(uid, 'copy_question', { examId: STATE.examId, courseId: STATE.courseId });
     }
   }).catch(() => toast('העתקה נכשלה', 'error'));
 }
 
+
+/* ══════════════════════════════════════════════════════════
+   GENERATE SIMILAR QUESTION (tracking only)
+══════════════════════════════════════════════════════════ */
+
+async function trackGenerateSimilar(questionId, questionNum) {
+  toast('✨ פיצ\'ר "ג\'נרט שאלה דומה" בפיתוח — בקרוב!', 'info');
+  const uid = STATE.fireUser?.uid;
+  if (!uid) return;
+  try {
+    await db.collection('users').doc(uid).set(
+      { generateSimilarCount: firebase.firestore.FieldValue.increment(1) },
+      { merge: true }
+    );
+    logUserEvent(uid, 'generate_similar', { questionId, questionNum, examId: STATE.examId });
+  } catch (e) { console.warn('trackGenerateSimilar:', e.message); }
+}
+
+/* ══════════════════════════════════════════════════════════
+   CONTACT US MODAL
+══════════════════════════════════════════════════════════ */
+
+function openContactModal() {
+  document.getElementById('contact-modal')?.remove();
+  const modal = document.createElement('div');
+  modal.id = 'contact-modal';
+  modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center;z-index:10000;padding:1rem;backdrop-filter:blur(2px)';
+  modal.innerHTML = `
+    <div style="background:#fff;border-radius:16px;width:min(92vw,460px);padding:1.75rem;
+      box-shadow:0 24px 60px rgba(0,0,0,.3);direction:rtl;max-height:90vh;overflow-y:auto">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1.1rem">
+        <div>
+          <h3 style="margin:0 0 .2rem;font-size:1.05rem;font-weight:700;color:#1e293b">✉️ צור איתנו קשר</h3>
+          <p style="margin:0;font-size:.78rem;color:#64748b">נשמח לשמוע ממך</p>
+        </div>
+        <button onclick="document.getElementById('contact-modal').remove()"
+          style="background:none;border:none;font-size:1.4rem;cursor:pointer;color:#9ca3af;line-height:1;padding:.2rem">✕</button>
+      </div>
+
+      <div class="form-group" style="margin-bottom:.75rem">
+        <label style="font-size:.85rem;font-weight:600">נושא הפנייה</label>
+        <select id="contact-topic" style="width:100%;padding:.55rem .75rem;border:1.5px solid var(--border);border-radius:8px;font-size:.88rem;color:var(--text)">
+          <option value="add_course">בקשה להוספת קורס</option>
+          <option value="feedback">חוות דעת על האתר</option>
+          <option value="bug">דיווח על תקלה טכנית</option>
+          <option value="other">אחר</option>
+        </select>
+      </div>
+
+      <div class="form-group" style="margin-bottom:1rem">
+        <label style="font-size:.85rem;font-weight:600">הודעה <span style="color:var(--danger)">*</span></label>
+        <textarea id="contact-text" rows="4" placeholder="כתוב את פנייתך כאן..."
+          style="width:100%;padding:.65rem .75rem;border:1.5px solid var(--border);border-radius:8px;
+            font-size:.88rem;resize:vertical;box-sizing:border-box;font-family:inherit;
+            color:var(--text);line-height:1.6"></textarea>
+      </div>
+
+      <div id="contact-err" class="form-error"></div>
+      <div style="display:flex;gap:.75rem;justify-content:flex-end">
+        <button class="btn btn-secondary btn-sm" onclick="document.getElementById('contact-modal').remove()">ביטול</button>
+        <button class="btn btn-primary btn-sm" onclick="submitContactForm()">שלח ←</button>
+      </div>
+    </div>`;
+  document.body.appendChild(modal);
+  modal.addEventListener('click', e => { if (e.target === modal) modal.remove(); });
+  document.getElementById('contact-text')?.focus();
+}
+
+async function submitContactForm() {
+  const errEl = document.getElementById('contact-err');
+  if (errEl) errEl.classList.remove('show');
+  const topic = document.getElementById('contact-topic')?.value || 'other';
+  const text  = (document.getElementById('contact-text')?.value || '').trim();
+  if (!text) {
+    if (errEl) { errEl.textContent = 'נא לכתוב הודעה'; errEl.classList.add('show'); }
+    return;
+  }
+  const uid   = STATE.fireUser?.uid || null;
+  const email = STATE.fireUser?.email || '';
+  try {
+    await db.collection('bug_reports').add({
+      bugType:      'contact_' + topic,
+      bugText:      text,
+      questionId:   null,
+      questionNum:  null,
+      examId:       '',
+      courseId:     '',
+      reportedBy:   uid,
+      reporterEmail: email,
+      status:       'open',
+      createdAt:    firebase.firestore.FieldValue.serverTimestamp(),
+    });
+    document.getElementById('contact-modal')?.remove();
+    toast('✅ פנייתך נשלחה — תודה!', 'success');
+  } catch (e) {
+    if (errEl) { errEl.textContent = 'שגיאה בשליחה: ' + e.message; errEl.classList.add('show'); }
+  }
+}
+
+/* ══════════════════════════════════════════════════════════
+   EXAM BUG REPORT MODAL
+══════════════════════════════════════════════════════════ */
+
+function openExamBugModal(examId, courseId, examTitle) {
+  document.getElementById('exam-bug-modal')?.remove();
+  const modal = document.createElement('div');
+  modal.id = 'exam-bug-modal';
+  modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center;z-index:10000;padding:1rem;backdrop-filter:blur(2px)';
+  modal.innerHTML = `
+    <div style="background:#fff;border-radius:16px;width:min(92vw,460px);padding:1.75rem;
+      box-shadow:0 24px 60px rgba(0,0,0,.3);direction:rtl;max-height:90vh;overflow-y:auto">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1.1rem">
+        <div>
+          <h3 style="margin:0 0 .2rem;font-size:1.05rem;font-weight:700;color:#1e293b">🐛 בעיה במבחן</h3>
+          <p style="margin:0;font-size:.78rem;color:#64748b">${esc(examTitle)}</p>
+        </div>
+        <button onclick="document.getElementById('exam-bug-modal').remove()"
+          style="background:none;border:none;font-size:1.4rem;cursor:pointer;color:#9ca3af;line-height:1;padding:.2rem">✕</button>
+      </div>
+
+      <div class="form-group" style="margin-bottom:.75rem">
+        <label style="font-size:.85rem;font-weight:600">מספר שאלה (אופציונלי)</label>
+        <input id="exam-bug-qnum" type="number" min="1" placeholder="השאר ריק אם הבעיה כללית"
+          style="width:100%;padding:.55rem .75rem;border:1.5px solid var(--border);border-radius:8px;font-size:.88rem;color:var(--text);box-sizing:border-box">
+      </div>
+
+      <div class="form-group" style="margin-bottom:.75rem">
+        <label style="font-size:.85rem;font-weight:600">סוג הבעיה</label>
+        <select id="exam-bug-type" style="width:100%;padding:.55rem .75rem;border:1.5px solid var(--border);border-radius:8px;font-size:.88rem;color:var(--text)">
+          <option value="wrong_lecturer">שם מרצה שגוי</option>
+          <option value="wrong_pdf">PDF שגוי / לא נפתח</option>
+          <option value="wrong_meta">פרטי מבחן שגויים (שנה / סמסטר / מועד)</option>
+          <option value="unclear">שאלה לא ברורה / טקסט חסר</option>
+          <option value="other">אחר</option>
+        </select>
+      </div>
+
+      <div class="form-group" style="margin-bottom:1rem">
+        <label style="font-size:.85rem;font-weight:600">תיאור הבעיה <span style="color:var(--danger)">*</span></label>
+        <textarea id="exam-bug-text" rows="3" placeholder="תאר את הבעיה בקצרה..."
+          style="width:100%;padding:.65rem .75rem;border:1.5px solid var(--border);border-radius:8px;
+            font-size:.88rem;resize:vertical;box-sizing:border-box;font-family:inherit;
+            color:var(--text);line-height:1.6"></textarea>
+      </div>
+
+      <div id="exam-bug-err" class="form-error"></div>
+      <div style="display:flex;gap:.75rem;justify-content:flex-end">
+        <button class="btn btn-secondary btn-sm" onclick="document.getElementById('exam-bug-modal').remove()">ביטול</button>
+        <button class="btn btn-primary btn-sm" onclick="submitExamBugReport('${examId}','${courseId}')">שלח דיווח ←</button>
+      </div>
+    </div>`;
+  document.body.appendChild(modal);
+  modal.addEventListener('click', e => { if (e.target === modal) modal.remove(); });
+  document.getElementById('exam-bug-text')?.focus();
+}
+
+async function submitExamBugReport(examId, courseId) {
+  const errEl = document.getElementById('exam-bug-err');
+  if (errEl) errEl.classList.remove('show');
+  const bugText = (document.getElementById('exam-bug-text')?.value || '').trim();
+  if (!bugText) {
+    if (errEl) { errEl.textContent = 'נא לתאר את הבעיה'; errEl.classList.add('show'); }
+    return;
+  }
+  const bugType    = document.getElementById('exam-bug-type')?.value || 'other';
+  const questionNum = parseInt(document.getElementById('exam-bug-qnum')?.value, 10) || null;
+  const uid   = STATE.fireUser?.uid || null;
+  const email = STATE.fireUser?.email || '';
+  try {
+    await db.collection('bug_reports').add({
+      bugType,
+      bugText,
+      questionId:   null,
+      questionNum,
+      examId:       examId || '',
+      courseId:     courseId || '',
+      reportedBy:   uid,
+      reporterEmail: email,
+      status:       'open',
+      createdAt:    firebase.firestore.FieldValue.serverTimestamp(),
+    });
+    document.getElementById('exam-bug-modal')?.remove();
+    toast('✅ הדיווח נשלח — תודה!', 'success');
+    if (uid) {
+      db.collection('users').doc(uid).set(
+        { bugReportCount: firebase.firestore.FieldValue.increment(1) },
+        { merge: true }
+      ).catch(() => {});
+    }
+  } catch (e) {
+    if (errEl) { errEl.textContent = 'שגיאה בשליחת הדיווח: ' + e.message; errEl.classList.add('show'); }
+  }
+}
+
+/* ══════════════════════════════════════════════════════════
+   BUG REPORT MODAL
+══════════════════════════════════════════════════════════ */
+
+function openBugReportModal(questionId, questionNum) {
+  document.getElementById('bug-modal')?.remove();
+
+  const isGeneral = questionId === null;
+  const exam      = STATE.examId ? STATE.examId : '';
+  const questions = STATE.examVotes ? Object.keys(STATE.examVotes) : [];
+
+  // Build question selector for general reports
+  const qSelector = isGeneral ? `
+    <div class="form-group" style="margin-bottom:.75rem">
+      <label style="font-size:.85rem;font-weight:600">על מה הדיווח?</label>
+      <select id="bug-scope" style="width:100%;padding:.55rem .75rem;border:1.5px solid var(--border);border-radius:8px;font-size:.88rem;color:var(--text)"
+        onchange="
+          const v=this.value;
+          const qRow=document.getElementById('bug-qnum-row');
+          const qTypes=document.getElementById('bug-types-question');
+          const gTypes=document.getElementById('bug-types-general');
+          if(v==='question'){qRow.style.display='';qTypes.style.display='';gTypes.style.display='none';}
+          else{qRow.style.display='none';qTypes.style.display='none';gTypes.style.display='';}
+        ">
+        <option value="general">בעיה כללית במבחן</option>
+        <option value="question">בעיה בשאלה ספציפית</option>
+      </select>
+    </div>
+    <div id="bug-qnum-row" style="margin-bottom:.75rem;display:none">
+      <label style="font-size:.85rem;font-weight:600;display:block;margin-bottom:.35rem">מספר שאלה</label>
+      <input id="bug-qnum-input" type="number" min="1" placeholder="למשל: 3"
+        style="width:100%;padding:.55rem .75rem;border:1.5px solid var(--border);border-radius:8px;font-size:.88rem;color:var(--text);box-sizing:border-box">
+    </div>` : '';
+
+  const generalTypeOptions = `
+    <option value="missing_exam">מבחן חסר לחלוטין</option>
+    <option value="wrong_pdf">PDF שגוי / לא נפתח</option>
+    <option value="wrong_lecturer">שם מרצה שגוי</option>
+    <option value="wrong_meta">פרטי מבחן שגויים (שנה / סמסטר / מועד)</option>
+    <option value="other">אחר</option>`;
+
+  const questionTypeOptions = `
+    <option value="unclear">שאלה לא ברורה / מנוסחת בצורה גרועה</option>
+    <option value="missing">חסר טקסט / שאלה חסרה</option>
+    <option value="wrong_answer">תשובה שגויה</option>
+    <option value="typo">שגיאת כתיב / פורמט</option>
+    <option value="math">בעיה בנוסחה מתמטית</option>
+    <option value="other">אחר</option>`;
+
+  const modal = document.createElement('div');
+  modal.id = 'bug-modal';
+  modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center;z-index:10000;padding:1rem;backdrop-filter:blur(2px)';
+  modal.innerHTML = `
+    <div style="background:#fff;border-radius:16px;width:min(92vw,480px);padding:1.75rem;
+      box-shadow:0 24px 60px rgba(0,0,0,.3);direction:rtl;max-height:90vh;overflow-y:auto">
+
+      <!-- Header -->
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1.1rem">
+        <div>
+          <h3 style="margin:0 0 .2rem;font-size:1.05rem;font-weight:700;color:#1e293b">
+            🐛 דיווח על תקלה
+          </h3>
+          <p style="margin:0;font-size:.78rem;color:#64748b">
+            ${isGeneral ? 'ניתן לדווח על כל בעיה — חסר מבחן, פרטים שגויים, בעיה בשאלה ועוד' : `שאלה ${questionNum}`}
+          </p>
+        </div>
+        <button onclick="document.getElementById('bug-modal').remove()"
+          style="background:none;border:none;font-size:1.4rem;cursor:pointer;color:#9ca3af;line-height:1;padding:.2rem">✕</button>
+      </div>
+
+      ${qSelector}
+
+      <!-- Type selector — general -->
+      <div id="bug-types-general" class="form-group" style="margin-bottom:.75rem;${isGeneral ? '' : 'display:none'}">
+        <label style="font-size:.85rem;font-weight:600">סוג הבעיה</label>
+        <select id="bug-type-general" style="width:100%;padding:.55rem .75rem;border:1.5px solid var(--border);border-radius:8px;font-size:.88rem;color:var(--text)">
+          ${generalTypeOptions}
+        </select>
+      </div>
+
+      <!-- Type selector — question-specific -->
+      <div id="bug-types-question" class="form-group" style="margin-bottom:.75rem;${isGeneral ? 'display:none' : ''}">
+        <label style="font-size:.85rem;font-weight:600">סוג הבעיה</label>
+        <select id="bug-type-question" style="width:100%;padding:.55rem .75rem;border:1.5px solid var(--border);border-radius:8px;font-size:.88rem;color:var(--text)">
+          ${questionTypeOptions}
+        </select>
+      </div>
+
+      <!-- Description -->
+      <div class="form-group" style="margin-bottom:1rem">
+        <label style="font-size:.85rem;font-weight:600">תיאור הבעיה <span style="color:var(--danger)">*</span></label>
+        <textarea id="bug-text" rows="3" placeholder="תאר את הבעיה בקצרה..."
+          style="width:100%;padding:.65rem .75rem;border:1.5px solid var(--border);border-radius:8px;
+            font-size:.88rem;resize:vertical;box-sizing:border-box;font-family:inherit;
+            color:var(--text);line-height:1.6"></textarea>
+      </div>
+
+      <div id="bug-err" class="form-error"></div>
+      <div style="display:flex;gap:.75rem;justify-content:flex-end">
+        <button class="btn btn-secondary btn-sm" onclick="document.getElementById('bug-modal').remove()">ביטול</button>
+        <button class="btn btn-primary btn-sm"
+          onclick="submitBugReport(${JSON.stringify(questionId)},${JSON.stringify(questionNum)},${isGeneral})">
+          שלח דיווח ←
+        </button>
+      </div>
+    </div>`;
+
+  document.body.appendChild(modal);
+  modal.addEventListener('click', e => { if (e.target === modal) modal.remove(); });
+  document.getElementById('bug-text')?.focus();
+}
+
+async function submitBugReport(questionId, questionNum, isGeneral) {
+  const errEl = document.getElementById('bug-err');
+  if (errEl) errEl.classList.remove('show');
+
+  // Resolve scope + type
+  let resolvedQuestionId  = questionId;
+  let resolvedQuestionNum = questionNum;
+  let bugType;
+
+  if (isGeneral) {
+    const scope = document.getElementById('bug-scope')?.value || 'general';
+    if (scope === 'question') {
+      bugType = document.getElementById('bug-type-question')?.value || 'other';
+      resolvedQuestionNum = parseInt(document.getElementById('bug-qnum-input')?.value, 10) || null;
+    } else {
+      bugType = document.getElementById('bug-type-general')?.value || 'other';
+    }
+  } else {
+    bugType = document.getElementById('bug-type-question')?.value || 'other';
+  }
+
+  const bugText = (document.getElementById('bug-text')?.value || '').trim();
+  if (!bugText) {
+    if (errEl) { errEl.textContent = 'נא לתאר את הבעיה'; errEl.classList.add('show'); }
+    return;
+  }
+
+  const uid   = STATE.fireUser?.uid;
+  const email = STATE.fireUser?.email || '';
+
+  try {
+    await db.collection('bug_reports').add({
+      questionId:  resolvedQuestionId  || null,
+      questionNum: resolvedQuestionNum || null,
+      examId:    STATE.examId   || '',
+      courseId:  STATE.courseId || '',
+      bugType,
+      bugText,
+      reportedBy: uid,
+      reporterEmail: email,
+      status:    'open',
+      createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+    });
+
+    document.getElementById('bug-modal')?.remove();
+    toast('✅ הדיווח נשלח — תודה!', 'success');
+
+    // Track event
+    if (uid) {
+      db.collection('users').doc(uid).set(
+        { bugReportCount: firebase.firestore.FieldValue.increment(1) },
+        { merge: true }
+      ).catch(() => {});
+    }
+  } catch (e) {
+    if (errEl) { errEl.textContent = 'שגיאה בשליחת הדיווח: ' + e.message; errEl.classList.add('show'); }
+  }
+}
 
 /* ══════════════════════════════════════════════════════════
    SURVEY MODAL  (student-facing)
