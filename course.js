@@ -86,58 +86,55 @@ document.addEventListener('DOMContentLoaded', () => {
 
       const email = (user.email || '').toLowerCase().trim();
 
-      // ── 1. Authorization check (Firestore-backed) ───────────
-      // Check authorization FIRST — existing authorized users bypass email verification.
-      // Only new/unknown users must verify their email before requesting access.
-      const authorized = await isUserAuthorized(email);
+      // ── Check if this is an existing user (has a Firestore users doc) ──
+      const existingDoc = await db.collection('users').doc(user.uid).get();
+      const isExistingUser = existingDoc.exists;
 
-      // ── 0. Email verification gate (new users only) ─────────
-      if (!user.emailVerified && !authorized) {
-        renderEmailVerificationScreen(user);
-        return;
-      }
+      if (!isExistingUser) {
+        // ── NEW USER FLOW ───────────────────────────────────────
+        const isTAU = email.endsWith('@mail.tau.ac.il');
 
-      if (!authorized) {
-        // Sign out (keep account alive) — after admin approves, user can just log in.
-        // Do NOT delete: if we delete, the user can't log in after approval.
-        STATE._blockNextAuthRender = true;
-        const savedName = user.displayName || '';
-        try { await auth.signOut(); } catch (_) {}
-        renderAccessRequestForm(email, savedName);
-        return;
-      }
+        // TAU users must verify email before entering
+        if (isTAU && !user.emailVerified) {
+          renderEmailVerificationScreen(user);
+          return;
+        }
 
-      STATE.fireUser = user;
-      // Save user data on first sign-in (display name may have just been set).
-      if (!STATE.userData) {
+        // Check authorization (TAU verified, or non-TAU admin-approved)
+        const authorized = await isUserAuthorized(email);
+        if (!authorized) {
+          STATE._blockNextAuthRender = true;
+          const savedName = user.displayName || '';
+          try { await auth.signOut(); } catch (_) {}
+          renderAccessRequestForm(email, savedName);
+          return;
+        }
+
+        // New authorized user — create their doc
         await saveUserData(user.uid, {
           uid:              user.uid,
           displayName:      user.displayName || '',
           email:            email,
           starredQuestions: [],
+          acceptedTerms:    true,
           createdAt:        firebase.firestore.FieldValue.serverTimestamp(),
         }).catch(() => {});
       }
+
+      // ── EXISTING USER or newly-created — load and continue ──
+      STATE.fireUser = user;
       STATE.userData = await fetchUserData(user.uid, user.email);
       STATE.doneExams       = STATE.userData?.doneExams       || [];
       STATE.inProgressExams = STATE.userData?.inProgressExams || [];
 
-      if (typeof gtag === 'function' && location.hostname !== 'localhost' && location.hostname !== '127.0.0.1') {
-        gtag('config', 'G-SF9W1XBZZK', { user_id: user.uid });
+      // Silently accept terms for any user who slipped through without it
+      if (!STATE.userData?.acceptedTerms) {
+        saveUserData(user.uid, { acceptedTerms: true }).catch(() => {});
+        STATE.userData = { ...STATE.userData, acceptedTerms: true };
       }
 
-      // ── 2. Terms check ─────────────────────────────────────
-      // Existing users (already have a userData doc) get terms auto-accepted silently.
-      if (!STATE.userData?.acceptedTerms) {
-        const isExistingUser = !!(STATE.userData?.createdAt || STATE.userData?.doneExams || STATE.userData?.starredQuestions?.length);
-        if (isExistingUser) {
-          // Silently accept terms for existing users — don't block their login
-          saveUserData(user.uid, { acceptedTerms: true }).catch(() => {});
-          STATE.userData = { ...STATE.userData, acceptedTerms: true };
-        } else {
-          renderTermsModal();
-          return;
-        }
+      if (typeof gtag === 'function' && location.hostname !== 'localhost' && location.hostname !== '127.0.0.1') {
+        gtag('config', 'G-SF9W1XBZZK', { user_id: user.uid });
       }
 
       // ── 3. Survey check ────────────────────────────────────
@@ -168,12 +165,6 @@ document.addEventListener('DOMContentLoaded', () => {
     STATE.page          = hs.page     || 'home';
     STATE.courseId      = hs.courseId || null;
     STATE.examId        = hs.examId   || null;
-    // Guard: if terms not accepted, block navigation and re-show modal
-    if (!STATE.userData?.acceptedTerms) {
-      document.getElementById('app').innerHTML = '';
-      renderTermsModal();
-      return;
-    }
     renderNavbar();
     renderPage();
   });
@@ -604,26 +595,8 @@ async function doLogin() {
 
   authBusy(true);
   try {
-    const cred = await auth.signInWithEmailAndPassword(email, pass);
-
-    // ── Email verification check ────────────────────────────────
-    if (!cred.user.emailVerified) {
-      authBusy(false);
-      STATE._blockNextAuthRender = true;
-      renderEmailVerificationScreen(cred.user);
-      return;
-    }
-
-    // ── Authorization check after successful Firebase sign-in ──
-    const authorized = await isUserAuthorized(cred.user.email || email);
-    if (!authorized) {
-      authBusy(false);
-      STATE._blockNextAuthRender = true;
-      renderAccessRequestForm(cred.user.email || email, cred.user.displayName || '');
-      return;
-    }
-
-    // onAuthStateChanged will handle the authorized flow
+    await auth.signInWithEmailAndPassword(email, pass);
+    // onAuthStateChanged handles all routing from here
   } catch (e) {
     const messages = {
       'auth/user-not-found':     'אימייל לא קיים במערכת',
@@ -669,23 +642,34 @@ async function doSignup() {
     return authErr('יותר מדי ניסיונות הרשמה — המתן מספר דקות ונסה שוב');
   }
 
+  const isTAU = email.endsWith('@mail.tau.ac.il');
   authBusy(true);
   try {
-    // Create the account — onAuthStateChanged will run isUserAuthorized
-    // and handle both the authorized (→ app) and unauthorized (→ request form)
-    // paths. This avoids all anonymous-auth timing issues.
+    if (!isTAU) {
+      // Non-TAU: check if admin already approved before creating any account
+      const authorized = await isUserAuthorized(email);
+      if (!authorized) {
+        authBusy(false);
+        renderAccessRequestForm(email, name);
+        return;
+      }
+      // Non-TAU but approved — fall through to create account (no email verification needed)
+    }
+
     const cred = await auth.createUserWithEmailAndPassword(email, pass);
     await cred.user.updateProfile({ displayName: name });
-    // Save study program immediately so it's available on first sign-in
     try {
       await db.collection('users').doc(cred.user.uid).set(
         { studyProgram: program },
         { merge: true }
       );
     } catch (_) {}
-    // Send verification email — onAuthStateChanged will check emailVerified
-    try { await cred.user.sendEmailVerification(); } catch (_) {}
-    // onAuthStateChanged will handle the rest (save user data + route)
+
+    if (isTAU) {
+      // TAU: send verification email — onAuthStateChanged will show the verification screen
+      try { await cred.user.sendEmailVerification(); } catch (_) {}
+    }
+    // onAuthStateChanged handles the rest
   } catch (e) {
     const messages = {
       'auth/email-already-in-use': 'אימייל כבר קיים במערכת — נסה להתחבר במקום להירשם',
