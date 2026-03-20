@@ -108,6 +108,9 @@ async function isUserAuthorized(email) {
   if (!email) return false;
   const normalized = email.toLowerCase().trim();
 
+  // TAU university emails are always authorized — no admin approval needed
+  if (normalized.endsWith('@mail.tau.ac.il')) return true;
+
   // Dynamic check via Firestore
   try {
     // source:'server' bypasses the local Firestore cache — ensures we always
@@ -118,5 +121,25 @@ async function isUserAuthorized(email) {
     console.warn('isUserAuthorized: Firestore unreachable, falling back to static list', err);
     // Offline / rules-error fallback — use the static list
     return (window.PILOT_STUDENTS || []).some(e => e.toLowerCase() === normalized);
+  }
+}
+
+/**
+ * Log a user action event to Firestore for admin tracking.
+ * @param {string} uid
+ * @param {string} eventType  e.g. 'copy_question', 'star_question', 'vote_difficulty'
+ * @param {Object} data       optional extra fields
+ */
+async function logUserEvent(uid, eventType, data = {}) {
+  if (!uid) return;
+  try {
+    await db.collection('user_events').add({
+      uid,
+      eventType,
+      ...data,
+      timestamp: firebase.firestore.FieldValue.serverTimestamp(),
+    });
+  } catch (e) {
+    console.warn('logUserEvent failed:', e.message);
   }
 }

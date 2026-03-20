@@ -154,6 +154,11 @@
           בקשות גישה
           <span id="requests-badge" style="display:none;background:#b91c1c;color:#fff;border-radius:10px;padding:.05rem .42rem;font-size:.68rem;font-weight:700;margin-right:auto"></span>
         </a>
+        <a id="nav-bug-reports" onclick="showSection('bug-reports')">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+          דיווחי תקלות
+          <span id="bug-reports-badge" style="display:none;background:#b91c1c;color:#fff;border-radius:10px;padding:.05rem .42rem;font-size:.68rem;font-weight:700;margin-right:auto"></span>
+        </a>
         <div class="nav-divider"></div>
           <a href="index.html">
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
@@ -500,6 +505,20 @@
           </div>
           <div id="permissions-list-wrap" style="padding:1.25rem">
             <div style="text-align:center;padding:1.5rem;color:var(--light)">לחץ על רענן לטעינת הרשימה</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── BUG REPORTS ──────────────────────────────────── -->
+      <div class="adm-section" id="sec-bug-reports">
+        <div class="sec-header">
+          <h2 class="sec-title">דיווחי תקלות</h2>
+          <button class="btn btn-secondary btn-sm" onclick="renderBugReports()">🔄 רענן</button>
+        </div>
+        <div class="ac">
+          <div class="ac-title">תקלות שדווחו על ידי משתמשים</div>
+          <div id="bug-reports-wrap" style="padding:1.25rem">
+            <div style="text-align:center;padding:1.5rem;color:var(--light)">לחץ על רענן לטעינת הדיווחים</div>
           </div>
         </div>
       </div>
