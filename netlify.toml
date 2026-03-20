@@ -21,9 +21,15 @@
     X-Content-Type-Options = "nosniff"
     Referrer-Policy        = "strict-origin-when-cross-origin"
 
-# ── הגדרת timeout לפונקציה (מקסימום 26 שניות ב-Netlify Free) ──
+# ── Function timeouts ──
+# parse-exam-background: auto 15min (background function — suffix -background)
+# parse-result: lightweight polling endpoint (default 10s is fine)
+# parse-exam: kept as fallback (26s max on Pro)
 [functions]
   node_bundler = "esbuild"
 
   [functions.parse-exam]
-    timeout = 25
+    timeout = 26
+
+  [functions.parse-result]
+    timeout = 10

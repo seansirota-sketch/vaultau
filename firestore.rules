@@ -42,7 +42,7 @@ service cloud.firestore {
     }
 
     match /settings/{docId} {
-      allow read: if isLoggedIn();
+      allow read: if docId == 'api_keys' ? isAdmin() : isLoggedIn();
       allow write: if isAdmin();
     }
   }
