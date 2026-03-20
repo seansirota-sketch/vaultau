@@ -5,6 +5,7 @@
     "dev": "netlify dev"
   },
   "dependencies": {
+    "@netlify/blobs": "^8.1.0",
     "@sendgrid/mail": "^8.1.6"
   },
   "devDependencies": {

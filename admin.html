@@ -70,6 +70,24 @@
   font-weight: 600;
   margin: .75rem 0 0;
 }
+.manage-tab {
+  padding: .5rem 1rem;
+  border: none;
+  background: transparent;
+  font-family: inherit;
+  font-size: .85rem;
+  font-weight: 600;
+  cursor: pointer;
+  color: var(--muted, #6b7280);
+  transition: all .15s ease;
+}
+.manage-tab:not(:last-child) { border-left: 1.5px solid var(--border, #e5e7eb); }
+.manage-tab:hover { background: #f3f4f6; }
+.manage-tab.active { background: var(--primary, #667eea); color: #fff; }
+.stat-chip {
+  display: inline-flex; align-items: center; gap: .4rem;
+  padding: .35rem .75rem; border-radius: 6px; font-weight: 600;
+}
 </style>
 </head>
 <body>
@@ -368,12 +386,26 @@
           <h2 class="sec-title">ניהול מבחנים</h2>
         </div>
         <div class="ac">
-          <div class="form-group" style="max-width:280px;margin-bottom:1rem">
-            <label>סנן לפי קורס</label>
-            <select id="manage-filter" onchange="renderManageTable()">
-              <option value="">כל הקורסים</option>
-            </select>
+          <!-- Stats bar -->
+          <div id="manage-stats" style="display:flex;gap:1rem;padding:1rem 1.25rem;font-size:.88rem;
+               border-bottom:1.5px solid var(--border,#e5e7eb);flex-wrap:wrap;align-items:center">
           </div>
+
+          <!-- Filter + Tabs row -->
+          <div style="display:flex;justify-content:space-between;align-items:center;padding:.75rem 1.25rem;flex-wrap:wrap;gap:.75rem">
+            <div class="form-group" style="max-width:280px;margin:0">
+              <label>סנן לפי קורס</label>
+              <select id="manage-filter" onchange="renderManageTable()">
+                <option value="">כל הקורסים</option>
+              </select>
+            </div>
+            <div style="display:flex;gap:0;border:1.5px solid var(--border,#e5e7eb);border-radius:8px;overflow:hidden">
+              <button id="tab-all" class="manage-tab active" onclick="setManageTab('all')">הכל</button>
+              <button id="tab-unverified" class="manage-tab" onclick="setManageTab('unverified')">❌ לא נבדקו</button>
+              <button id="tab-verified" class="manage-tab" onclick="setManageTab('verified')">✅ נבדקו</button>
+            </div>
+          </div>
+
           <div id="manage-table"></div>
         </div>
       </div>
