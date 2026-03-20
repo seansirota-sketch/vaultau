@@ -88,7 +88,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
       // ── Check if this is an existing user (has a Firestore users doc) ──
       const existingDoc = await db.collection('users').doc(user.uid).get();
-      const isExistingUser = existingDoc.exists;
+      // A "real" existing user has a fully-created doc (uid field set by saveUserData).
+      // A partial doc (only studyProgram saved during signup) is NOT considered existing.
+      const isExistingUser = existingDoc.exists && !!existingDoc.data()?.uid;
 
       if (!isExistingUser) {
         // ── NEW USER FLOW ───────────────────────────────────────
@@ -105,7 +107,10 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!authorized) {
           STATE._blockNextAuthRender = true;
           const savedName = user.displayName || '';
-          try { await auth.signOut(); } catch (_) {}
+          // Delete the account so they can re-register after admin approval
+          try { await user.delete(); } catch (_) {
+            try { await auth.signOut(); } catch (_) {}
+          }
           renderAccessRequestForm(email, savedName);
           return;
         }
@@ -230,8 +235,7 @@ function renderAuth() {
           </div>
           <button id="login-btn" class="btn btn-primary" style="width:100%;justify-content:center"
             onclick="doLogin()">כניסה ←</button>
-          <button type="button" style="width:100%;background:none;border:none;cursor:pointer;
-            color:var(--muted);font-size:.82rem;margin-top:.55rem;padding:.3rem;text-align:center"
+          <button type="button" class="btn btn-secondary" style="width:100%;justify-content:center;margin-top:.55rem"
             onclick="renderForgotPassword()">
             שכחתי סיסמה
           </button>
@@ -645,17 +649,6 @@ async function doSignup() {
   const isTAU = email.endsWith('@mail.tau.ac.il');
   authBusy(true);
   try {
-    if (!isTAU) {
-      // Non-TAU: check if admin already approved before creating any account
-      const authorized = await isUserAuthorized(email);
-      if (!authorized) {
-        authBusy(false);
-        renderAccessRequestForm(email, name);
-        return;
-      }
-      // Non-TAU but approved — fall through to create account (no email verification needed)
-    }
-
     const cred = await auth.createUserWithEmailAndPassword(email, pass);
     await cred.user.updateProfile({ displayName: name });
     try {
@@ -669,7 +662,9 @@ async function doSignup() {
       // TAU: send verification email — onAuthStateChanged will show the verification screen
       try { await cred.user.sendEmailVerification(); } catch (_) {}
     }
-    // onAuthStateChanged handles the rest
+    // onAuthStateChanged handles the rest:
+    // - Non-TAU authorized (admin approved): isUserAuthorized runs while authenticated → let in
+    // - Non-TAU unauthorized: isUserAuthorized → false → sign out → access request form
   } catch (e) {
     const messages = {
       'auth/email-already-in-use': 'אימייל כבר קיים במערכת — נסה להתחבר במקום להירשם',
@@ -1241,7 +1236,7 @@ function applyFilters() {
           <path d="M12 3v13M5 16l7 7 7-7"/><line x1="3" y1="22" x2="21" y2="22"/>
         </svg>
       </a>` : ''}
-      <button class="qv-btn" onclick="event.stopPropagation(); openExamBugModal('${e.id}','${STATE.courseId}',${JSON.stringify(e.title || e.id)})" title="בעיה במבחן" style="margin-left:.25rem">
+      <button class="qv-btn" onclick="event.stopPropagation(); openExamBugModal('${e.id}','${STATE.courseId}','${(e.title || e.id).replace(/'/g,"&#39;")}')" title="בעיה במבחן" style="margin-left:.25rem">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#9ca3af" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
       </button>
       <button class="inprogress-toggle-btn ${isInProgress ? 'inprogress-active' : ''}"
@@ -1514,7 +1509,7 @@ async function renderExam() {
         <div class="ev-banner" style="position:relative">
           <h1 class="ev-banner-title">${esc(examTitle)}</h1>
           ${metaLine ? `<p class="ev-banner-meta">${esc(metaLine)}</p>` : ''}
-          <button onclick="openExamBugModal('${STATE.examId}','${STATE.courseId}',${JSON.stringify(examTitle)})"
+          <button onclick="openExamBugModal('${STATE.examId}','${STATE.courseId}','${(examTitle||'').replace(/'/g,"&#39;")}')"
             title="בעיה במבחן"
             style="position:absolute;bottom:0;left:0;background:none;border:1.5px solid #cbd5e1;border-radius:8px;
                    padding:.35rem .7rem;font-size:.78rem;color:#64748b;cursor:pointer;
