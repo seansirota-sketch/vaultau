@@ -79,7 +79,18 @@ async function createAuthUser(email, password, displayName) {
     headers: { 'Content-Type': 'application/json' }
   }, { email, password, displayName });
   if (res.status >= 400) throw new Error(`Auth createUser ${email} failed: ${JSON.stringify(res.body)}`);
-  return res.body.localId;
+  const localId = res.body.localId;
+
+  // Mark email as verified in the emulator so seed users can log in
+  await request({
+    hostname: FIRESTORE_HOST,
+    port: AUTH_PORT,
+    path: `/identitytoolkit.googleapis.com/v1/accounts:update?key=fake-api-key`,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' }
+  }, { localId, emailVerified: true });
+
+  return localId;
 }
 
 async function clearCollection(collection) {

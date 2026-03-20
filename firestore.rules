@@ -45,5 +45,15 @@ service cloud.firestore {
       allow read: if isLoggedIn();
       allow write: if isAdmin();
     }
+
+    match /bug_reports/{reportId} {
+      allow create: if isLoggedIn();
+      allow read, list, update: if isAdmin();
+    }
+
+    match /user_events/{eventId} {
+      allow create: if isLoggedIn();
+      allow read, list: if isAdmin();
+    }
   }
 }
