@@ -1933,7 +1933,7 @@ function openBugReportModal(questionId, questionNum) {
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1.1rem">
         <div>
           <h3 style="margin:0 0 .2rem;font-size:1.05rem;font-weight:700;color:#1e293b">
-            🐛 דיווח על בעיה
+            🐛 דיווח על תקלה
           </h3>
           <p style="margin:0;font-size:.78rem;color:#64748b">
             ${isGeneral ? 'ניתן לדווח על כל בעיה — חסר מבחן, פרטים שגויים, בעיה בשאלה ועוד' : `שאלה ${questionNum}`}
