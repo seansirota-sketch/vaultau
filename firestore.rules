@@ -45,5 +45,10 @@ service cloud.firestore {
       allow read: if docId == 'api_keys' ? isAdmin() : isLoggedIn();
       allow write: if isAdmin();
     }
+
+    match /reports/{reportId} {
+      allow create: if isLoggedIn();
+      allow read, list, update, delete: if isAdmin();
+    }
   }
 }

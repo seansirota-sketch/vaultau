@@ -802,6 +802,12 @@ async function renderHome() {
             <div class="cc">${esc(c.code)}</div>
             <div class="cm">לחץ לצפייה במבחנים</div>
           </div>`).join('')}
+        <div class="course-card" onclick="openContactModal()">
+          <span class="ci">✉️</span>
+          <div class="cn">צור איתנו קשר</div>
+          <div class="cc">שתף חוויה · בקש קורס</div>
+          <div class="cm">לחץ לפנייה</div>
+        </div>
       </div></div>`;
   } catch (e) {
     page.innerHTML = `<div class="container">
@@ -1025,6 +1031,11 @@ function applyFilters() {
         onclick="event.stopPropagation(); toggleDone('${e.id}')"
         title="${isDone ? 'בטל סימון בוצע' : 'סמן כבוצע'}">
         ${isDone ? '✓' : '○'}
+      </button>
+      <button class="report-exam-btn"
+        onclick="event.stopPropagation(); openReportBugModal('${e.id}','${esc(e.title || e.id)}','${STATE.courseId}')"
+        title="דווח על תקלה">
+        ⚠
       </button>
       <span class="exam-arrow">←</span>
     </div>`;
@@ -1660,5 +1671,199 @@ async function markSurveyDone() {
 
 function closeSurveyModal() {
   document.getElementById('survey-modal')?.remove();
+  document.body.style.overflow = '';
+}
+
+/* ══════════════════════════════════════════════════════════
+   CONTACT US MODAL
+══════════════════════════════════════════════════════════ */
+
+const _CONTACT_TYPES = [
+  { value: 'experience',    icon: '💬', label: 'שתף חוויה',         placeholder: 'ספר לנו על החוויה שלך...' },
+  { value: 'request-course',icon: '📚', label: 'בקש קורס',          placeholder: 'איזה קורס תרצה שנוסיף?' },
+  { value: 'request-exam',  icon: '📝', label: 'בקש מבחן',          placeholder: 'איזה מבחן תרצה שנוסיף?' },
+  { value: 'other',         icon: '✉️', label: 'אחר',               placeholder: 'כתוב כאן...' },
+];
+
+function openContactModal() {
+  document.getElementById('contact-modal')?.remove();
+  const modal = document.createElement('div');
+  modal.id = 'contact-modal';
+  modal.className = 'modal-overlay';
+  modal.dataset.contactType = 'experience';
+  modal.innerHTML = `
+    <div class="modal-card" style="max-width:480px">
+      <div class="modal-header">
+        <h3 style="margin:0;font-size:1.1rem">✉️ צור איתנו קשר</h3>
+        <button class="modal-close" onclick="closeContactModal()">✕</button>
+      </div>
+      <div style="padding:1.25rem;display:flex;flex-direction:column;gap:1rem">
+        <div>
+          <label style="font-size:.82rem;font-weight:600;color:var(--muted);display:block;margin-bottom:.45rem">
+            נושא הפנייה
+          </label>
+          <div class="contact-scroll-list" id="contact-scroll-list">
+            ${_CONTACT_TYPES.map(t => `
+              <div class="contact-scroll-item${t.value === 'experience' ? ' selected' : ''}"
+                   onclick="setContactType('${t.value}')" data-value="${t.value}">
+                <span class="csi-icon">${t.icon}</span>
+                <span>${t.label}</span>
+                <span class="csi-radio"></span>
+              </div>`).join('')}
+          </div>
+        </div>
+        <div class="form-group" style="margin:0">
+          <label id="contact-label">ספר לנו על החוויה שלך</label>
+          <textarea id="contact-message" rows="4" dir="rtl"
+            placeholder="ספר לנו על החוויה שלך..."
+            style="width:100%;border:1.5px solid var(--border);border-radius:8px;
+                   padding:.75rem;font-family:inherit;font-size:.9rem;resize:vertical;
+                   box-sizing:border-box;color:var(--text)"></textarea>
+        </div>
+        <div id="contact-err" style="color:var(--danger);font-size:.83rem;display:none"></div>
+        <div style="display:flex;justify-content:flex-end;gap:.75rem">
+          <button class="btn btn-secondary" onclick="closeContactModal()">ביטול</button>
+          <button class="btn btn-primary" id="contact-submit-btn" onclick="submitContactForm()">שלח</button>
+        </div>
+      </div>
+    </div>`;
+  document.body.appendChild(modal);
+  document.body.style.overflow = 'hidden';
+  modal.addEventListener('click', e => { if (e.target === modal) closeContactModal(); });
+}
+
+function setContactType(value) {
+  const modal = document.getElementById('contact-modal');
+  if (!modal) return;
+  modal.dataset.contactType = value;
+  modal.querySelectorAll('.contact-scroll-item').forEach(el => {
+    el.classList.toggle('selected', el.dataset.value === value);
+  });
+  const t = _CONTACT_TYPES.find(t => t.value === value);
+  const label = document.getElementById('contact-label');
+  const ta    = document.getElementById('contact-message');
+  if (label && t) label.textContent = t.label;
+  if (ta    && t) ta.placeholder    = t.placeholder;
+}
+
+async function submitContactForm() {
+  const msgEl = document.getElementById('contact-message');
+  const errEl = document.getElementById('contact-err');
+  const btn   = document.getElementById('contact-submit-btn');
+  const modal = document.getElementById('contact-modal');
+  const type  = modal?.dataset.contactType || 'experience';
+  const msg   = msgEl?.value.trim();
+
+  if (!msg) {
+    if (errEl) { errEl.textContent = 'אנא כתוב הודעה לפני השליחה'; errEl.style.display = 'block'; }
+    return;
+  }
+  if (errEl) errEl.style.display = 'none';
+  if (btn) { btn.disabled = true; btn.textContent = 'שולח...'; }
+
+  try {
+    const typeObj = _CONTACT_TYPES.find(t => t.value === type);
+    await db.collection('reports').add({
+      category:  'contact',
+      type:      type,
+      typeLabel: typeObj?.label || type,
+      message:   msg,
+      userId:    STATE.fireUser?.uid   || '',
+      userEmail: STATE.fireUser?.email || '',
+      createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+      status:    'open',
+    });
+    closeContactModal();
+    toast('תודה על הפנייה! 🙏', 'info');
+  } catch(e) {
+    if (btn) { btn.disabled = false; btn.textContent = 'שלח'; }
+    if (errEl) { errEl.textContent = 'שגיאה בשליחה — נסה שוב'; errEl.style.display = 'block'; }
+  }
+}
+
+function closeContactModal() {
+  document.getElementById('contact-modal')?.remove();
+  document.body.style.overflow = '';
+}
+
+/* ══════════════════════════════════════════════════════════
+   REPORT BUG MODAL (per exam)
+══════════════════════════════════════════════════════════ */
+
+function openReportBugModal(examId, examTitle, courseId) {
+  document.getElementById('report-bug-modal')?.remove();
+  const modal = document.createElement('div');
+  modal.id = 'report-bug-modal';
+  modal.className = 'modal-overlay';
+  modal.dataset.examId    = examId;
+  modal.dataset.examTitle = examTitle;
+  modal.dataset.courseId  = courseId;
+  modal.innerHTML = `
+    <div class="modal-card" style="max-width:460px">
+      <div class="modal-header">
+        <h3 style="margin:0;font-size:1.1rem">⚠ דווח על תקלה</h3>
+        <button class="modal-close" onclick="closeReportBugModal()">✕</button>
+      </div>
+      <div style="padding:1.25rem;display:flex;flex-direction:column;gap:1rem">
+        <div style="background:var(--bg2,#f9fafb);border-radius:8px;padding:.65rem .9rem;
+                    font-size:.85rem;color:var(--muted);border:1px solid var(--border)">
+          מבחן: <strong>${esc(examTitle)}</strong>
+        </div>
+        <div class="form-group" style="margin:0">
+          <label>תאר את התקלה</label>
+          <textarea id="report-bug-message" rows="4" dir="rtl"
+            placeholder="למשל: שאלה 3 חסרה, PDF לא נפתח, תשובה שגויה..."
+            style="width:100%;border:1.5px solid var(--border);border-radius:8px;
+                   padding:.75rem;font-family:inherit;font-size:.9rem;resize:vertical;
+                   box-sizing:border-box;color:var(--text)"></textarea>
+        </div>
+        <div id="report-bug-err" style="color:var(--danger);font-size:.83rem;display:none"></div>
+        <div style="display:flex;justify-content:flex-end;gap:.75rem">
+          <button class="btn btn-secondary" onclick="closeReportBugModal()">ביטול</button>
+          <button class="btn btn-primary" id="report-bug-submit-btn" onclick="submitBugReport()">שלח דיווח</button>
+        </div>
+      </div>
+    </div>`;
+  document.body.appendChild(modal);
+  document.body.style.overflow = 'hidden';
+  modal.addEventListener('click', e => { if (e.target === modal) closeReportBugModal(); });
+}
+
+async function submitBugReport() {
+  const modal  = document.getElementById('report-bug-modal');
+  const msgEl  = document.getElementById('report-bug-message');
+  const errEl  = document.getElementById('report-bug-err');
+  const btn    = document.getElementById('report-bug-submit-btn');
+  const msg    = msgEl?.value.trim();
+
+  if (!msg) {
+    if (errEl) { errEl.textContent = 'אנא תאר את התקלה'; errEl.style.display = 'block'; }
+    return;
+  }
+  if (errEl) errEl.style.display = 'none';
+  if (btn) { btn.disabled = true; btn.textContent = 'שולח...'; }
+
+  try {
+    await db.collection('reports').add({
+      category:   'bug',
+      examId:     modal.dataset.examId    || '',
+      examTitle:  modal.dataset.examTitle || '',
+      courseId:   modal.dataset.courseId  || '',
+      message:    msg,
+      userId:     STATE.fireUser?.uid   || '',
+      userEmail:  STATE.fireUser?.email || '',
+      createdAt:  firebase.firestore.FieldValue.serverTimestamp(),
+      status:     'open',
+    });
+    closeReportBugModal();
+    toast('הדיווח נשלח — תודה! 🙏', 'info');
+  } catch(e) {
+    if (btn) { btn.disabled = false; btn.textContent = 'שלח דיווח'; }
+    if (errEl) { errEl.textContent = 'שגיאה בשליחה — נסה שוב'; errEl.style.display = 'block'; }
+  }
+}
+
+function closeReportBugModal() {
+  document.getElementById('report-bug-modal')?.remove();
   document.body.style.overflow = '';
 }
