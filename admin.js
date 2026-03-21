@@ -363,7 +363,7 @@ function _applySectionUI(name) {
   if (nav) nav.classList.add('active');
   if (name === 'manage')      renderManageTable();
   if (name === 'dashboard')   refreshDashboard();
-  if (name === 'courses')     renderCoursesList();
+  if (name === 'courses')     { renderCoursesList(); switchCoursesSubTab('courses'); }
   if (name === 'add-exam')    populateAllSelects();
   if (name === 'analytics')   renderAnalytics();
   if (name === 'users')       renderUserStats();
@@ -3317,4 +3317,404 @@ async function _loadRequestsBadge() {
     // non-critical — ignore silently
     console.warn('_loadRequestsBadge:', e.message);
   }
+}
+
+async function _loadReportsBadge() {
+  try {
+    const snap = await db.collection('reports').where('status', '==', 'open').get();
+    const badge = document.getElementById('reports-badge');
+    if (!badge) return;
+    if (snap.size > 0) { badge.textContent = snap.size; badge.style.display = 'inline-block'; }
+    else badge.style.display = 'none';
+  } catch(e) { console.warn('_loadReportsBadge:', e.message); }
+}
+
+/* ══════════════════════════════════════════════════════════════
+   REPORTS SECTION
+   ═══════════════════════════════════════════════════════════ */
+
+let _reportsCurrentTab = 'open'; // 'open' | 'archived'
+
+function switchReportsTab(tab) {
+  _reportsCurrentTab = tab;
+  document.getElementById('reports-tab-open')?.classList.toggle('active', tab === 'open');
+  document.getElementById('reports-tab-archived')?.classList.toggle('active', tab === 'archived');
+  _renderReportsContent();
+}
+
+async function renderReportsSection() {
+  const el = document.getElementById('reports-content');
+  if (el) el.innerHTML = '<div class="spinner" style="margin:2rem auto"></div>';
+
+  // update badge with open count
+  try {
+    const snap = await db.collection('reports').where('status', '==', 'open').get();
+    const badge = document.getElementById('reports-badge');
+    if (badge) {
+      if (snap.size > 0) { badge.textContent = snap.size; badge.style.display = 'inline-block'; }
+      else badge.style.display = 'none';
+    }
+  } catch(e) { /* non-critical */ }
+
+  _renderReportsContent();
+}
+
+async function _renderReportsContent() {
+  const el = document.getElementById('reports-content');
+  if (!el) return;
+  el.innerHTML = '<div class="spinner" style="margin:2rem auto"></div>';
+
+  const isArchive = _reportsCurrentTab === 'archived';
+  const status    = isArchive ? 'closed' : 'open';
+
+  try {
+    const snap = await db.collection('reports').where('status', '==', status).get();
+
+    const items = snap.docs
+      .map(d => ({ id: d.id, ...d.data() }))
+      .sort((a, b) => (b.createdAt?.toMillis?.() || 0) - (a.createdAt?.toMillis?.() || 0));
+
+    if (!items.length) {
+      el.innerHTML = `
+        <div class="empty" style="padding:2.5rem;text-align:center">
+          <span style="font-size:2rem;display:block;margin-bottom:.5rem">${isArchive ? '🗂️' : '📭'}</span>
+          <h3 style="font-weight:600;margin-bottom:.3rem">${isArchive ? 'הארכיון ריק' : 'אין דיווחים פתוחים'}</h3>
+          <p style="color:var(--muted);font-size:.88rem">${isArchive ? 'עוד לא נסגרו דיווחים' : 'כל הדיווחים טופלו'}</p>
+        </div>`;
+      return;
+    }
+
+    const rows = items.map(r => {
+      const date = r.createdAt?.toDate?.();
+      const dateStr = date
+        ? date.toLocaleDateString('he-IL', { day:'2-digit', month:'2-digit', year:'numeric', hour:'2-digit', minute:'2-digit' })
+        : '—';
+
+      const closedDate = r.closedAt?.toDate?.();
+      const closedStr  = closedDate
+        ? closedDate.toLocaleDateString('he-IL', { day:'2-digit', month:'2-digit', year:'numeric', hour:'2-digit', minute:'2-digit' })
+        : '—';
+
+      const categoryBadge = r.category === 'bug'
+        ? `<span class="badge" style="background:#fef3c7;color:#92400e;border:1px solid #fcd34d">⚠ תקלה</span>`
+        : `<span class="badge" style="background:#ede9fe;color:#5b21b6;border:1px solid #c4b5fd">✉ פנייה</span>`;
+
+      const typeBadge = r.category === 'contact' && r.typeLabel
+        ? `<span class="badge b-blue" style="font-size:.72rem">${esc(r.typeLabel)}</span>`
+        : '';
+
+      const examInfo = r.examId
+        ? `<div style="font-size:.78rem;color:var(--muted);margin-top:.25rem">מבחן: <strong>${esc(r.examTitle || r.examId)}</strong></div>`
+        : '';
+
+      const closedInfo = isArchive
+        ? `<div style="font-size:.75rem;color:var(--muted);margin-top:.3rem;display:flex;flex-direction:column;gap:.15rem">
+             <span>נסגר על ידי: <strong>${esc(r.closedByEmail || '—')}</strong> · ${closedStr}</span>
+             ${r.closedNote ? `<span style="color:var(--text);font-size:.8rem;margin-top:.15rem">💬 ${esc(r.closedNote)}</span>` : ''}
+           </div>`
+        : '';
+
+      const actionBtn = isArchive
+        ? ''
+        : `<button class="btn btn-secondary btn-sm" onclick="closeReport('${esc(r.id)}')">✓ סגור תקלה</button>`;
+
+      return `
+        <div class="ac" style="margin-bottom:.75rem">
+          <div style="padding:1rem 1.25rem;display:flex;flex-direction:column;gap:.5rem">
+            <div style="display:flex;align-items:center;gap:.5rem;flex-wrap:wrap">
+              ${categoryBadge}${typeBadge}
+              <span style="font-size:.78rem;color:var(--muted);margin-right:auto">${dateStr}</span>
+            </div>
+            <div style="font-size:.83rem;color:var(--muted)">
+              <strong>${esc(r.userEmail || '—')}</strong>
+            </div>
+            ${examInfo}
+            <div style="background:var(--bg,#f9fafb);border-radius:8px;padding:.65rem .9rem;
+                        font-size:.9rem;line-height:1.6;border:1px solid var(--border);
+                        white-space:pre-wrap;word-break:break-word">${esc(r.message)}</div>
+            ${closedInfo}
+            <div style="display:flex;justify-content:flex-end">${actionBtn}</div>
+          </div>
+        </div>`;
+    }).join('');
+
+    el.innerHTML = rows;
+
+  } catch(e) {
+    el.innerHTML = `<div style="color:var(--danger);padding:1.5rem">שגיאה בטעינה: ${esc(e.message)}</div>`;
+  }
+}
+
+function closeReport(reportId) {
+  if (!adminUser) return;
+
+  // Remove any existing close modal
+  document.getElementById('close-report-modal')?.remove();
+
+  const overlay = document.createElement('div');
+  overlay.id = 'close-report-modal';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;z-index:20000;padding:1rem;backdrop-filter:blur(2px)';
+  overlay.innerHTML = `
+    <div style="background:#fff;border-radius:14px;width:min(94vw,440px);box-shadow:0 20px 60px rgba(0,0,0,.28);direction:rtl;overflow:hidden">
+      <div style="display:flex;align-items:center;justify-content:space-between;padding:1rem 1.25rem;border-bottom:1px solid var(--border)">
+        <h3 style="margin:0;font-size:1rem;font-weight:700">✓ סגור דיווח</h3>
+        <button onclick="document.getElementById('close-report-modal').remove()"
+          style="background:none;border:none;cursor:pointer;font-size:1rem;color:var(--muted);padding:.2rem .4rem;border-radius:6px">✕</button>
+      </div>
+      <div style="padding:1.25rem;display:flex;flex-direction:column;gap:.9rem">
+        <div class="form-group" style="margin:0">
+          <label style="font-weight:600;font-size:.85rem">הערה לסגירה <span style="font-weight:400;color:var(--muted)">(אופציונלי)</span></label>
+          <textarea id="close-report-note" rows="3" dir="rtl"
+            placeholder="למשל: טופל, לא ניתן לשחזר..."
+            style="width:100%;border:1.5px solid var(--border);border-radius:8px;padding:.75rem;
+                   font-family:inherit;font-size:.88rem;resize:vertical;box-sizing:border-box;
+                   color:var(--text);margin-top:.35rem"></textarea>
+        </div>
+        <div id="close-report-err" style="color:var(--danger);font-size:.82rem;display:none"></div>
+        <div style="display:flex;justify-content:flex-end;gap:.75rem">
+          <button class="btn btn-secondary" onclick="document.getElementById('close-report-modal').remove()">ביטול</button>
+          <button class="btn btn-primary" id="close-report-confirm-btn"
+            onclick="_doCloseReport('${reportId}')">✓ אשר סגירה</button>
+        </div>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+  overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
+  document.getElementById('close-report-note')?.focus();
+}
+
+async function _doCloseReport(reportId) {
+  const btn  = document.getElementById('close-report-confirm-btn');
+  const note = document.getElementById('close-report-note')?.value.trim() || '';
+  const errEl = document.getElementById('close-report-err');
+  if (btn) { btn.disabled = true; btn.textContent = 'שומר...'; }
+
+  try {
+    const update = {
+      status:        'closed',
+      closedAt:      firebase.firestore.FieldValue.serverTimestamp(),
+      closedBy:      adminUser.uid   || '',
+      closedByEmail: adminUser.email || '',
+    };
+    if (note) update.closedNote = note;
+    await db.collection('reports').doc(reportId).update(update);
+    document.getElementById('close-report-modal')?.remove();
+    toast('הדיווח נסגר והועבר לארכיון', 'info');
+    renderReportsSection();
+  } catch(e) {
+    if (btn) { btn.disabled = false; btn.textContent = '✓ אשר סגירה'; }
+    if (errEl) { errEl.textContent = 'שגיאה: ' + e.message; errEl.style.display = 'block'; }
+  }
+}
+
+/* ══════════════════════════════════════════════════════════════
+   COURSES SECTION — SUB TABS (קורסים / תיקיות)
+   ═══════════════════════════════════════════════════════════ */
+
+function switchCoursesSubTab(tab) {
+  document.getElementById('courses-subtab-courses')?.classList.toggle('active', tab === 'courses');
+  document.getElementById('courses-subtab-folders')?.classList.toggle('active', tab === 'folders');
+  const coursesEl = document.getElementById('courses-sub-courses');
+  const foldersEl = document.getElementById('courses-sub-folders');
+  if (coursesEl) coursesEl.style.display = tab === 'courses' ? '' : 'none';
+  if (foldersEl) foldersEl.style.display = tab === 'folders' ? '' : 'none';
+  if (tab === 'folders') renderFoldersSection();
+}
+
+/* ══════════════════════════════════════════════════════════════
+   FOLDERS MANAGEMENT
+   ═══════════════════════════════════════════════════════════ */
+
+const FOLDER_STATUS_LABELS = {
+  published: '🟢 פורסם',
+  admin:     '🔒 מנהלים',
+  draft:     '📝 טיוטה',
+};
+
+async function renderFoldersSection() {
+  const el = document.getElementById('folders-list');
+  if (!el) return;
+  el.innerHTML = '<div class="spinner" style="margin:1rem auto"></div>';
+
+  try {
+    const [folderSnap, courseSnap] = await Promise.all([
+      db.collection('folders').get(),
+      db.collection('courses').orderBy('name').get(),
+    ]);
+
+    const folders = folderSnap.docs
+      .map(d => ({ ...d.data(), id: d.id }))
+      .sort((a, b) => (a.order ?? 99) - (b.order ?? 99));
+
+    const allCourses = courseSnap.docs.map(d => ({ ...d.data(), id: d.id }));
+
+    if (!folders.length) {
+      el.innerHTML = `
+        <div class="empty" style="padding:1.5rem;text-align:center">
+          <span style="font-size:2rem;display:block;margin-bottom:.5rem">📁</span>
+          <p style="color:var(--muted);font-size:.88rem">עוד לא נוצרו תיקיות — צור תיקייה חדשה למעלה</p>
+        </div>`;
+      return;
+    }
+
+    el.innerHTML = folders.map(f => {
+      const status = f.status || 'published';
+      const assignedCourses = allCourses.filter(c => (f.courseIds || []).includes(c.id));
+      const unassigned = allCourses.filter(c => !(f.courseIds || []).includes(c.id));
+
+      return `
+        <div class="ac" style="margin-bottom:0">
+          <div class="ac-title" style="justify-content:space-between;flex-wrap:wrap;gap:.5rem">
+            <span>📁 ${esc(f.name)}</span>
+            <div style="display:flex;gap:.5rem;align-items:center;flex-wrap:wrap">
+              <!-- Status buttons -->
+              <div style="display:flex;gap:.25rem">
+                ${['published','admin','draft'].map(s => `
+                  <button class="btn btn-sm ${status === s ? 'btn-primary' : 'btn-secondary'}"
+                    style="font-size:.75rem;padding:.25rem .55rem"
+                    onclick="updateFolderStatus('${f.id}','${s}')"
+                    title="${FOLDER_STATUS_LABELS[s]}">${FOLDER_STATUS_LABELS[s]}</button>`).join('')}
+              </div>
+              <button class="btn btn-secondary btn-sm" onclick="openEditFolderModal('${f.id}','${esc(f.name)}')">✏️ שנה שם</button>
+              <button class="btn btn-sm" style="background:#fee2e2;color:#b91c1c;border-color:#fca5a5"
+                onclick="adminDeleteFolder('${f.id}','${esc(f.name)}')">🗑 מחק</button>
+            </div>
+          </div>
+          <div style="padding:1rem 1.25rem;display:flex;flex-direction:column;gap:.75rem">
+
+            <div>
+              <div style="font-size:.8rem;font-weight:600;color:var(--muted);margin-bottom:.4rem">
+                קורסים בתיקייה (${assignedCourses.length})
+              </div>
+              <div style="display:flex;flex-wrap:wrap;gap:.4rem">
+                ${assignedCourses.length
+                  ? assignedCourses.map(c => `
+                      <span class="badge" style="background:#ede9fe;color:#5b21b6;border:1px solid #c4b5fd;
+                            display:inline-flex;align-items:center;gap:.3rem;padding:.3rem .6rem;font-size:.82rem">
+                        ${esc(c.icon || '📚')} ${esc(c.name)}
+                        <button onclick="removeCourseFromFolder('${f.id}','${c.id}')"
+                          style="background:none;border:none;cursor:pointer;color:#7c3aed;font-size:.9rem;
+                                 padding:0;line-height:1" title="הסר">✕</button>
+                      </span>`).join('')
+                  : `<span style="font-size:.82rem;color:var(--light)">אין קורסים — הוסף מהרשימה למטה</span>`}
+              </div>
+            </div>
+
+            ${unassigned.length ? `
+            <div style="display:flex;gap:.5rem;align-items:center">
+              <select id="add-course-select-${f.id}"
+                style="flex:1;border:1.5px solid var(--border);border-radius:8px;padding:.45rem .7rem;
+                       font-family:inherit;font-size:.85rem;color:var(--text)">
+                <option value="">— בחר קורס להוספה —</option>
+                ${unassigned.map(c => `<option value="${c.id}">${esc(c.icon||'📚')} ${esc(c.name)}</option>`).join('')}
+              </select>
+              <button class="btn btn-primary btn-sm" onclick="addCourseToFolder('${f.id}')">הוסף</button>
+            </div>` : ''}
+          </div>
+        </div>`;
+    }).join('');
+
+  } catch(e) {
+    el.innerHTML = `<div style="color:var(--danger);padding:1rem">שגיאה: ${esc(e.message)}</div>`;
+  }
+}
+
+async function adminCreateFolder() {
+  const nameInput   = document.getElementById('folder-name-input');
+  const statusInput = document.getElementById('folder-status-input');
+  const name   = nameInput?.value.trim();
+  const status = statusInput?.value || 'published';
+  if (!name) { toast('הזן שם לתיקייה', 'error'); return; }
+
+  try {
+    const snap = await db.collection('folders').get();
+    const maxOrder = snap.docs.reduce((m, d) => Math.max(m, d.data().order ?? 0), 0);
+    await db.collection('folders').add({
+      name, status, courseIds: [],
+      order: maxOrder + 1,
+      createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+    });
+    nameInput.value = '';
+    toast('תיקייה נוצרה', 'info');
+    renderFoldersSection();
+  } catch(e) { toast('שגיאה: ' + e.message, 'error'); }
+}
+
+async function updateFolderStatus(folderId, status) {
+  try {
+    await db.collection('folders').doc(folderId).update({ status });
+    toast('סטטוס עודכן', 'info');
+    renderFoldersSection();
+  } catch(e) { toast('שגיאה: ' + e.message, 'error'); }
+}
+
+async function adminDeleteFolder(folderId, folderName) {
+  if (!confirm(`למחוק את התיקייה "${folderName}"?\n(הקורסים לא יימחקו)`)) return;
+  try {
+    await db.collection('folders').doc(folderId).delete();
+    toast('התיקייה נמחקה', 'info');
+    renderFoldersSection();
+  } catch(e) { toast('שגיאה: ' + e.message, 'error'); }
+}
+
+function openEditFolderModal(folderId, currentName) {
+  document.getElementById('edit-folder-modal')?.remove();
+  const overlay = document.createElement('div');
+  overlay.id = 'edit-folder-modal';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;z-index:20000;padding:1rem;backdrop-filter:blur(2px)';
+  overlay.innerHTML = `
+    <div style="background:#fff;border-radius:14px;width:min(94vw,400px);box-shadow:0 20px 60px rgba(0,0,0,.28);direction:rtl;overflow:hidden">
+      <div style="display:flex;align-items:center;justify-content:space-between;padding:1rem 1.25rem;border-bottom:1px solid var(--border)">
+        <h3 style="margin:0;font-size:1rem;font-weight:700">✏️ שינוי שם תיקייה</h3>
+        <button onclick="document.getElementById('edit-folder-modal').remove()"
+          style="background:none;border:none;cursor:pointer;font-size:1rem;color:var(--muted);padding:.2rem .4rem">✕</button>
+      </div>
+      <div style="padding:1.25rem;display:flex;flex-direction:column;gap:.9rem">
+        <div class="form-group" style="margin:0">
+          <label>שם חדש</label>
+          <input id="edit-folder-name" type="text" value="${esc(currentName)}" style="margin-top:.35rem">
+        </div>
+        <div style="display:flex;justify-content:flex-end;gap:.75rem">
+          <button class="btn btn-secondary" onclick="document.getElementById('edit-folder-modal').remove()">ביטול</button>
+          <button class="btn btn-primary" onclick="_doRenameFolder('${folderId}')">שמור</button>
+        </div>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+  overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
+  document.getElementById('edit-folder-name')?.focus();
+}
+
+async function _doRenameFolder(folderId) {
+  const name = document.getElementById('edit-folder-name')?.value.trim();
+  if (!name) { toast('הזן שם', 'error'); return; }
+  try {
+    await db.collection('folders').doc(folderId).update({ name });
+    document.getElementById('edit-folder-modal')?.remove();
+    toast('שם עודכן', 'info');
+    renderFoldersSection();
+  } catch(e) { toast('שגיאה: ' + e.message, 'error'); }
+}
+
+async function addCourseToFolder(folderId) {
+  const sel = document.getElementById(`add-course-select-${folderId}`);
+  const courseId = sel?.value;
+  if (!courseId) { toast('בחר קורס', 'error'); return; }
+  try {
+    await db.collection('folders').doc(folderId).update({
+      courseIds: firebase.firestore.FieldValue.arrayUnion(courseId),
+    });
+    toast('קורס נוסף לתיקייה', 'info');
+    renderFoldersSection();
+  } catch(e) { toast('שגיאה: ' + e.message, 'error'); }
+}
+
+async function removeCourseFromFolder(folderId, courseId) {
+  try {
+    await db.collection('folders').doc(folderId).update({
+      courseIds: firebase.firestore.FieldValue.arrayRemove(courseId),
+    });
+    toast('קורס הוסר', 'info');
+    renderFoldersSection();
+  } catch(e) { toast('שגיאה: ' + e.message, 'error'); }
 }

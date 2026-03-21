@@ -755,27 +755,33 @@ async function renderHome() {
   page.innerHTML = `<div class="container"><div class="spinner" style="margin-top:3rem"></div></div>`;
 
   try {
-    // Check if user is admin
     const isAdmin = STATE.userData?.role === 'admin';
-    
-    // Fetch courses from Firestore with server-side filtering
-    let snap;
-    if (isAdmin) {
-      // Admin sees published + admin-only courses (NOT drafts)
-      snap = await db.collection('courses').where('status', 'in', ['published', 'admin']).get();
-    } else {
-      // Regular user sees only published courses
-      snap = await db.collection('courses').where('status', '==', 'published').get();
-    }
-    
-    // Sort by name client-side (avoids need for composite index)
-    const courses = snap.docs
+
+    const [courseSnap, folderSnap] = await Promise.all([
+      isAdmin
+        ? db.collection('courses').where('status', 'in', ['published', 'admin']).get()
+        : db.collection('courses').where('status', '==', 'published').get(),
+      db.collection('folders').get(),
+    ]);
+
+    const courses = courseSnap.docs
       .map(d => ({ ...d.data(), id: d.id }))
       .sort((a, b) => (a.name || '').localeCompare(b.name || ''));
-    
-    console.log('renderHome - courses count:', courses.length);
-    
+
+    // Filter folders by status (same logic as courses)
+    const allFolders = folderSnap.docs
+      .map(d => ({ ...d.data(), id: d.id }))
+      .sort((a, b) => (a.order ?? 99) - (b.order ?? 99));
+    const folders = allFolders.filter(f => {
+      const s = f.status || 'published';
+      if (s === 'draft') return false;
+      if (s === 'admin') return isAdmin;
+      return true;
+    });
+
     STATE.courses = courses;
+    STATE.folders = folders;
+    if (!STATE.activeFolder) STATE.activeFolder = '__all__';
 
     if (!courses.length) {
       page.innerHTML = `<div class="container">
@@ -787,6 +793,17 @@ async function renderHome() {
       return;
     }
 
+    const folderTabs = folders.length ? `
+      <div class="folder-tabs" id="folder-tabs">
+        <button class="folder-tab ${STATE.activeFolder === '__all__' ? 'active' : ''}"
+          onclick="setFolderTab('__all__')">הכל</button>
+        ${folders.map(f => `
+          <button class="folder-tab ${STATE.activeFolder === f.id ? 'active' : ''}"
+            onclick="setFolderTab('${f.id}')">
+            ${esc(f.name)}${f.status === 'admin' ? ' 🔒' : ''}
+          </button>`).join('')}
+      </div>` : '';
+
     page.innerHTML = `<div class="container">
       <div class="page-header">
         <div>
@@ -794,15 +811,11 @@ async function renderHome() {
           <p class="page-sub">בחר קורס לצפייה במבחנים</p>
         </div>
       </div>
-      <div class="courses-grid">
-        ${courses.map(c => `
-          <div class="course-card" onclick="goCourse('${c.id}')">
-            <span class="ci">${esc(c.icon || '📚')}</span>
-            <div class="cn">${esc(c.name)}</div>
-            <div class="cc">${esc(c.code)}</div>
-            <div class="cm">לחץ לצפייה במבחנים</div>
-          </div>`).join('')}
-      </div></div>`;
+      ${folderTabs}
+      <div class="courses-grid" id="courses-grid"></div>
+    </div>`;
+
+    _renderCourseCards();
   } catch (e) {
     page.innerHTML = `<div class="container">
       <div class="empty" style="margin-top:4rem">
@@ -812,6 +825,59 @@ async function renderHome() {
         <button class="btn btn-primary" style="margin-top:1rem" onclick="renderHome()">נסה שוב</button>
       </div></div>`;
   }
+}
+
+function setFolderTab(folderId) {
+  STATE.activeFolder = folderId;
+  document.querySelectorAll('.folder-tab').forEach(btn => {
+    const f = (STATE.folders || []).find(f => f.id === folderId);
+    const isAll = folderId === '__all__';
+    btn.classList.toggle('active',
+      isAll ? btn.textContent.trim() === 'הכל'
+             : btn.textContent.trim().startsWith(f?.name || '~~~')
+    );
+  });
+  _renderCourseCards();
+}
+
+function _renderCourseCards() {
+  const grid = document.getElementById('courses-grid');
+  if (!grid) return;
+  const courses = STATE.courses || [];
+  const folders = STATE.folders || [];
+  const active  = STATE.activeFolder || '__all__';
+
+  let visible = courses;
+  if (active !== '__all__') {
+    const folder = folders.find(f => f.id === active);
+    const ids = folder?.courseIds || [];
+    visible = courses.filter(c => ids.includes(c.id));
+  }
+
+  const contactCard = `
+    <div class="course-card" onclick="openContactModal()">
+      <span class="ci">✉️</span>
+      <div class="cn">צור איתנו קשר</div>
+      <div class="cc">שתף חוויה · בקש קורס</div>
+      <div class="cm">לחץ לפנייה</div>
+    </div>`;
+
+  if (!visible.length) {
+    grid.innerHTML = `
+      <div class="empty" style="grid-column:1/-1;padding:2rem;text-align:center">
+        <span class="ei">📭</span><h3>אין קורסים בתיקייה זו</h3>
+      </div>
+      ${contactCard}`;
+    return;
+  }
+
+  grid.innerHTML = visible.map(c => `
+    <div class="course-card" onclick="goCourse('${c.id}')">
+      <span class="ci">${esc(c.icon || '📚')}</span>
+      <div class="cn">${esc(c.name)}</div>
+      <div class="cc">${esc(c.code)}</div>
+      <div class="cm">לחץ לצפייה במבחנים</div>
+    </div>`).join('') + contactCard;
 }
 
 /* ══════════════════════════════════════════════════════════
