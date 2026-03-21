@@ -386,8 +386,9 @@ const USERS_SEED = [
 async function main() {
   console.log('🌱 VaulTau seed script starting...\n');
 
-  // Read ANTHROPIC_API_KEY from .env if present
+  // Read API keys from .env if present
   let anthropicKey = null;
+  let geminiKey = null;
   const envPath = path.join(__dirname, '..', '.env');
   if (fs.existsSync(envPath)) {
     const buf = fs.readFileSync(envPath);
@@ -396,6 +397,8 @@ async function main() {
     const envContent = buf.toString(encoding).replace(/^\uFEFF/, ''); // strip BOM
     const match = envContent.match(/^ANTHROPIC_API_KEY=(.+)$/m);
     if (match) anthropicKey = match[1].trim();
+    const geminiMatch = envContent.match(/^GEMINI_API_KEY=(.+)$/m);
+    if (geminiMatch) geminiKey = geminiMatch[1].trim();
   }
 
   // 1. Clear existing data
@@ -453,12 +456,15 @@ async function main() {
 
   // 5. settings/api_keys
   console.log('\n⚙️  Creating settings...');
-  if (anthropicKey) {
-    await setDoc('settings', 'api_keys', { anthropic: anthropicKey });
-    console.log('   ✓ settings/api_keys (anthropic key seeded)');
+  const apiKeys = {};
+  if (anthropicKey) apiKeys.anthropic = anthropicKey;
+  if (geminiKey)    apiKeys.gemini    = geminiKey;
+  if (Object.keys(apiKeys).length) {
+    await setDoc('settings', 'api_keys', apiKeys);
+    console.log(`   ✓ settings/api_keys (${Object.keys(apiKeys).join(', ')} seeded)`);
   } else {
-    console.warn('   ⚠️  ANTHROPIC_API_KEY not found in .env — skipping settings/api_keys');
-    console.warn('       AI features will not work in the emulator until you add it.');
+    console.warn('   ⚠️  No API keys found in .env — skipping settings/api_keys');
+    console.warn('       AI features will not work in the emulator until you add them.');
   }
 
   // 6. settings/global
