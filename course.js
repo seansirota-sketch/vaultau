@@ -555,7 +555,8 @@ async function doLogin() {
   } catch (e) {
     const messages = {
       'auth/user-not-found':     'אימייל לא קיים במערכת',
-      'auth/wrong-password':     'סיסמה שגויה',
+      'auth/wrong-password':             'סיסמה שגויה',
+      'auth/invalid-login-credentials': 'סיסמה שגויה',
       'auth/invalid-email':      'פורמט אימייל לא תקין',
       'auth/too-many-requests':  'יותר מדי ניסיונות — נסה שוב מאוחר יותר',
       'auth/invalid-credential': 'אימייל או סיסמה שגויים',
