@@ -1345,6 +1345,33 @@ mjx-container { direction: ltr; }
 .contact-type-btn:hover:not(.active) { border-color: var(--primary, #667eea); color: var(--primary, #667eea); }
 
 /* ── Folder filter tabs (home page) ─────────────────────────── */
+.save-course-btn {
+  position: absolute; top: .5rem; left: .5rem;
+  background: rgba(255,255,255,.85); border: none; cursor: pointer;
+  font-size: .78rem; color: var(--muted, #aaa);
+  width: 1.5rem; height: 1.5rem; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  line-height: 1; transition: background .15s, color .15s;
+  z-index: 2; font-weight: 700;
+}
+.save-course-btn:hover { background: #fee2e2; color: #b91c1c; }
+.save-course-btn.saved { background: #fee2e2; color: #b91c1c; }
+
+.picker-item {
+  display: flex; align-items: center; gap: .75rem;
+  padding: .65rem .85rem; border-radius: 10px;
+  border: 1.5px solid var(--border); cursor: pointer;
+  transition: border-color .15s, background .15s;
+  user-select: none;
+}
+.picker-item:hover { border-color: var(--primary, #667eea); background: #f5f3ff; }
+.picker-item.added { border-color: #6ee7b7; background: #f0fdf4; }
+.picker-check {
+  font-size: .95rem; font-weight: 700; min-width: 1.4rem; text-align: center;
+  color: var(--muted);
+}
+.picker-item.added .picker-check { color: #059669; }
+
 .folder-tabs {
   display: flex; flex-wrap: wrap; gap: .45rem;
   margin-bottom: 1.25rem;
