@@ -333,8 +333,9 @@ async function initAdmin() {
     await populateAllSelects();
     await refreshDashboard();
     await renderManageTable();
-    // טעינת בדאג' בקשות גישה ברקע
+    // טעינת בדאג'ים ברקע
     _loadRequestsBadge();
+    _loadReportsBadge();
     await renderCoursesList();
     setupUploadZone();
     setupBulkZone();
@@ -3476,7 +3477,7 @@ function closeReport(reportId) {
         <div style="display:flex;justify-content:flex-end;gap:.75rem">
           <button class="btn btn-secondary" onclick="document.getElementById('close-report-modal').remove()">ביטול</button>
           <button class="btn btn-primary" id="close-report-confirm-btn"
-            onclick="_doCloseReport('${reportId}')">✓ אשר סגירה</button>
+            onclick="_doCloseReport('${esc(reportId)}')">✓ אשר סגירה</button>
         </div>
       </div>
     </div>`;

@@ -807,6 +807,7 @@ async function _persistSavedCourses(savedCourses) {
 
 async function removeSavedCourse(courseId, event) {
   event.stopPropagation();
+  if (!confirm('האם אתה בטוח שברצונך להסיר קורס זה?')) return;
   const saved = [...(STATE.userData?.savedCourses || [])];
   const idx = saved.indexOf(courseId);
   if (idx !== -1) saved.splice(idx, 1);
