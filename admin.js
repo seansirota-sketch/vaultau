@@ -37,6 +37,7 @@ const CLAUDE_MODELS  = [
 ];
 const CLAUDE_MAX_TOK = 8192;
 let _anthropicKey    = null;
+let _geminiKey       = null;
 
 async function loadAnthropicKey() {
   try {
@@ -47,7 +48,11 @@ async function loadAnthropicKey() {
     } else {
       console.warn('⚠️ Anthropic key missing — set settings/api_keys.anthropic in Firestore');
     }
-  } catch (e) { console.warn('Could not load Anthropic key:', e.message); }
+    if (doc.exists && doc.data().gemini) {
+      _geminiKey = doc.data().gemini;
+      console.log('✅ Gemini API key loaded');
+    }
+  } catch (e) { console.warn('Could not load API keys:', e.message); }
 }
 
 /**
