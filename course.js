@@ -1210,10 +1210,6 @@ function applyFilters() {
     return;
   }
 
-  // Store exams map globally so onclick handlers can look up titles safely
-  window._EXAMS_MAP = {};
-  filtered.forEach(e => { window._EXAMS_MAP[e.id] = e; });
-
   el.innerHTML = filtered.map(e => {
     const isDone       = STATE.doneExams.includes(e.id);
     const isInProgress = STATE.inProgressExams.includes(e.id);
@@ -1240,7 +1236,7 @@ function applyFilters() {
           <path d="M12 3v13M5 16l7 7 7-7"/><line x1="3" y1="22" x2="21" y2="22"/>
         </svg>
       </a>` : ''}
-      <button class="qv-btn" onclick="event.stopPropagation(); openExamBugModal('${e.id}','${STATE.courseId}')" title="בעיה במבחן" style="margin-left:.25rem">
+      <button class="qv-btn" onclick="event.stopPropagation(); openExamBugModal('${e.id}','${STATE.courseId}','${(e.title || e.id).replace(/'/g,"&#39;")}')" title="בעיה במבחן" style="margin-left:.25rem">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#9ca3af" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
       </button>
       <button class="inprogress-toggle-btn ${isInProgress ? 'inprogress-active' : ''}"
@@ -1513,7 +1509,7 @@ async function renderExam() {
         <div class="ev-banner" style="position:relative">
           <h1 class="ev-banner-title">${esc(examTitle)}</h1>
           ${metaLine ? `<p class="ev-banner-meta">${esc(metaLine)}</p>` : ''}
-          <button onclick="openExamBugModal('${STATE.examId}','${STATE.courseId}')"
+          <button onclick="openExamBugModal('${STATE.examId}','${STATE.courseId}','${(examTitle||'').replace(/'/g,"&#39;")}')"
             title="בעיה במבחן"
             style="position:absolute;bottom:0;left:0;background:none;border:1.5px solid #cbd5e1;border-radius:8px;
                    padding:.35rem .7rem;font-size:.78rem;color:#64748b;cursor:pointer;
@@ -1925,7 +1921,6 @@ async function submitContactForm() {
 ══════════════════════════════════════════════════════════ */
 
 function openExamBugModal(examId, courseId, examTitle) {
-  examTitle = examTitle || (window._EXAMS_MAP && window._EXAMS_MAP[examId]?.title) || examId;
   document.getElementById('exam-bug-modal')?.remove();
   const modal = document.createElement('div');
   modal.id = 'exam-bug-modal';
