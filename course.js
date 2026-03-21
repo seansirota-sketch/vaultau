@@ -945,54 +945,30 @@ async function renderHome() {
   page.innerHTML = `<div class="container"><div class="spinner" style="margin-top:3rem"></div></div>`;
 
   try {
-    // Check if user is admin
     const isAdmin = STATE.userData?.role === 'admin';
-    
-    // Fetch courses from Firestore with server-side filtering
-    let snap;
-    if (isAdmin) {
-      // Admin sees published + admin-only courses (NOT drafts)
-      snap = await db.collection('courses').where('status', 'in', ['published', 'admin']).get();
-    } else {
-      // Regular user sees only published courses
-      snap = await db.collection('courses').where('status', '==', 'published').get();
-    }
-    
-    // Sort by name client-side (avoids need for composite index)
-    const courses = snap.docs
+
+    const courseSnap = await (isAdmin
+      ? db.collection('courses').where('status', 'in', ['published', 'admin']).get()
+      : db.collection('courses').where('status', '==', 'published').get());
+
+    STATE.courses = courseSnap.docs
       .map(d => ({ ...d.data(), id: d.id }))
       .sort((a, b) => (a.name || '').localeCompare(b.name || ''));
-    
-    console.log('renderHome - courses count:', courses.length);
-    
-    STATE.courses = courses;
-
-    if (!courses.length) {
-      page.innerHTML = `<div class="container">
-        <div class="empty" style="margin-top:4rem">
-          <span class="ei">📭</span>
-          <h3>אין קורסים עדיין</h3>
-          <p>המנהל טרם הוסיף קורסים למערכת</p>
-        </div></div>`;
-      return;
-    }
 
     page.innerHTML = `<div class="container">
       <div class="page-header">
         <div>
           <h1 class="page-title">הקורסים שלי</h1>
-          <p class="page-sub">בחר קורס לצפייה במבחנים</p>
+          <p class="page-sub">הקורסים שבחרת להוסיף לאזור האישי שלך</p>
         </div>
+        <button class="btn btn-primary" onclick="openCoursePicker()" style="gap:.4rem;display:flex;align-items:center">
+          <span style="font-size:1.1rem;line-height:1">+</span> הוסף קורס
+        </button>
       </div>
-      <div class="courses-grid">
-        ${courses.map(c => `
-          <div class="course-card" onclick="goCourse('${c.id}')">
-            <span class="ci">${esc(c.icon || '📚')}</span>
-            <div class="cn">${esc(c.name)}</div>
-            <div class="cc">${esc(c.code)}</div>
-            <div class="cm">לחץ לצפייה במבחנים</div>
-          </div>`).join('')}
-      </div></div>`;
+      <div class="courses-grid" id="courses-grid"></div>
+    </div>`;
+
+    _renderCourseCards();
   } catch (e) {
     page.innerHTML = `<div class="container">
       <div class="empty" style="margin-top:4rem">
@@ -1002,6 +978,265 @@ async function renderHome() {
         <button class="btn btn-primary" style="margin-top:1rem" onclick="renderHome()">נסה שוב</button>
       </div></div>`;
   }
+}
+
+function _isSaved(courseId) {
+  return (STATE.userData?.savedCourses || []).includes(courseId);
+}
+
+async function _persistSavedCourses(savedCourses) {
+  STATE.userData = { ...STATE.userData, savedCourses };
+  const uid = STATE.fireUser?.uid;
+  if (!uid) return;
+  try {
+    await db.collection('users').doc(uid).set({ savedCourses }, { merge: true });
+  } catch (e) {
+    console.warn('_persistSavedCourses:', e.message);
+  }
+}
+
+async function removeSavedCourse(courseId, event) {
+  event.stopPropagation();
+  if (!confirm('האם אתה בטוח שברצונך להסיר קורס זה?')) return;
+  const saved = [...(STATE.userData?.savedCourses || [])];
+  const idx = saved.indexOf(courseId);
+  if (idx !== -1) saved.splice(idx, 1);
+  await _persistSavedCourses(saved);
+  _renderCourseCards();
+}
+
+function _renderCourseCards() {
+  const grid = document.getElementById('courses-grid');
+  if (!grid) return;
+  const saved = STATE.userData?.savedCourses || [];
+  const courses = STATE.courses || [];
+  const visible = courses.filter(c => saved.includes(c.id));
+
+  const contactCard = `
+    <div class="course-card" onclick="openContactModal()">
+      <span class="ci">✉️</span>
+      <div class="cn">צור איתנו קשר</div>
+      <div class="cc">שתף חוויה · בקש קורס</div>
+      <div class="cm">לחץ לפנייה</div>
+    </div>`;
+
+  if (!visible.length) {
+    grid.innerHTML = `
+      <div class="empty" style="grid-column:1/-1;padding:2.5rem;text-align:center">
+        <span class="ei">📚</span>
+        <h3>אין קורסים באזור האישי שלך</h3>
+        <p>לחץ על <strong>+ הוסף קורס</strong> כדי לבחור קורסים מהמאגר</p>
+        <button class="btn btn-primary" style="margin-top:1rem" onclick="openCoursePicker()">+ הוסף קורס</button>
+      </div>
+      ${contactCard}`;
+    return;
+  }
+
+  grid.innerHTML = visible.map(c => `
+    <div class="course-card" onclick="goCourse('${c.id}')">
+      <button class="save-course-btn saved"
+        onclick="removeSavedCourse('${c.id}', event)"
+        title="הסר מהאזור האישי">✕</button>
+      <span class="ci">${esc(c.icon || '📚')}</span>
+      <div class="cn">${esc(c.name)}</div>
+      <div class="cc">${esc(c.code)}</div>
+      <div class="cm">לחץ לצפייה במבחנים</div>
+    </div>`).join('') + contactCard;
+}
+
+/* ── COURSE PICKER MODAL ──────────────────────────────────── */
+
+function openCoursePicker() {
+  document.getElementById('course-picker-modal')?.remove();
+  const courses = STATE.courses || [];
+  const overlay = document.createElement('div');
+  overlay.id = 'course-picker-modal';
+  overlay.className = 'modal-overlay';
+  overlay.innerHTML = `
+    <div class="modal-card" style="width:min(94vw,520px);max-height:80vh;display:flex;flex-direction:column">
+      <div class="modal-header">
+        <span style="font-weight:700;font-size:1rem">בחר קורסים להוסיף</span>
+        <button class="modal-close" onclick="closeCoursePicker()">✕</button>
+      </div>
+      <div style="padding:.75rem 1.25rem;border-bottom:1px solid var(--border)">
+        <input id="picker-search" type="text" placeholder="חיפוש קורס..."
+          style="width:100%;border:1.5px solid var(--border);border-radius:8px;padding:.5rem .75rem;
+                 font-family:inherit;font-size:.9rem;box-sizing:border-box"
+          oninput="_filterPicker(this.value)">
+      </div>
+      <div id="picker-list" style="overflow-y:auto;flex:1;padding:.75rem 1.25rem;display:flex;flex-direction:column;gap:.5rem">
+        ${_buildPickerItems(courses)}
+      </div>
+      <div style="padding:.85rem 1.25rem;border-top:1px solid var(--border);text-align:left">
+        <button class="btn btn-primary" onclick="closeCoursePicker()">סיום</button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+  overlay.addEventListener('click', e => { if (e.target === overlay) closeCoursePicker(); });
+  document.getElementById('picker-search')?.focus();
+}
+
+function _buildPickerItems(courses) {
+  if (!courses.length) return `<div style="text-align:center;color:var(--muted);padding:1.5rem">אין קורסים זמינים</div>`;
+  return courses.map(c => {
+    const added = _isSaved(c.id);
+    return `
+      <div class="picker-item${added ? ' added' : ''}" id="picker-item-${c.id}"
+        onclick="togglePickerCourse('${c.id}')">
+        <span style="font-size:1.4rem">${esc(c.icon || '📚')}</span>
+        <div style="flex:1;min-width:0">
+          <div style="font-weight:600;font-size:.9rem">${esc(c.name)}</div>
+          <div style="font-size:.78rem;color:var(--muted)">${esc(c.code)}</div>
+        </div>
+        <span class="picker-check">${added ? '✓' : '+'}</span>
+      </div>`;
+  }).join('');
+}
+
+function _filterPicker(query) {
+  const q = query.trim().toLowerCase();
+  const courses = STATE.courses || [];
+  const filtered = q ? courses.filter(c =>
+    (c.name || '').toLowerCase().includes(q) || (c.code || '').toLowerCase().includes(q)
+  ) : courses;
+  const list = document.getElementById('picker-list');
+  if (list) list.innerHTML = _buildPickerItems(filtered);
+}
+
+async function togglePickerCourse(courseId) {
+  const saved = [...(STATE.userData?.savedCourses || [])];
+  const idx = saved.indexOf(courseId);
+  if (idx !== -1) {
+    saved.splice(idx, 1);
+  } else {
+    saved.push(courseId);
+  }
+  await _persistSavedCourses(saved);
+
+  // Update picker item UI without re-rendering the whole list
+  const item = document.getElementById(`picker-item-${courseId}`);
+  if (item) {
+    const added = _isSaved(courseId);
+    item.classList.toggle('added', added);
+    const check = item.querySelector('.picker-check');
+    if (check) check.textContent = added ? '✓' : '+';
+  }
+  // Refresh the main grid in background
+  _renderCourseCards();
+}
+
+function closeCoursePicker() {
+  document.getElementById('course-picker-modal')?.remove();
+}
+
+/* ── CONTACT MODAL ────────────────────────────────────────── */
+
+const _CONTACT_TYPES = [
+  { value: 'experience',    icon: '💬', label: 'שתף חוויה',         placeholder: 'ספר לנו על החוויה שלך...' },
+  { value: 'request-course',icon: '📚', label: 'בקש קורס',          placeholder: 'איזה קורס תרצה שנוסיף?' },
+  { value: 'request-exam',  icon: '📝', label: 'בקש מבחן',          placeholder: 'איזה מבחן תרצה שנוסיף?' },
+  { value: 'other',         icon: '✉️', label: 'אחר',               placeholder: 'כתוב כאן...' },
+];
+
+function openContactModal() {
+  document.getElementById('contact-modal')?.remove();
+  const modal = document.createElement('div');
+  modal.id = 'contact-modal';
+  modal.className = 'modal-overlay';
+  modal.dataset.contactType = 'experience';
+  modal.innerHTML = `
+    <div class="modal-card" style="max-width:480px">
+      <div class="modal-header">
+        <h3 style="margin:0;font-size:1.1rem">✉️ צור איתנו קשר</h3>
+        <button class="modal-close" onclick="closeContactModal()">✕</button>
+      </div>
+      <div style="padding:1.25rem;display:flex;flex-direction:column;gap:1rem">
+        <div>
+          <label style="font-size:.82rem;font-weight:600;color:var(--muted);display:block;margin-bottom:.45rem">
+            נושא הפנייה
+          </label>
+          <div class="contact-scroll-list" id="contact-scroll-list">
+            ${_CONTACT_TYPES.map(t => `
+              <div class="contact-scroll-item${t.value === 'experience' ? ' selected' : ''}"
+                   onclick="setContactType('${t.value}')" data-value="${t.value}">
+                <span class="csi-icon">${t.icon}</span>
+                <span>${t.label}</span>
+                <span class="csi-radio"></span>
+              </div>`).join('')}
+          </div>
+        </div>
+        <div class="form-group" style="margin:0">
+          <label id="contact-label">ספר לנו על החוויה שלך</label>
+          <textarea id="contact-message" rows="4" dir="rtl"
+            placeholder="ספר לנו על החוויה שלך..."
+            style="width:100%;border:1.5px solid var(--border);border-radius:8px;
+                   padding:.75rem;font-family:inherit;font-size:.9rem;resize:vertical;
+                   box-sizing:border-box;color:var(--text)"></textarea>
+        </div>
+        <div id="contact-err" style="color:var(--danger);font-size:.83rem;display:none"></div>
+        <div style="display:flex;justify-content:flex-end;gap:.75rem">
+          <button class="btn btn-secondary" onclick="closeContactModal()">ביטול</button>
+          <button class="btn btn-primary" id="contact-submit-btn" onclick="submitContactForm()">שלח</button>
+        </div>
+      </div>
+    </div>`;
+  document.body.appendChild(modal);
+  document.body.style.overflow = 'hidden';
+  modal.addEventListener('click', e => { if (e.target === modal) closeContactModal(); });
+}
+
+function setContactType(value) {
+  const modal = document.getElementById('contact-modal');
+  if (!modal) return;
+  modal.dataset.contactType = value;
+  modal.querySelectorAll('.contact-scroll-item').forEach(el => {
+    el.classList.toggle('selected', el.dataset.value === value);
+  });
+  const t = _CONTACT_TYPES.find(t => t.value === value);
+  const label = document.getElementById('contact-label');
+  const ta    = document.getElementById('contact-message');
+  if (label && t) label.textContent = t.label;
+  if (ta    && t) ta.placeholder    = t.placeholder;
+}
+
+async function submitContactForm() {
+  const msgEl = document.getElementById('contact-message');
+  const errEl = document.getElementById('contact-err');
+  const btn   = document.getElementById('contact-submit-btn');
+  const modal = document.getElementById('contact-modal');
+  const type  = modal?.dataset.contactType || 'experience';
+  const msg   = msgEl?.value.trim();
+
+  if (!msg) {
+    if (errEl) { errEl.textContent = 'אנא כתוב הודעה לפני השליחה'; errEl.style.display = 'block'; }
+    return;
+  }
+  if (errEl) errEl.style.display = 'none';
+  if (btn) { btn.disabled = true; btn.textContent = 'שולח...'; }
+
+  try {
+    const typeObj = _CONTACT_TYPES.find(t => t.value === type);
+    await db.collection('reports').add({
+      category:  'contact',
+      type:      type,
+      typeLabel: typeObj?.label || type,
+      message:   msg,
+      userId:    STATE.fireUser?.uid   || '',
+      userEmail: STATE.fireUser?.email || '',
+      createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+      status:    'open',
+    });
+    closeContactModal();
+    toast('תודה על הפנייה! 🙏', 'info');
+  } catch(e) {
+    if (btn) { btn.disabled = false; btn.textContent = 'שלח'; }
+    if (errEl) { errEl.textContent = 'שגיאה בשליחה — נסה שוב'; errEl.style.display = 'block'; }
+  }
+}
+
+function closeContactModal() {
+  document.getElementById('contact-modal')?.remove();
+  document.body.style.overflow = '';
 }
 
 /* ══════════════════════════════════════════════════════════
@@ -1469,6 +1704,11 @@ async function renderExam() {
             ${(Array.isArray(exam.lecturers) ? exam.lecturers : (exam.lecturer ? [exam.lecturer] : []))
               .map(l => `<span>${esc(l)}</span>`).join('<span class="lec-sep"> · </span>')}
           </div>
+          <button class="report-exam-btn" style="border-radius:8px;width:auto;padding:.35rem .75rem;font-size:.8rem;gap:.3rem;display:inline-flex;align-items:center"
+            onclick="openReportBugModal('${exam.id}','${esc(examTitle)}','${course.id}')"
+            title="דווח על תקלה">
+            ⚠ דווח על תקלה
+          </button>
         </div>
 
         <div class="ev-banner">
@@ -1850,5 +2090,85 @@ async function markSurveyDone() {
 
 function closeSurveyModal() {
   document.getElementById('survey-modal')?.remove();
+  document.body.style.overflow = '';
+}
+
+/* ══════════════════════════════════════════════════════════
+   REPORT BUG MODAL (exam page)
+══════════════════════════════════════════════════════════ */
+
+function openReportBugModal(examId, examTitle, courseId) {
+  document.getElementById('report-bug-modal')?.remove();
+  const modal = document.createElement('div');
+  modal.id = 'report-bug-modal';
+  modal.className = 'modal-overlay';
+  modal.dataset.examId    = examId;
+  modal.dataset.examTitle = examTitle;
+  modal.dataset.courseId  = courseId;
+  modal.innerHTML = `
+    <div class="modal-card" style="max-width:460px">
+      <div class="modal-header">
+        <h3 style="margin:0;font-size:1.1rem">⚠ דווח על תקלה</h3>
+        <button class="modal-close" onclick="closeReportBugModal()">✕</button>
+      </div>
+      <div style="padding:1.25rem;display:flex;flex-direction:column;gap:1rem">
+        <div style="background:var(--bg2,#f9fafb);border-radius:8px;padding:.65rem .9rem;
+                    font-size:.85rem;color:var(--muted);border:1px solid var(--border)">
+          מבחן: <strong>${esc(examTitle)}</strong>
+        </div>
+        <div class="form-group" style="margin:0">
+          <label>תאר את התקלה</label>
+          <textarea id="report-bug-message" rows="4" dir="rtl"
+            placeholder="למשל: שאלה 3 חסרה, PDF לא נפתח, תשובה שגויה..."
+            style="width:100%;border:1.5px solid var(--border);border-radius:8px;
+                   padding:.75rem;font-family:inherit;font-size:.9rem;resize:vertical;
+                   box-sizing:border-box;color:var(--text)"></textarea>
+        </div>
+        <div id="report-bug-err" style="color:var(--danger);font-size:.83rem;display:none"></div>
+        <div style="display:flex;justify-content:flex-end;gap:.75rem">
+          <button class="btn btn-secondary" onclick="closeReportBugModal()">ביטול</button>
+          <button class="btn btn-primary" id="report-bug-submit-btn" onclick="submitBugReport()">שלח דיווח</button>
+        </div>
+      </div>
+    </div>`;
+  document.body.appendChild(modal);
+  document.body.style.overflow = 'hidden';
+  modal.addEventListener('click', e => { if (e.target === modal) closeReportBugModal(); });
+}
+
+async function submitBugReport() {
+  const modal  = document.getElementById('report-bug-modal');
+  const msgEl  = document.getElementById('report-bug-message');
+  const errEl  = document.getElementById('report-bug-err');
+  const btn    = document.getElementById('report-bug-submit-btn');
+  const msg    = msgEl?.value.trim();
+  if (!msg) {
+    if (errEl) { errEl.textContent = 'אנא תאר את התקלה'; errEl.style.display = 'block'; }
+    return;
+  }
+  if (errEl) errEl.style.display = 'none';
+  if (btn) { btn.disabled = true; btn.textContent = 'שולח...'; }
+  try {
+    await db.collection('reports').add({
+      category:  'bug',
+      examId:    modal.dataset.examId    || '',
+      examTitle: modal.dataset.examTitle || '',
+      courseId:  modal.dataset.courseId  || '',
+      message:   msg,
+      userId:    STATE.fireUser?.uid   || '',
+      userEmail: STATE.fireUser?.email || '',
+      createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+      status:    'open',
+    });
+    closeReportBugModal();
+    toast('הדיווח נשלח — תודה! 🙏', 'info');
+  } catch(e) {
+    if (btn) { btn.disabled = false; btn.textContent = 'שלח דיווח'; }
+    if (errEl) { errEl.textContent = 'שגיאה בשליחה — נסה שוב'; errEl.style.display = 'block'; }
+  }
+}
+
+function closeReportBugModal() {
+  document.getElementById('report-bug-modal')?.remove();
   document.body.style.overflow = '';
 }

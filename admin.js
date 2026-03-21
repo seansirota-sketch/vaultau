@@ -333,8 +333,9 @@ async function initAdmin() {
     await populateAllSelects();
     await refreshDashboard();
     await renderManageTable();
-    // טעינת בדאג' בקשות גישה ברקע
+    // טעינת בדאג'ים ברקע
     _loadRequestsBadge();
+    _loadReportsBadge();
     await renderCoursesList();
     setupUploadZone();
     setupBulkZone();
@@ -370,6 +371,7 @@ function _applySectionUI(name) {
   if (name === 'survey')      renderSurveyManager();
   if (name === 'permissions') renderPermissionsSection();
   if (name === 'requests')    renderRequestsSection();
+  if (name === 'reports')     renderReportsSection();
 }
 
 // Public — called from nav clicks; pushes history entry
@@ -3318,3 +3320,204 @@ async function _loadRequestsBadge() {
     console.warn('_loadRequestsBadge:', e.message);
   }
 }
+
+async function _loadReportsBadge() {
+  try {
+    const snap = await db.collection('reports').where('status', '==', 'open').get();
+    const badge = document.getElementById('reports-badge');
+    if (!badge) return;
+    if (snap.size > 0) { badge.textContent = snap.size; badge.style.display = 'inline-block'; }
+    else badge.style.display = 'none';
+  } catch(e) { console.warn('_loadReportsBadge:', e.message); }
+}
+
+/* ══════════════════════════════════════════════════════════════
+   REPORTS SECTION
+   ═══════════════════════════════════════════════════════════ */
+
+let _reportsCurrentTab = 'open'; // 'open' | 'archived'
+
+function switchReportsTab(tab) {
+  _reportsCurrentTab = tab;
+  document.getElementById('reports-tab-open')?.classList.toggle('active', tab === 'open');
+  document.getElementById('reports-tab-archived')?.classList.toggle('active', tab === 'archived');
+  _renderReportsContent();
+}
+
+async function renderReportsSection() {
+  const el = document.getElementById('reports-content');
+  if (el) el.innerHTML = '<div class="spinner" style="margin:2rem auto"></div>';
+
+  // update badge with open count
+  try {
+    const snap = await db.collection('reports').where('status', '==', 'open').get();
+    const badge = document.getElementById('reports-badge');
+    if (badge) {
+      if (snap.size > 0) { badge.textContent = snap.size; badge.style.display = 'inline-block'; }
+      else badge.style.display = 'none';
+    }
+  } catch(e) { /* non-critical */ }
+
+  _renderReportsContent();
+}
+
+async function _renderReportsContent() {
+  const el = document.getElementById('reports-content');
+  if (!el) return;
+  el.innerHTML = '<div class="spinner" style="margin:2rem auto"></div>';
+
+  const isArchive = _reportsCurrentTab === 'archived';
+  const status    = isArchive ? 'closed' : 'open';
+
+  try {
+    const snap = await db.collection('reports').where('status', '==', status).get();
+
+    const items = snap.docs
+      .map(d => ({ id: d.id, ...d.data() }))
+      .sort((a, b) => (b.createdAt?.toMillis?.() || 0) - (a.createdAt?.toMillis?.() || 0));
+
+    if (!items.length) {
+      el.innerHTML = `
+        <div class="empty" style="padding:2.5rem;text-align:center">
+          <span style="font-size:2rem;display:block;margin-bottom:.5rem">${isArchive ? '🗂️' : '📭'}</span>
+          <h3 style="font-weight:600;margin-bottom:.3rem">${isArchive ? 'הארכיון ריק' : 'אין דיווחים פתוחים'}</h3>
+          <p style="color:var(--muted);font-size:.88rem">${isArchive ? 'עוד לא נסגרו דיווחים' : 'כל הדיווחים טופלו'}</p>
+        </div>`;
+      return;
+    }
+
+    const rows = items.map(r => {
+      const date = r.createdAt?.toDate?.();
+      const dateStr = date
+        ? date.toLocaleDateString('he-IL', { day:'2-digit', month:'2-digit', year:'numeric', hour:'2-digit', minute:'2-digit' })
+        : '—';
+
+      const closedDate = r.closedAt?.toDate?.();
+      const closedStr  = closedDate
+        ? closedDate.toLocaleDateString('he-IL', { day:'2-digit', month:'2-digit', year:'numeric', hour:'2-digit', minute:'2-digit' })
+        : '—';
+
+      const categoryBadge = r.category === 'bug'
+        ? `<span class="badge" style="background:#fef3c7;color:#92400e;border:1px solid #fcd34d">⚠ תקלה</span>`
+        : `<span class="badge" style="background:#ede9fe;color:#5b21b6;border:1px solid #c4b5fd">✉ פנייה</span>`;
+
+      const typeBadge = r.category === 'contact' && r.typeLabel
+        ? `<span class="badge b-blue" style="font-size:.72rem">${esc(r.typeLabel)}</span>`
+        : '';
+
+      const examInfo = r.examId
+        ? `<div style="font-size:.78rem;color:var(--muted);margin-top:.25rem">מבחן: <strong>${esc(r.examTitle || r.examId)}</strong></div>`
+        : '';
+
+      const closedInfo = isArchive
+        ? `<div style="font-size:.75rem;color:var(--muted);margin-top:.3rem;display:flex;flex-direction:column;gap:.15rem">
+             <span>נסגר על ידי: <strong>${esc(r.closedByEmail || '—')}</strong> · ${closedStr}</span>
+             ${r.closedNote ? `<span style="color:var(--text);font-size:.8rem;margin-top:.15rem">💬 ${esc(r.closedNote)}</span>` : ''}
+           </div>`
+        : '';
+
+      const actionBtn = isArchive
+        ? `<button class="btn btn-sm" style="background:#fee2e2;color:#b91c1c;border-color:#fca5a5"
+             onclick="deleteReport('${esc(r.id)}')">🗑 מחק לצמיתות</button>`
+        : `<button class="btn btn-secondary btn-sm" onclick="closeReport('${esc(r.id)}')">✓ סגור תקלה</button>`;
+
+      return `
+        <div class="ac" style="margin-bottom:.75rem">
+          <div style="padding:1rem 1.25rem;display:flex;flex-direction:column;gap:.5rem">
+            <div style="display:flex;align-items:center;gap:.5rem;flex-wrap:wrap">
+              ${categoryBadge}${typeBadge}
+              <span style="font-size:.78rem;color:var(--muted);margin-right:auto">${dateStr}</span>
+            </div>
+            <div style="font-size:.83rem;color:var(--muted)">
+              <strong>${esc(r.userEmail || '—')}</strong>
+            </div>
+            ${examInfo}
+            <div style="background:var(--bg,#f9fafb);border-radius:8px;padding:.65rem .9rem;
+                        font-size:.9rem;line-height:1.6;border:1px solid var(--border);
+                        white-space:pre-wrap;word-break:break-word">${esc(r.message)}</div>
+            ${closedInfo}
+            <div style="display:flex;justify-content:flex-end">${actionBtn}</div>
+          </div>
+        </div>`;
+    }).join('');
+
+    el.innerHTML = rows;
+
+  } catch(e) {
+    el.innerHTML = `<div style="color:var(--danger);padding:1.5rem">שגיאה בטעינה: ${esc(e.message)}</div>`;
+  }
+}
+
+function closeReport(reportId) {
+  if (!adminUser) return;
+
+  // Remove any existing close modal
+  document.getElementById('close-report-modal')?.remove();
+
+  const overlay = document.createElement('div');
+  overlay.id = 'close-report-modal';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;z-index:20000;padding:1rem;backdrop-filter:blur(2px)';
+  overlay.innerHTML = `
+    <div style="background:#fff;border-radius:14px;width:min(94vw,440px);box-shadow:0 20px 60px rgba(0,0,0,.28);direction:rtl;overflow:hidden">
+      <div style="display:flex;align-items:center;justify-content:space-between;padding:1rem 1.25rem;border-bottom:1px solid var(--border)">
+        <h3 style="margin:0;font-size:1rem;font-weight:700">✓ סגור דיווח</h3>
+        <button onclick="document.getElementById('close-report-modal').remove()"
+          style="background:none;border:none;cursor:pointer;font-size:1rem;color:var(--muted);padding:.2rem .4rem;border-radius:6px">✕</button>
+      </div>
+      <div style="padding:1.25rem;display:flex;flex-direction:column;gap:.9rem">
+        <div class="form-group" style="margin:0">
+          <label style="font-weight:600;font-size:.85rem">הערה לסגירה <span style="font-weight:400;color:var(--muted)">(אופציונלי)</span></label>
+          <textarea id="close-report-note" rows="3" dir="rtl"
+            placeholder="למשל: טופל, לא ניתן לשחזר..."
+            style="width:100%;border:1.5px solid var(--border);border-radius:8px;padding:.75rem;
+                   font-family:inherit;font-size:.88rem;resize:vertical;box-sizing:border-box;
+                   color:var(--text);margin-top:.35rem"></textarea>
+        </div>
+        <div id="close-report-err" style="color:var(--danger);font-size:.82rem;display:none"></div>
+        <div style="display:flex;justify-content:flex-end;gap:.75rem">
+          <button class="btn btn-secondary" onclick="document.getElementById('close-report-modal').remove()">ביטול</button>
+          <button class="btn btn-primary" id="close-report-confirm-btn"
+            onclick="_doCloseReport('${esc(reportId)}')">✓ אשר סגירה</button>
+        </div>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+  overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
+  document.getElementById('close-report-note')?.focus();
+}
+
+async function _doCloseReport(reportId) {
+  const btn  = document.getElementById('close-report-confirm-btn');
+  const note = document.getElementById('close-report-note')?.value.trim() || '';
+  const errEl = document.getElementById('close-report-err');
+  if (btn) { btn.disabled = true; btn.textContent = 'שומר...'; }
+
+  try {
+    const update = {
+      status:        'closed',
+      closedAt:      firebase.firestore.FieldValue.serverTimestamp(),
+      closedBy:      adminUser.uid   || '',
+      closedByEmail: adminUser.email || '',
+    };
+    if (note) update.closedNote = note;
+    await db.collection('reports').doc(reportId).update(update);
+    document.getElementById('close-report-modal')?.remove();
+    toast('הדיווח נסגר והועבר לארכיון', 'info');
+    renderReportsSection();
+  } catch(e) {
+    if (btn) { btn.disabled = false; btn.textContent = '✓ אשר סגירה'; }
+    if (errEl) { errEl.textContent = 'שגיאה: ' + e.message; errEl.style.display = 'block'; }
+  }
+}
+
+async function deleteReport(reportId) {
+  if (!confirm('למחוק את הדיווח לצמיתות? פעולה זו אינה הפיכה.')) return;
+  try {
+    await db.collection('reports').doc(reportId).delete();
+    toast('הדיווח נמחק', 'info');
+    renderReportsSection();
+  } catch(e) {
+    toast('שגיאה במחיקה: ' + e.message, 'error');
+  }
+}
+
