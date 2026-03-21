@@ -74,31 +74,14 @@ let STATE = {
 /* ── BOOTSTRAP ─────────────────────────────────────────────── */
 document.addEventListener('DOMContentLoaded', () => {
   auth.onAuthStateChanged(async (user) => {
-    // If we just denied a user and called signOut, skip the null-user render
-    if (!user && STATE._blockNextAuthRender) {
-      STATE._blockNextAuthRender = false;
-      return;
-    }
     if (user) {
-      // ── Anonymous users are a temporary session for Firestore writes only.
-      // Never run the auth/UI flow for them.
-      if (user.isAnonymous) return;
-
-      const email = (user.email || '').toLowerCase().trim();
-
-      // ── 1. Authorization check (Firestore-backed) ───────────
-      const authorized = await isUserAuthorized(email);
-
-      if (!authorized) {
-        // Delete the real account if it was just created (prevents ghost accounts).
-        // Then sign in anonymously so submitAccessRequest can write to Firestore
-        // (rule: allow create: if isLoggedIn()).
-        STATE._blockNextAuthRender = true;
-        try { await user.delete(); } catch (_) {}
-        try { await auth.signInAnonymously(); } catch (_) {}
-        renderAccessRequestForm(email, user.displayName || '');
+      // Anonymous users shouldn't reach here anymore, but clean up just in case
+      if (user.isAnonymous) {
+        auth.signOut().catch(() => {});
         return;
       }
+
+      const email = (user.email || '').toLowerCase().trim();
 
       STATE.fireUser = user;
       // Save user data on first sign-in (display name may have just been set).
@@ -119,17 +102,17 @@ document.addEventListener('DOMContentLoaded', () => {
         gtag('config', 'G-SF9W1XBZZK', { user_id: user.uid });
       }
 
-      // ── 2. Terms check ─────────────────────────────────────
+      // ── 1. Terms check ─────────────────────────────────────
       if (!STATE.userData?.acceptedTerms) {
         renderTermsModal();
         return; // block until accepted
       }
 
-      // ── 3. Survey check ────────────────────────────────────
+      // ── 2. Survey check ────────────────────────────────────
       // Run in background — don't block initial render
       checkAndShowSurvey();
 
-      // ── 4. Normal load ─────────────────────────────────────
+      // ── 3. Normal load ─────────────────────────────────────
       renderNavbar();
       const hs = history.state;
       if (hs && hs.page) {
@@ -226,28 +209,60 @@ function renderAuth() {
             onclick="doLogin()">כניסה ←</button>
         </div>
 
-        <!-- Signup form -->
+        <!-- Signup form — Step 1: Details -->
         <div id="f-signup" style="display:none">
-          <div class="form-group">
-            <label>שם מלא</label>
-            <input id="s-name" type="text" placeholder="ישראל ישראלי">
-          </div>
-          <div class="form-group">
-            <label>אימייל</label>
-            <input id="s-email" type="email" placeholder="your@email.com">
-          </div>
-          <div class="form-group">
-            <label>סיסמה</label>
-            <div class="pass-wrap">
-              <input id="s-pass" type="password" placeholder="לפחות 6 תווים">
-              <button type="button" class="pass-eye" onclick="togglePassVis('s-pass','s-eye')"
-                title="הצג / הסתר סיסמה" id="s-eye" aria-label="הצג סיסמה">
-                ${_eyeIcon(false)}
-              </button>
+          <div id="signup-step1">
+            <div class="form-group">
+              <label>שם מלא</label>
+              <input id="s-name" type="text" placeholder="ישראל ישראלי">
             </div>
+            <div class="form-group">
+              <label>אימייל אוניברסיטאי</label>
+              <input id="s-email" type="email" placeholder="your@mail.tau.ac.il" dir="ltr" style="text-align:left">
+              <small style="color:var(--muted);font-size:.78rem;margin-top:4px;display:block">
+                ניתן להירשם רק עם מייל @mail.tau.ac.il
+              </small>
+            </div>
+            <div class="form-group">
+              <label>סיסמה</label>
+              <div class="pass-wrap">
+                <input id="s-pass" type="password" placeholder="לפחות 6 תווים">
+                <button type="button" class="pass-eye" onclick="togglePassVis('s-pass','s-eye')"
+                  title="הצג / הסתר סיסמה" id="s-eye" aria-label="הצג סיסמה">
+                  ${_eyeIcon(false)}
+                </button>
+              </div>
+            </div>
+            <button id="signup-btn" class="btn btn-primary" style="width:100%;justify-content:center"
+              onclick="doSignupStep1()">שלח קוד אימות ←</button>
           </div>
-          <button id="signup-btn" class="btn btn-primary" style="width:100%;justify-content:center"
-            onclick="doSignup()">הרשמה ←</button>
+
+          <!-- Step 2: Verification code -->
+          <div id="signup-step2" style="display:none">
+            <div style="text-align:center;margin-bottom:1rem">
+              <div style="font-size:2.2rem;margin-bottom:.5rem">📧</div>
+              <p style="color:var(--muted);font-size:.88rem;line-height:1.6">
+                שלחנו קוד אימות בן 6 ספרות למייל<br>
+                <strong id="verify-email-display" dir="ltr"></strong>
+              </p>
+            </div>
+            <div class="form-group">
+              <label>קוד אימות</label>
+              <input id="s-code" type="text" inputmode="numeric" maxlength="6"
+                placeholder="000000" dir="ltr" style="text-align:center;font-size:1.4rem;letter-spacing:6px;font-weight:600"
+                autocomplete="one-time-code">
+            </div>
+            <button id="verify-btn" class="btn btn-primary" style="width:100%;justify-content:center"
+              onclick="doSignupStep2()">אימות והרשמה ←</button>
+            <div style="text-align:center;margin-top:.75rem">
+              <button class="btn" style="background:transparent;border:none;color:var(--muted);font-size:.82rem;cursor:pointer;text-decoration:underline"
+                id="resend-btn" onclick="doResendCode()">שלח קוד חדש</button>
+              <span id="resend-timer" style="font-size:.8rem;color:var(--muted);display:none"></span>
+            </div>
+            <button class="btn" style="width:100%;justify-content:center;margin-top:.4rem;
+                   color:var(--muted);background:transparent;border-color:transparent;font-size:.82rem"
+              onclick="backToSignupStep1()">← חזרה</button>
+          </div>
         </div>
 
       </div>
@@ -257,188 +272,13 @@ function renderAuth() {
     if (e.key === 'Enter') doLogin();
   });
   document.getElementById('s-pass')?.addEventListener('keydown', e => {
-    if (e.key === 'Enter') doSignup();
+    if (e.key === 'Enter') doSignupStep1();
+  });
+  document.getElementById('s-code')?.addEventListener('keydown', e => {
+    if (e.key === 'Enter') doSignupStep2();
   });
 }
 
-
-/* ══════════════════════════════════════════════════════════
-   ACCESS REQUEST FORM  — shown when isUserAuthorized → false
-══════════════════════════════════════════════════════════ */
-
-function renderAccessRequestForm(email, name = '') {
-  document.getElementById('app').innerHTML = `
-    <div class="auth-wrap" style="padding:1.5rem">
-      <div class="auth-card" style="max-width:460px">
-
-        <!-- Header -->
-        <div class="auth-logo" style="margin-bottom:1.2rem">
-          <span class="icon">🔐</span>
-          <h1 style="font-size:1.2rem">אין לך הרשאת גישה למאגר המבחנים</h1>
-          <p style="font-size:.84rem;color:var(--muted);margin-top:.4rem;line-height:1.6">
-            המאגר פתוח כרגע לסטודנטים של מרצים נבחרים בלבד.<br>
-            אם הינך סטודנט בקורס, מלא את הפרטים הבאים כדי לקבל גישה.
-          </p>
-        </div>
-
-        <!-- Success state (hidden initially) -->
-        <div id="req-success" style="display:none;text-align:center;padding:1rem 0">
-          <div style="font-size:2.5rem;margin-bottom:.75rem">✅</div>
-          <h3 style="color:var(--success);font-size:1.05rem;margin-bottom:.5rem">בקשתך נשלחה!</h3>
-          <p style="font-size:.88rem;color:var(--muted);line-height:1.7">
-            המתן לאישור המנהל.<br>
-            תקבל מייל ברגע שהגישה תאושר.
-          </p>
-          <button class="btn btn-secondary" style="margin-top:1.2rem;width:100%;justify-content:center"
-            onclick="renderAuth()">חזרה לכניסה</button>
-        </div>
-
-        <!-- Form -->
-        <div id="req-form">
-          <div id="req-err" class="form-error"></div>
-
-          <div class="form-group">
-            <label>שם מלא</label>
-            <input id="req-name" type="text" placeholder="ישראל ישראלי"
-              value="${esc(name)}" autocomplete="name">
-          </div>
-
-          <div class="form-group">
-            <label>אימייל אוניברסיטאי</label>
-            <input id="req-email" type="email" value="${esc(email)}"
-              placeholder="your@mail.tau.ac.il" autocomplete="email">
-          </div>
-
-          <div class="form-group">
-            <label>מרצה</label>
-            <select id="req-lecturer">
-              <option value="" disabled selected>בחר מרצה...</option>
-              <option value="סמיון אלסקר">סמיון אלסקר</option>
-              <option value="ענת אמיר">ענת אמיר</option>
-            </select>
-          </div>
-
-          <button id="req-submit-btn" class="btn btn-primary"
-            style="width:100%;justify-content:center;margin-top:.5rem;height:42px"
-            onclick="submitAccessRequest()">
-            <span id="req-btn-text">שלח בקשת גישה ←</span>
-            <span id="req-btn-spin" style="display:none">
-              <span class="spinner"
-                style="width:18px;height:18px;border-width:2.5px;
-                       border-color:rgba(255,255,255,.35);border-top-color:#fff;
-                       display:inline-block;margin:0"></span>
-            </span>
-          </button>
-
-          <button class="btn"
-            style="width:100%;justify-content:center;margin-top:.55rem;
-                   color:var(--muted);background:transparent;border-color:transparent;font-size:.82rem"
-            onclick="auth.signOut().catch(()=>{}).finally(()=>renderAuth())">← חזרה לכניסה</button>
-        </div>
-
-      </div>
-    </div>`;
-
-  document.getElementById('req-name')?.addEventListener('keydown', e => {
-    if (e.key === 'Enter') document.getElementById('req-lecturer')?.focus();
-  });
-}
-
-async function submitAccessRequest() {
-  const name     = (document.getElementById('req-name')?.value     || '').trim();
-  const email    = (document.getElementById('req-email')?.value    || '').trim().toLowerCase();
-  const lecturer = (document.getElementById('req-lecturer')?.value || '').trim();
-
-  const errEl = document.getElementById('req-err');
-  function showErr(msg) {
-    if (!errEl) return;
-    errEl.textContent = msg;
-    errEl.classList.add('show');
-  }
-  if (errEl) errEl.classList.remove('show');
-
-  if (!name)     return showErr('נא להזין שם מלא');
-  if (!email)    return showErr('לא ניתן לזהות את האימייל');
-  if (!lecturer) return showErr('נא לבחור מרצה');
-
-  // ── Loading state ────────────────────────────────────────
-  const btn     = document.getElementById('req-submit-btn');
-  const btnText = document.getElementById('req-btn-text');
-  const btnSpin = document.getElementById('req-btn-spin');
-  if (btn)     btn.disabled          = true;
-  if (btnText) btnText.style.display = 'none';
-  if (btnSpin) btnSpin.style.display = 'inline-flex';
-
-  // Keep a reference to the current user NOW, before any async operations
-  // that might change auth state.
-  const currentUser = auth.currentUser;
-
-  /**
-   * Cleanup helper — always called at the end (success or failure).
-   * If the session is anonymous:
-   *   1. delete() — removes the account from Firebase Auth permanently (no ghost users).
-   *   2. Falls back to signOut() if delete fails (e.g. token expired).
-   * If the session is not anonymous (Google / email):
-   *   — do nothing; the user stays signed in normally.
-   */
-  async function _cleanupAnonymousSession() {
-    if (!currentUser?.isAnonymous) return;
-    try {
-      await currentUser.delete();
-    } catch (deleteErr) {
-      console.warn('Anonymous user delete failed, falling back to signOut:', deleteErr.message);
-      try { await auth.signOut(); } catch (_) {}
-    }
-  }
-
-  try {
-    // ── Duplicate check (best-effort — only admins can list this collection) ──
-    try {
-      const existing = await db.collection('access_requests')
-        .where('email', '==', email)
-        .where('status', '==', 'pending')
-        .limit(1)
-        .get();
-      if (!existing.empty) {
-        // Already submitted — show success and clean up
-        document.getElementById('req-form').style.display    = 'none';
-        document.getElementById('req-success').style.display = 'block';
-        await _cleanupAnonymousSession();
-        return;
-      }
-    } catch (_dupErr) {
-      // Non-admin users can't query this collection — skip and proceed to create
-    }
-
-    // ── Write to Firestore ───────────────────────────────
-    await db.collection('access_requests').add({
-      name,
-      email,
-      lecturer,
-      timestamp: firebase.firestore.FieldValue.serverTimestamp(),
-      status: 'pending',
-    });
-
-    // ── Show success ─────────────────────────────────────
-    document.getElementById('req-form').style.display    = 'none';
-    document.getElementById('req-success').style.display = 'block';
-
-    // Delete the anonymous account (or sign out as fallback).
-    // This prevents ghost accounts piling up in Firebase Auth,
-    // and ensures the user can sign in cleanly with Google after approval.
-    await _cleanupAnonymousSession();
-
-  } catch (err) {
-    console.error('submitAccessRequest error:', err);
-    showErr('אירעה שגיאה בשליחת הבקשה. נסה שוב.');
-    if (btn)     btn.disabled          = false;
-    if (btnText) btnText.style.display = 'inline';
-    if (btnSpin) btnSpin.style.display = 'none';
-    // Safety net: sign out even on failure so we're never stuck with
-    // a broken anonymous session.
-    try { await auth.signOut(); } catch (_) {}
-  }
-}
 
 function switchTab(t) {
   document.querySelectorAll('.auth-tab').forEach((el, i) =>
@@ -501,25 +341,7 @@ async function doLogin() {
 
   authBusy(true);
   try {
-    const cred = await auth.signInWithEmailAndPassword(email, pass);
-
-    // ── Authorization check after successful Firebase sign-in ──
-    // We stay signed in (so we know the email) but redirect unauthorized
-    // users to the access-request form instead of dropping them in limbo.
-    const authorized = await isUserAuthorized(cred.user.email || email);
-    if (!authorized) {
-      authBusy(false);
-      // Keep the Firebase session alive — renderAccessRequestForm reads
-      // the email from the readonly field and submits to Firestore.
-      // onAuthStateChanged will NOT render anything because
-      // STATE._blockNextAuthRender is set inside renderAccessRequestForm's
-      // enclosing flow (set before this call path was reached in the sign-up
-      // route). For the login route we must set it here.
-      STATE._blockNextAuthRender = true;
-      renderAccessRequestForm(cred.user.email || email, cred.user.displayName || '');
-      return;
-    }
-
+    await auth.signInWithEmailAndPassword(email, pass);
     // onAuthStateChanged will handle the authorized flow
   } catch (e) {
     const messages = {
@@ -534,21 +356,125 @@ async function doLogin() {
   }
 }
 
-async function doSignup() {
+/* ── Email verification state ──────────────────────────── */
+const _verifyState = {
+  token: null,
+  expiresAt: null,
+  email: null,
+  name: null,
+  pass: null,
+  resendCooldown: false,
+};
+
+const ALLOWED_EMAIL_DOMAIN = 'mail.tau.ac.il';
+
+/* ── Step 1: Validate fields + send verification code ──── */
+async function doSignupStep1() {
   const name  = document.getElementById('s-name').value.trim();
   const email = document.getElementById('s-email').value.trim().toLowerCase();
   const pass  = document.getElementById('s-pass').value;
+
   if (!name || !email || !pass) return authErr('נא למלא את כל השדות');
+  if (!email.endsWith('@' + ALLOWED_EMAIL_DOMAIN)) {
+    return authErr('ניתן להירשם רק עם מייל @' + ALLOWED_EMAIL_DOMAIN);
+  }
   if (pass.length < 6) return authErr('סיסמה חייבת להכיל לפחות 6 תווים');
+
+  // Store for later
+  _verifyState.name = name;
+  _verifyState.email = email;
+  _verifyState.pass = pass;
 
   authBusy(true);
   try {
-    // Create the account — onAuthStateChanged will run isUserAuthorized
-    // and handle both the authorized (→ app) and unauthorized (→ request form)
-    // paths. This avoids all anonymous-auth timing issues.
-    const cred = await auth.createUserWithEmailAndPassword(email, pass);
-    await cred.user.updateProfile({ displayName: name });
-    // onAuthStateChanged will handle the rest (save user data + route)
+    const res = await fetch('/.netlify/functions/send-verification-email', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email }),
+    });
+    const data = await res.json();
+
+    if (!res.ok) {
+      authErr(data.error || 'שגיאה בשליחת קוד האימות');
+      authBusy(false);
+      return;
+    }
+
+    _verifyState.token     = data.token;
+    _verifyState.expiresAt = data.expiresAt;
+
+    // Switch to Step 2
+    document.getElementById('signup-step1').style.display = 'none';
+    document.getElementById('signup-step2').style.display = 'block';
+    document.getElementById('verify-email-display').textContent = email;
+    document.getElementById('auth-err').classList.remove('show');
+    authBusy(false);
+
+    // Focus code input
+    setTimeout(() => document.getElementById('s-code')?.focus(), 100);
+
+    // Start resend cooldown
+    _startResendCooldown();
+
+  } catch (err) {
+    console.error('send-verification-email error:', err);
+    authErr('שגיאה בשליחת קוד האימות. נסה שוב.');
+    authBusy(false);
+  }
+}
+
+/* ── Step 2: Verify code + create account ──────────────── */
+async function doSignupStep2() {
+  const code = (document.getElementById('s-code')?.value || '').trim();
+  if (!code || code.length !== 6) return authErr('נא להזין קוד אימות בן 6 ספרות');
+
+  const verifyBtn = document.getElementById('verify-btn');
+  if (verifyBtn) verifyBtn.disabled = true;
+  authBusy(true);
+
+  try {
+    // Verify the code server-side
+    const res = await fetch('/.netlify/functions/verify-email-code', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        email:     _verifyState.email,
+        code,
+        token:     _verifyState.token,
+        expiresAt: _verifyState.expiresAt,
+      }),
+    });
+    const data = await res.json();
+
+    if (!res.ok) {
+      authErr(data.error || 'קוד אימות שגוי');
+      if (verifyBtn) verifyBtn.disabled = false;
+      authBusy(false);
+      if (data.expired) {
+        // Code expired — go back to step 1
+        backToSignupStep1();
+        authErr('קוד האימות פג תוקף. נא לשלוח קוד חדש.');
+      }
+      return;
+    }
+
+    // ── Code verified — create the Firebase account ──
+    const cred = await auth.createUserWithEmailAndPassword(
+      _verifyState.email,
+      _verifyState.pass
+    );
+    await cred.user.updateProfile({ displayName: _verifyState.name });
+
+    // Mark email as verified in user data (Firestore)
+    try {
+      await db.collection('users').doc(cred.user.uid).set(
+        { emailVerified: true },
+        { merge: true }
+      );
+    } catch (_) {}
+
+    // onAuthStateChanged will handle the rest
+
   } catch (e) {
     const messages = {
       'auth/email-already-in-use': 'אימייל כבר קיים במערכת — נסה להתחבר במקום להירשם',
@@ -556,9 +482,71 @@ async function doSignup() {
       'auth/weak-password':        'הסיסמה חלשה מדי',
     };
     authErr(messages[e.code] || 'שגיאת הרשמה: ' + e.message);
+    if (verifyBtn) verifyBtn.disabled = false;
     authBusy(false);
   }
 }
+
+/* ── Resend code ───────────────────────────────────────── */
+async function doResendCode() {
+  if (_verifyState.resendCooldown) return;
+  authBusy(true);
+  try {
+    const res = await fetch('/.netlify/functions/send-verification-email', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: _verifyState.email }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      authErr(data.error || 'שגיאה בשליחת קוד חדש');
+      authBusy(false);
+      return;
+    }
+    _verifyState.token     = data.token;
+    _verifyState.expiresAt = data.expiresAt;
+    document.getElementById('s-code').value = '';
+    document.getElementById('auth-err').classList.remove('show');
+    authBusy(false);
+    _startResendCooldown();
+  } catch (err) {
+    authErr('שגיאה בשליחת קוד חדש');
+    authBusy(false);
+  }
+}
+
+function _startResendCooldown() {
+  _verifyState.resendCooldown = true;
+  const resendBtn   = document.getElementById('resend-btn');
+  const resendTimer = document.getElementById('resend-timer');
+  if (resendBtn)   resendBtn.style.display   = 'none';
+  if (resendTimer) resendTimer.style.display  = 'inline';
+
+  let seconds = 60;
+  const tick = () => {
+    if (resendTimer) resendTimer.textContent = `שלח קוד חדש (${seconds}s)`;
+    if (seconds <= 0) {
+      _verifyState.resendCooldown = false;
+      if (resendBtn)   resendBtn.style.display   = 'inline';
+      if (resendTimer) resendTimer.style.display  = 'none';
+      return;
+    }
+    seconds--;
+    setTimeout(tick, 1000);
+  };
+  tick();
+}
+
+/* ── Back to step 1 ────────────────────────────────────── */
+function backToSignupStep1() {
+  document.getElementById('signup-step1').style.display = 'block';
+  document.getElementById('signup-step2').style.display = 'none';
+  document.getElementById('s-code').value = '';
+  document.getElementById('auth-err').classList.remove('show');
+}
+
+/* ── Legacy doSignup — redirects to step 1 ─────────────── */
+async function doSignup() { doSignupStep1(); }
 
 async function doLogout() {
   await auth.signOut();
@@ -681,23 +669,22 @@ function renderTermsModal() {
           background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;
           padding:1rem 1.2rem;font-size:.88rem;line-height:1.8;color:#334155;
           margin-bottom:1.2rem">
-          <p style="margin:0 0 .6rem">
-            אני מצהיר/ה כי אני סטודנט/ית רשום/ה לקורס <strong>אלגברה לינארית 1א'</strong>
-            באוניברסיטת תל אביב.
+          <p style="margin:0 0 .8rem">
+            בעת הכניסה לפלטפורמה, אני מצהיר/ה ומאשר/ת את התנאים הבאים:
           </p>
-          <p style="margin:0">
-            ידוע לי שכל התכנים המופיעים באתר זה — שאלות מבחן, פתרונות וחומרי לימוד —
-            <strong>מוגנים בזכויות יוצרים</strong> ומיועדים לשימוש אישי בלבד.
-            אני מתחייב/ת <strong>לא להפיץ, לשתף, להעתיק או לפרסם</strong> תכנים אלו
-            בכל אמצעי שהוא ללא אישור מפורש.
-          </p>
+          <ul style="margin:0;padding-right:1.2rem;list-style:disc">
+            <li style="margin-bottom:.5rem"><strong>סטטוס אקדמי:</strong> אני סטודנט/ית מן המניין באוניברסיטת תל אביב.</li>
+            <li style="margin-bottom:.5rem"><strong>שימוש אישי:</strong> התכנים במאגר (מבחנים, פתרונות וסיכומים) מיועדים ללמידה אישית בלבד.</li>
+            <li style="margin-bottom:.5rem"><strong>זכויות יוצרים:</strong> ידוע לי כי החומרים מוגנים בזכויות יוצרים. אני מתחייב/ת שלא להפיץ, לפרסם, לשתף או למסחר אותם בשום פלטפורמה חיצונית או רשת חברתית.</li>
+            <li><strong>יושרה אקדמית:</strong> השימוש בחומרים ייעשה בהתאם לתקנון האוניברסיטה.</li>
+          </ul>
         </div>
 
         <!-- Checkbox confirmation -->
         <label class="terms-check-label" id="terms-check-label">
           <input type="checkbox" id="terms-check" onchange="onTermsCheckChange()">
           <span class="terms-check-text">
-            קראתי והבנתי את ההצהרה לעיל, ואני מסכים/ה לשמור על זכויות היוצרים
+            קראתי, הבנתי ואני מסכים/ה לתנאים המפורטים לעיל
           </span>
         </label>
 
