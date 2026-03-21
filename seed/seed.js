@@ -13,6 +13,8 @@
  */
 
 const http = require('http');
+const fs   = require('fs');
+const path = require('path');
 
 const FIRESTORE_HOST = 'localhost';
 const FIRESTORE_PORT = 8080;
@@ -384,6 +386,18 @@ const USERS_SEED = [
 async function main() {
   console.log('🌱 VaulTau seed script starting...\n');
 
+  // Read ANTHROPIC_API_KEY from .env if present
+  let anthropicKey = null;
+  const envPath = path.join(__dirname, '..', '.env');
+  if (fs.existsSync(envPath)) {
+    const buf = fs.readFileSync(envPath);
+    // Handle UTF-16 LE (BOM: FF FE) — netlify env:pull writes UTF-16 LE on Windows
+    const encoding = (buf[0] === 0xFF && buf[1] === 0xFE) ? 'utf16le' : 'utf8';
+    const envContent = buf.toString(encoding).replace(/^\uFEFF/, ''); // strip BOM
+    const match = envContent.match(/^ANTHROPIC_API_KEY=(.+)$/m);
+    if (match) anthropicKey = match[1].trim();
+  }
+
   // 1. Clear existing data
   console.log('🧹 Clearing existing data...');
   await clearAllAuthUsers();
@@ -436,6 +450,22 @@ async function main() {
   console.log('   Stop the emulator cleanly (Ctrl+C) to save data to emulator-data/');
   console.log('\n   Login credentials:');
   USERS_SEED.forEach(u => console.log(`   ${u.email} / ${u.password}`));
+
+  // 5. settings/api_keys
+  console.log('\n⚙️  Creating settings...');
+  if (anthropicKey) {
+    await setDoc('settings', 'api_keys', { anthropic: anthropicKey });
+    console.log('   ✓ settings/api_keys (anthropic key seeded)');
+  } else {
+    console.warn('   ⚠️  ANTHROPIC_API_KEY not found in .env — skipping settings/api_keys');
+    console.warn('       AI features will not work in the emulator until you add it.');
+  }
+
+  // 6. settings/global
+  await setDoc('settings', 'global', { isSurveyActive: false });
+  console.log('   ✓ settings/global');
+
+  console.log('\n✅ All done!');
 }
 
 main().catch(err => {
