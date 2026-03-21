@@ -602,14 +602,12 @@ async function doLogin() {
     await auth.signInWithEmailAndPassword(email, pass);
     // onAuthStateChanged handles all routing from here
   } catch (e) {
+    console.error('login error:', e.code, e.message);
     const messages = {
-      'auth/user-not-found':     'אימייל לא קיים במערכת',
-      'auth/wrong-password':     'סיסמה שגויה',
       'auth/invalid-email':      'פורמט אימייל לא תקין',
       'auth/too-many-requests':  'יותר מדי ניסיונות — נסה שוב מאוחר יותר',
-      'auth/invalid-credential': 'אימייל או סיסמה שגויים',
     };
-    authErr(messages[e.code] || 'שגיאת התחברות: ' + e.message);
+    authErr(messages[e.code] || 'שגיאת התחברות: המייל או הסיסמה אינם נכונים');
     authBusy(false);
   }
 }
