@@ -50,10 +50,5 @@ service cloud.firestore {
       allow create: if isLoggedIn();
       allow read, list, update, delete: if isAdmin();
     }
-
-    match /folders/{folderId} {
-      allow read, list: if isLoggedIn();
-      allow write: if isAdmin();
-    }
   }
 }
