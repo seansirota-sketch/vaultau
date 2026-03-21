@@ -125,7 +125,13 @@ document.addEventListener('DOMContentLoaded', () => {
       renderPage();
 
     } else {
-      renderAuth();
+      // Check if URL has password reset params
+      const urlParams = new URLSearchParams(window.location.search);
+      if (urlParams.get('mode') === 'resetPassword' && urlParams.get('oobCode')) {
+        renderResetPassword(urlParams.get('oobCode'));
+      } else {
+        renderAuth();
+      }
     }
   });
 
@@ -207,6 +213,33 @@ function renderAuth() {
           </div>
           <button id="login-btn" class="btn btn-primary" style="width:100%;justify-content:center"
             onclick="doLogin()">כניסה ←</button>
+          <div style="text-align:center;margin-top:.7rem">
+            <a href="#" onclick="showForgotPassword();return false"
+               style="color:var(--muted);font-size:.82rem;text-decoration:underline;cursor:pointer">שכחתי סיסמה</a>
+          </div>
+        </div>
+
+        <!-- Forgot password form -->
+        <div id="f-forgot" style="display:none">
+          <div style="text-align:center;margin-bottom:1.2rem">
+            <div style="font-size:2.2rem;margin-bottom:.5rem">🔑</div>
+            <h2 style="font-size:1.15rem;color:var(--fg);margin:0 0 .3rem">שכחתי סיסמה</h2>
+            <p style="color:var(--muted);font-size:.85rem;line-height:1.5;margin:0">
+              הזן את כתובת האימייל שלך ונשלח לך לינק לאיפוס הסיסמה
+            </p>
+          </div>
+          <div id="forgot-success" class="form-error" style="background:#d1fae5;color:#065f46;border-color:#10b981;display:none">
+            אם האימייל קיים במערכת, נשלח אליך לינק לאיפוס הסיסמה. בדוק את תיבת הדואר שלך.
+          </div>
+          <div class="form-group">
+            <label>אימייל</label>
+            <input id="forgot-email" type="email" placeholder="your@email.com">
+          </div>
+          <button id="forgot-btn" class="btn btn-primary" style="width:100%;justify-content:center"
+            onclick="doForgotPassword()">שלח לינק לאיפוס ←</button>
+          <button class="btn" style="width:100%;justify-content:center;margin-top:.5rem;
+                 color:var(--muted);background:transparent;border-color:transparent;font-size:.82rem"
+            onclick="backToLogin()">← חזרה לכניסה</button>
         </div>
 
         <!-- Signup form — Step 1: Details -->
@@ -277,6 +310,9 @@ function renderAuth() {
   document.getElementById('s-code')?.addEventListener('keydown', e => {
     if (e.key === 'Enter') doSignupStep2();
   });
+  document.getElementById('forgot-email')?.addEventListener('keydown', e => {
+    if (e.key === 'Enter') doForgotPassword();
+  });
 }
 
 
@@ -286,7 +322,161 @@ function switchTab(t) {
   );
   document.getElementById('f-login').style.display  = t === 'login'  ? 'block' : 'none';
   document.getElementById('f-signup').style.display = t === 'signup' ? 'block' : 'none';
+  const fForgot = document.getElementById('f-forgot');
+  if (fForgot) fForgot.style.display = 'none';
+  document.querySelectorAll('.auth-tabs').forEach(el => el.style.display = '');
   document.getElementById('auth-err').classList.remove('show');
+}
+
+/* ── Forgot password ─────────────────────────────────────── */
+function showForgotPassword() {
+  document.getElementById('f-login').style.display  = 'none';
+  document.getElementById('f-signup').style.display = 'none';
+  document.getElementById('f-forgot').style.display = 'block';
+  document.querySelectorAll('.auth-tabs').forEach(el => el.style.display = 'none');
+  document.getElementById('auth-err').classList.remove('show');
+  document.getElementById('forgot-success').style.display = 'none';
+  document.getElementById('forgot-email').value = '';
+  document.getElementById('forgot-email').focus();
+}
+
+function backToLogin() {
+  document.getElementById('f-forgot').style.display = 'none';
+  document.getElementById('f-login').style.display  = 'block';
+  document.querySelectorAll('.auth-tabs').forEach(el => el.style.display = '');
+  document.getElementById('auth-err').classList.remove('show');
+}
+
+async function doForgotPassword() {
+  const email = document.getElementById('forgot-email').value.trim().toLowerCase();
+  const errEl = document.getElementById('auth-err');
+  const successEl = document.getElementById('forgot-success');
+  errEl.classList.remove('show');
+  successEl.style.display = 'none';
+
+  if (!email) {
+    authErr('נא להזין כתובת אימייל');
+    return;
+  }
+
+  const btn = document.getElementById('forgot-btn');
+  if (btn) { btn.disabled = true; btn.textContent = 'שולח...'; }
+
+  try {
+    const res = await fetch('/.netlify/functions/send-reset-password-email', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email }),
+    });
+
+    if (res.status === 429) {
+      authErr('יותר מדי בקשות — נסה שוב מאוחר יותר');
+      return;
+    }
+
+    // Always show success (server returns 200 even if email doesn't exist)
+    successEl.style.display = 'block';
+  } catch {
+    authErr('שגיאת רשת — בדוק חיבור לאינטרנט');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = 'שלח לינק לאיפוס ←'; }
+  }
+}
+
+/* ── Reset password (landing from email link) ──────────── */
+function renderResetPassword(oobCode) {
+  // Sanitize oobCode to prevent XSS (only allow alphanumeric, hyphens, underscores)
+  const safeCode = oobCode.replace(/[^a-zA-Z0-9_\-]/g, '');
+  document.getElementById('app').innerHTML = `
+    <div class="auth-wrap">
+      <div class="auth-card">
+        <div class="auth-logo">
+          <span class="icon">🔑</span>
+          <h1>VaultAU</h1>
+          <p>בחירת סיסמה חדשה</p>
+        </div>
+        <div id="auth-err" class="form-error"></div>
+        <div id="reset-success" style="display:none;text-align:center;padding:1rem 0">
+          <div style="font-size:2.2rem;margin-bottom:.5rem">✅</div>
+          <p style="color:var(--fg);font-size:1rem;font-weight:600;margin:0 0 .5rem">הסיסמה שונתה בהצלחה!</p>
+          <p style="color:var(--muted);font-size:.88rem;margin:0 0 1rem">ניתן להתחבר עם הסיסמה החדשה</p>
+          <button class="btn btn-primary" style="width:100%;justify-content:center"
+            onclick="window.location.href='/'">כניסה ←</button>
+        </div>
+        <div id="reset-form">
+          <div class="form-group">
+            <label>סיסמה חדשה</label>
+            <div class="pass-wrap">
+              <input id="r-pass" type="password" placeholder="לפחות 6 תווים">
+              <button type="button" class="pass-eye" onclick="togglePassVis('r-pass','r-eye')"
+                title="הצג / הסתר סיסמה" id="r-eye" aria-label="הצג סיסמה">
+                ${_eyeIcon(false)}
+              </button>
+            </div>
+          </div>
+          <div class="form-group">
+            <label>אימות סיסמה</label>
+            <div class="pass-wrap">
+              <input id="r-pass2" type="password" placeholder="הזן שוב את הסיסמה">
+              <button type="button" class="pass-eye" onclick="togglePassVis('r-pass2','r-eye2')"
+                title="הצג / הסתר סיסמה" id="r-eye2" aria-label="הצג סיסמה">
+                ${_eyeIcon(false)}
+              </button>
+            </div>
+          </div>
+          <button id="reset-btn" class="btn btn-primary" style="width:100%;justify-content:center">שמור סיסמה חדשה ←</button>
+        </div>
+      </div>
+    </div>`;
+
+  document.getElementById('reset-btn')?.addEventListener('click', () => doResetPassword(safeCode));
+  document.getElementById('r-pass2')?.addEventListener('keydown', e => {
+    if (e.key === 'Enter') doResetPassword(safeCode);
+  });
+}
+
+async function doResetPassword(oobCode) {
+  const pass  = document.getElementById('r-pass').value;
+  const pass2 = document.getElementById('r-pass2').value;
+  const errEl = document.getElementById('auth-err');
+  errEl.classList.remove('show');
+
+  if (!pass || !pass2) {
+    authErr('נא למלא את כל השדות');
+    return;
+  }
+  if (pass.length < 6) {
+    authErr('סיסמה חייבת להכיל לפחות 6 תווים');
+    return;
+  }
+  if (pass !== pass2) {
+    authErr('הסיסמאות לא תואמות');
+    return;
+  }
+
+  const btn = document.getElementById('reset-btn');
+  if (btn) { btn.disabled = true; btn.textContent = 'שומר...'; }
+
+  try {
+    // Verify the code is valid, then set new password
+    await auth.verifyPasswordResetCode(oobCode);
+    await auth.confirmPasswordReset(oobCode, pass);
+
+    // Show success, hide form
+    document.getElementById('reset-form').style.display = 'none';
+    document.getElementById('reset-success').style.display = 'block';
+
+    // Clean URL params
+    history.replaceState({}, '', '/');
+  } catch (e) {
+    const messages = {
+      'auth/expired-action-code':  'הלינק פג תוקף — יש לבקש איפוס סיסמה מחדש',
+      'auth/invalid-action-code':  'הלינק אינו תקין או שכבר נעשה בו שימוש',
+      'auth/weak-password':        'הסיסמה חלשה מדי — נסה סיסמה חזקה יותר',
+    };
+    authErr(messages[e.code] || 'שגיאה באיפוס הסיסמה: ' + e.message);
+    if (btn) { btn.disabled = false; btn.textContent = 'שמור סיסמה חדשה ←'; }
+  }
 }
 
 function authErr(msg) {
