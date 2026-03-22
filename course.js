@@ -1316,7 +1316,7 @@ async function renderCourse() {
       Array.isArray(e.lecturers) ? e.lecturers : (e.lecturer ? [e.lecturer] : [])
     ).filter(Boolean))];
     const starCount = countStarred(exams, starred);
-    const aiQCount  = (STATE.userData?.aiQuestions || []).length;
+    const aiQCount  = (STATE.userData?.aiQuestions || []).filter(q => q.courseId === STATE.courseId).length;
 
     page.innerHTML = `
       <div class="container">
@@ -2441,7 +2441,7 @@ async function _callGeminiDirect(prompt) {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       contents: [{ parts: [{ text: prompt }] }],
-      generationConfig: { temperature: 0.4, maxOutputTokens: 16384 },
+      generationConfig: { temperature: 0.65, maxOutputTokens: 16384 },
     }),
   });
 
@@ -2553,13 +2553,15 @@ function _showGeminiError(msg) {
 
 function _buildGeminiPrompt(sourceText) {
   return `אתה מרצה בכיר למתמטיקה באוניברסיטה (מומחה לאלגברה לינארית, חדו"א ועוד).
-המטרה שלך היא ליצור שאלת תרגול *אחת* חדשה שדומה בדיוק לשאלה המקורית שסופקה לך.
+המטרה שלך היא ליצור שאלת תרגול *אחת* חדשה שדומה לשאלה המקורית שסופקה לך.
 
 הנחיות קריטיות:
-1. זהות קונספטואלית: שמור על אותו נושא מתמטי, אותה רמת קושי ואותו מבנה של השאלה המקורית.
-2. נתונים הגיוניים: שנה את המספרים, המטריצות או הווקטורים, אבל ודא מתמטית שהשאלה עדיין פתירה בצורה "נקייה" (לדוגמה: אם בשאלה המקורית הפתרון כלל מספרים שלמים, אל תיצור מטריצה שתניב שברים מסובכים).
-3. עיצוב MathJax: כל ביטוי מתמטי, משוואה, מטריצה או משתנה חייב להיות עטוף ב-LaTeX תקין. השתמש ב-$ עבור מתמטיקה בשורה (inline) וב-$$ עבור משוואות מופרדות.
-4. פלט נקי: החזר *אך ורק* את הטקסט של השאלה החדשה בעברית. אל תוסיף הקדמות ("הנה השאלה שביקשת"), ואל תוסיף את הפתרון.
+1. אותו מבנה ואותם מושגים: שמור על אותו נושא מתמטי, אותו סוג שאלה (חישוב/הוכחה/בדיקה), אותו מספר סעיפים, ואותם מושגים בדיוק שמופיעים בשאלה המקורית. אל תכניס מושגים או כלים שלא מופיעים בשאלה המקורית.
+2. שנה את הנתונים: שנה את המספרים, המטריצות, הווקטורים או הפונקציות — אבל שמור על אותו גודל ואותו סוג (למשל מטריצה 3×3 נשארת 3×3, אינטגרל מסוים נשאר אינטגרל מסוים). שנה מספיק כדי שזו תהיה שאלה שונה באמת (לא רק ±1).
+3. נתונים הגיוניים: ודא מתמטית שהשאלה החדשה פתירה בצורה "נקייה" (לדוגמה: אם בשאלה המקורית הפתרון כלל מספרים שלמים, אל תיצור מטריצה שתניב שברים מסובכים).
+4. ניסוח מעט שונה: נסח את השאלה במילים שונות קצת מהמקור, אבל שמור על אותה משמעות.
+5. עיצוב MathJax: כל ביטוי מתמטי, משוואה, מטריצה או משתנה חייב להיות עטוף ב-LaTeX תקין. השתמש ב-$ עבור מתמטיקה בשורה (inline) וב-$$ עבור משוואות מופרדות.
+6. פלט נקי: החזר *אך ורק* את הטקסט של השאלה החדשה בעברית. אל תוסיף הקדמות ("הנה השאלה שביקשת"), ואל תוסיף את הפתרון.
 
 השאלה המקורית:
 ${sourceText}`;
@@ -2627,7 +2629,8 @@ function renderAIQuestionsTab() {
   const tc = document.getElementById('tab-content');
   if (!tc) return;
 
-  const items = STATE.userData?.aiQuestions || [];
+  const allItems = STATE.userData?.aiQuestions || [];
+  const items = allItems.filter(q => q.courseId === STATE.courseId);
 
   if (!items.length) {
     tc.innerHTML = `<div class="empty" style="margin-top:2rem">
@@ -2649,7 +2652,7 @@ function renderAIQuestionsTab() {
       ${items.length} שאלות שנוצרו באמצעות AI
     </p>
     ${sorted.map((item, idx) => {
-      const realIdx = items.length - 1 - idx;
+      const realIdx = allItems.indexOf(item);
       return `<div class="ai-q-card">
         <details style="margin-bottom:.5rem">
           <summary style="cursor:pointer;font-size:.82rem;color:var(--muted);font-weight:600">📄 שאלה מקורית</summary>
@@ -2666,7 +2669,7 @@ function renderAIQuestionsTab() {
 
   // Render MathJax for all generated/original texts (safe: textContent + MathJax)
   sorted.forEach((item, idx) => {
-    const realIdx = items.length - 1 - idx;
+    const realIdx = allItems.indexOf(item);
     const genEl = tc.querySelector(`.ai-q-generated-${realIdx}`);
     if (genEl) _renderGeminiResult(genEl, item.generatedText || '');
     const origEl = tc.querySelector(`.ai-q-original-${realIdx}`);
