@@ -17,7 +17,7 @@ service cloud.firestore {
     }
 
     match /access_requests/{requestId} {
-      allow create: if true;
+      allow create: if false;
       allow read, list, update, delete: if isAdmin();
     }
 
