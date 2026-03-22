@@ -1515,6 +1515,10 @@ function renderPreview() {
             <input type="checkbox" ${q.isBonus ? 'checked' : ''}
               onchange="toggleBonus(${i}, this.checked)"> בונוס
           </label>
+          <label class="bonus-chk-label" title="אפשר יצירת שאלת AI">
+            <input type="checkbox" ${q.allowAIGen === true ? 'checked' : ''}
+              onchange="toggleAIGen(${i}, this.checked)"> ✨ AI
+          </label>
           <button class="btn btn-sm btn-secondary" onclick="addSubToPreview(${i})">+ סעיף</button>
           <button class="btn btn-sm btn-danger" onclick="removeQuestion(${i})">🗑️</button>
         </div>
@@ -1545,6 +1549,10 @@ function renderSubsPreview(subs, qi) {
       <span class="sub-preview-lbl">${esc(s.label || ('(' + (heLetters[si] || si + 1) + ')'))}</span>
       <textarea class="pq-textarea" style="min-height:52px;flex:1" id="st-${qi}-${si}"
         oninput="parsedQuestions[${qi}].subs[${si}].text=this.value">${esc(s.text)}</textarea>
+      <label class="bonus-chk-label" style="font-size:.72rem;white-space:nowrap" title="אפשר יצירת AI לסעיף זה">
+        <input type="checkbox" ${s.allowAIGen === true ? 'checked' : ''}
+          onchange="parsedQuestions[${qi}].subs[${si}].allowAIGen=this.checked"> ✨
+      </label>
       <button class="btn-icon btn-sm" style="background:var(--danger-l);color:var(--danger);margin-right:.3rem;flex-shrink:0"
         onclick="removeSub(${qi},${si})" title="מחק סעיף">✕</button>
     </div>`).join('')}
@@ -1573,6 +1581,10 @@ function toggleBonus(i, checked) {
       ? `<span class="bonus-badge">⭐ שאלת בונוס</span>`
       : `שאלה ${parsedQuestions[i].index || (i + 1)}`;
   }
+}
+
+function toggleAIGen(i, checked) {
+  parsedQuestions[i].allowAIGen = checked;
 }
 
 function clearImport() {
@@ -1702,10 +1714,12 @@ async function submitAddExam() {
         id:      q.id || genId(),
         text:    q.text,
         isBonus: q.isBonus === true,
+        allowAIGen: q.allowAIGen === true,
         subs:    (q.subs || []).map(s => ({
           id:    s.id || genId(),
           label: s.label,
-          text:  s.text
+          text:  s.text,
+          allowAIGen: s.allowAIGen === true,
         }))
       })),
       updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
