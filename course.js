@@ -17,12 +17,19 @@ function formatMathText(text) {
 
   return parts.map(part => {
     if (part.startsWith('$$') || part.startsWith('\\[')) {
-      // Display math — centered block, LTR for MathJax
-      return `<div class="math-display">${part}</div>`;
+      // Display math — HTML-escape & and < so the browser doesn't corrupt
+      // LaTeX matrix separators before MathJax processes them
+      const safe = part.replace(/&/g, '&amp;').replace(/</g, '&lt;');
+      return `<div class="math-display">${safe}</div>`;
     }
-    // Regular text — trim blank lines adjacent to display blocks, then nl2br
-    const trimmed = part.replace(/^\s*\n/, '').replace(/\n\s*$/, '');
-    return trimmed ? nl2br(trimmed) : '';
+    // Regular text — trim blank lines adjacent to display blocks
+    let trimmed = part.replace(/^\s*\n/, '').replace(/\n\s*$/, '');
+    if (!trimmed) return '';
+    // Convert markdown bold **text** to <strong>
+    trimmed = trimmed.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+    // Escape & in inline math ($...$) so matrices render correctly
+    trimmed = trimmed.replace(/(\$[^$]+?\$)/g, (m) => m.replace(/&/g, '&amp;').replace(/</g, '&lt;'));
+    return nl2br(trimmed);
   }).join('');
 }
 /* ============================================================
@@ -53,12 +60,28 @@ function toast(msg, type = '') {
   setTimeout(() => t.remove(), 2500);
 }
 
+/* ── GEMINI – environment detection ────────────────────────── */
+const _isLocalDev = location.hostname === 'localhost' || location.hostname === '127.0.0.1';
+
+let _geminiKey = null;
+async function _loadGeminiKey() {
+  if (_geminiKey) return _geminiKey;
+  try {
+    const doc = await db.collection('settings').doc('api_keys').get();
+    if (doc.exists && doc.data().gemini) {
+      _geminiKey = doc.data().gemini;
+      console.log('✅ Gemini API key loaded');
+    }
+  } catch (e) { console.warn('Could not load Gemini key:', e); }
+  return _geminiKey;
+}
+
 /* ── APP STATE ──────────────────────────────────────────────── */
 let STATE = {
   page:     'home',   // home | course | exam
   courseId: null,
   examId:   null,
-  tab:      'exams',  // exams | starred
+  tab:      'exams',  // exams | starred | ai-questions
   fireUser: null,     // Firebase Auth user
   userData: null,     // Firestore user doc { starredQuestions: [] }
 
@@ -97,10 +120,6 @@ document.addEventListener('DOMContentLoaded', () => {
       STATE.userData = await fetchUserData(user.uid, user.email);
       STATE.doneExams       = STATE.userData?.doneExams       || [];
       STATE.inProgressExams = STATE.userData?.inProgressExams || [];
-
-      if (typeof gtag === 'function' && location.hostname !== 'localhost' && location.hostname !== '127.0.0.1') {
-        gtag('config', 'G-SF9W1XBZZK', { user_id: user.uid });
-      }
 
       // ── 1. Terms check ─────────────────────────────────────
       if (!STATE.userData?.acceptedTerms) {
@@ -1291,6 +1310,7 @@ async function renderCourse() {
       Array.isArray(e.lecturers) ? e.lecturers : (e.lecturer ? [e.lecturer] : [])
     ).filter(Boolean))];
     const starCount = countStarred(exams, starred);
+    const aiQCount  = (STATE.userData?.aiQuestions || []).length;
 
     page.innerHTML = `
       <div class="container">
@@ -1311,11 +1331,16 @@ async function renderCourse() {
             ⭐ שאלות מסומנות
             ${starCount ? `<span class="badge b-orange">${starCount}</span>` : ''}
           </button>
+          <button class="tab-btn ${STATE.tab === 'ai-questions' ? 'active' : ''}" onclick="setTab('ai-questions')">
+            ✨ שאלות שנוצרו
+            ${aiQCount ? `<span class="badge" style="background:#ede9fe;color:#6d28d9;border:1px solid #c4b5fd">${aiQCount}</span>` : ''}
+          </button>
         </div>
         <div id="tab-content"></div>
       </div>`;
 
-    if (STATE.tab === 'starred') renderStarredTab(exams, starred);
+    if (STATE.tab === 'ai-questions') renderAIQuestionsTab();
+    else if (STATE.tab === 'starred') renderStarredTab(exams, starred);
     else renderExamsTab(course, exams, years, semesters, moeds, lecturers);
 
   } catch (e) {
@@ -1782,11 +1807,13 @@ function renderQuestionCard(q, qi, starred, userVotes = {}) {
       const sText      = s.text || '';
       const sCopyId    = 'copy-s-' + s.id;
       COPY_MAP.set(sCopyId, sText);
+      const sAllowAI = s.allowAIGen === true;
       return `<div class="qv-part" id="si-${s.id}">
         <div class="qv-part-head">
           <span class="qv-part-lbl">${rawLabel}</span>
           <div class="qv-actions">
             <button class="qv-btn" onclick="copyById('${sCopyId}',event)" title="העתק LaTeX">${copySVG}</button>
+            ${sAllowAI ? `<button class="qv-btn" onclick="openGeminiModal('${s.id}','sub')" title="צור סעיף דומה">✨</button>` : ''}
           </div>
         </div>
         <div class="qv-part-text"></div>
@@ -1808,6 +1835,7 @@ function renderQuestionCard(q, qi, starred, userVotes = {}) {
         <button class="qv-btn ${isStarredQ ? 'on' : ''}" id="qb-${q.id}"
           onclick="toggleStar('${q.id}')" title="סמן שאלה">${starSVG(isStarredQ)}</button>
         <button class="qv-btn" onclick="copyById('${qCopyId}',event)" title="העתק LaTeX">${copySVG}</button>
+        ${q.allowAIGen === true ? `<button class="qv-btn" onclick="openGeminiModal('${q.id}','question')" title="צור שאלה דומה">✨</button>` : ''}
       </div>
     </div>
     <div class="qv-text"></div>
@@ -2171,4 +2199,512 @@ async function submitBugReport() {
 function closeReportBugModal() {
   document.getElementById('report-bug-modal')?.remove();
   document.body.style.overflow = '';
+}
+
+/* ── GEMINI AI – Generate Similar Question ─────────────────── */
+
+/* ── Gemini loading UI helpers ──────────────────────────────── */
+let _geminiTimerInterval = null;
+let _geminiMsgTimeout = null;
+
+const _geminiLoadingMsgs = [
+  'קורא ומנתח את השאלה המקורית...',
+  'מזהה את עקרונות המפתח והמבנה הלוגי...',
+  'מרכיב נתונים חדשים ושומר על רמת הקושי...',
+  'מנסח ומעצב את השאלה מחדש...',
+  'מוודא איכות ודיוק, עוד רגע מסיימים...'
+];
+
+function _startGeminiLoading(container) {
+  _stopGeminiLoading();
+  container.innerHTML = `<div class="gemini-loading">
+    <div class="spinner"></div>
+    <div style="text-align:center">
+      <span id="gemini-loading-msg">${_geminiLoadingMsgs[0]}</span>
+      <div id="gemini-loading-timer" style="font-size:.75rem;color:#9ca3af;margin-top:.35rem;font-variant-numeric:tabular-nums">00:00</div>
+    </div>
+  </div>`;
+
+  const start = Date.now();
+  let msgIdx = 0;
+
+  _geminiTimerInterval = setInterval(() => {
+    const el = document.getElementById('gemini-loading-timer');
+    if (!el) { _stopGeminiLoading(); return; }
+    const sec = Math.floor((Date.now() - start) / 1000);
+    el.textContent = String(Math.floor(sec / 60)).padStart(2, '0') + ':' + String(sec % 60).padStart(2, '0');
+  }, 1000);
+
+  function scheduleNextMsg() {
+    if (msgIdx >= _geminiLoadingMsgs.length - 1) return; // stay on last message — do not loop
+    const delay = 8000 + Math.random() * 10000; // 8–18 seconds
+    _geminiMsgTimeout = setTimeout(() => {
+      msgIdx++;
+      const el = document.getElementById('gemini-loading-msg');
+      if (!el) { _stopGeminiLoading(); return; }
+      el.textContent = _geminiLoadingMsgs[msgIdx];
+      scheduleNextMsg();
+    }, delay);
+  }
+  scheduleNextMsg();
+}
+
+function _stopGeminiLoading() {
+  if (_geminiTimerInterval) { clearInterval(_geminiTimerInterval); _geminiTimerInterval = null; }
+  if (_geminiMsgTimeout) { clearTimeout(_geminiMsgTimeout); _geminiMsgTimeout = null; }
+}
+
+/**
+ * Open the Gemini modal. For 'question' type, pass q.id and we look up text
+ * from COPY_MAP. For 'sub' type, pass the sub-part id.
+ */
+function openGeminiModal(qOrSubId, type) {
+  const uid = STATE.fireUser?.uid;
+  if (!uid) { toast('יש להתחבר כדי להשתמש בתכונה זו', 'error'); return; }
+
+  // Resolve the source text
+  let sourceText = '';
+  const copyKey = type === 'question' ? 'copy-q-' + qOrSubId : 'copy-s-' + qOrSubId;
+  sourceText = COPY_MAP.get(copyKey) || '';
+
+  // Fallback: extract from DOM if COPY_MAP miss
+  if (!sourceText) {
+    const domId = type === 'question' ? 'qc-' + qOrSubId : 'si-' + qOrSubId;
+    const el = document.getElementById(domId);
+    const textEl = el?.querySelector(type === 'question' ? '.qv-text' : '.qv-part-text');
+    if (textEl) sourceText = textEl.innerText.trim();
+  }
+  if (!sourceText) {
+    toast('לא נמצא טקסט לשאלה', 'error');
+    return;
+  }
+
+  // Remove any existing modal & listener
+  closeGeminiModal();
+
+  const overlay = document.createElement('div');
+  overlay.id = 'gemini-modal-overlay';
+  overlay.className = 'gemini-modal-overlay';
+  overlay.innerHTML = `
+    <div class="gemini-modal">
+      <div class="gemini-modal-header">
+        <h3>✨ יצירת שאלה דומה</h3>
+        <button class="qv-btn" onclick="closeGeminiModal()" title="סגור"
+          style="background:none;border:none;font-size:1.2rem;cursor:pointer;color:#6b7280">✕</button>
+      </div>
+      <div class="gemini-modal-body" id="gemini-body">
+      </div>
+      <div class="gemini-modal-footer" id="gemini-footer" style="display:none">
+        <button class="btn-gemini" onclick="closeGeminiModal()">סגור</button>
+        <button class="btn-gemini" id="gemini-regen-btn" onclick="_geminiRegenerate()">🔄 שאלה נוספת</button>
+        <button class="btn-gemini" id="gemini-save-btn" onclick="_geminiSave()" style="background:linear-gradient(135deg,#059669 0%,#10b981 100%)">💾 שמור</button>
+      </div>
+    </div>`;
+
+  overlay.addEventListener('click', (e) => {
+    if (e.target === overlay) closeGeminiModal();
+  });
+
+  document.body.appendChild(overlay);
+  document.body.style.overflow = 'hidden';
+
+  // Store context on the overlay element for regenerate / save
+  overlay.dataset.sourceText = sourceText;
+  overlay.dataset.type = type;
+  overlay.dataset.qOrSubId = qOrSubId;
+
+  // Start dynamic loading UI
+  _startGeminiLoading(document.getElementById('gemini-body'));
+
+  // Check global cache first before calling the API
+  _loadFromCacheOrGenerate(qOrSubId, sourceText);
+}
+
+/* ── Global AI Questions Cache ─────────────────────────────── */
+/**
+ * Check Firestore cache for existing AI-generated questions.
+ * If found, display immediately; otherwise call the API.
+ */
+async function _loadFromCacheOrGenerate(qOrSubId, sourceText) {
+  const bodyEl = document.getElementById('gemini-body');
+  const footer = document.getElementById('gemini-footer');
+  if (!bodyEl) return;
+
+  try {
+    const cacheDoc = await db.collection('ai_questions_cache').doc(qOrSubId).get();
+    if (cacheDoc.exists) {
+      const cached = cacheDoc.data();
+      const items = cached.items || [];
+      if (items.length) {
+        // Pick a random cached question
+        const pick = items[Math.floor(Math.random() * items.length)];
+        const text = pick.text || '';
+        if (text) {
+          _stopGeminiLoading();
+          const overlay = document.getElementById('gemini-modal-overlay');
+          if (overlay) overlay.dataset.generatedText = text;
+          _renderGeminiResult(bodyEl, text);
+          if (footer) footer.style.display = 'flex';
+          return;
+        }
+      }
+    }
+  } catch (e) {
+    console.warn('Cache lookup failed, generating fresh:', e.message);
+  }
+
+  // No cache hit — generate via API
+  _callGeminiAPI(sourceText);
+}
+
+/**
+ * Save a generated question to the global cache collection.
+ */
+async function _saveToCache(qOrSubId, sourceText, generatedText) {
+  try {
+    const ref = db.collection('ai_questions_cache').doc(qOrSubId);
+    await ref.set({
+      sourceText,
+      items: firebase.firestore.FieldValue.arrayUnion({
+        text: generatedText,
+        createdAt: new Date().toISOString(),
+      }),
+      updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+    }, { merge: true });
+  } catch (e) {
+    console.warn('Failed to save to AI cache:', e.message);
+  }
+}
+
+/**
+ * Call Gemini API and display the result.
+ * Production: streams via Edge Function (API key stays server-side).
+ * Local dev:  direct call (key from Firestore emulator).
+ */
+async function _callGeminiAPI(sourceText) {
+  const bodyEl = document.getElementById('gemini-body');
+  const footer = document.getElementById('gemini-footer');
+  if (!bodyEl) return;
+
+  // Show loading
+  _startGeminiLoading(bodyEl);
+  if (footer) footer.style.display = 'none';
+
+  try {
+    const prompt = _buildGeminiPrompt(sourceText);
+    let text;
+
+    if (_isLocalDev) {
+      text = await _callGeminiDirect(prompt);
+    } else {
+      text = await _callGeminiStream(prompt, bodyEl);
+    }
+
+    if (!text) throw new Error('תשובה ריקה מ-Gemini');
+
+    _stopGeminiLoading();
+
+    // Store generated text for save
+    const overlay = document.getElementById('gemini-modal-overlay');
+    if (overlay) overlay.dataset.generatedText = text;
+
+    // Save to global cache for future users
+    const qOrSubId = overlay?.dataset?.qOrSubId;
+    if (qOrSubId) _saveToCache(qOrSubId, sourceText, text);
+
+    // Display final response
+    _renderGeminiResult(bodyEl, text);
+    if (footer) footer.style.display = 'flex';
+
+  } catch (e) {
+    _stopGeminiLoading();
+    _showGeminiError(e.message);
+  }
+}
+
+/** Direct Gemini API call (local dev only — key loaded from emulator) */
+async function _callGeminiDirect(prompt) {
+  const key = await _loadGeminiKey();
+  if (!key) throw new Error('מפתח Gemini לא נטען — פנה למנהל');
+
+  const GEMINI_MODEL = 'gemini-3.1-pro-preview';
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${key}`;
+
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      contents: [{ parts: [{ text: prompt }] }],
+      generationConfig: { temperature: 0.4, maxOutputTokens: 16384 },
+    }),
+  });
+
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data?.error?.message || `Gemini API error: ${res.status}`);
+  return data?.candidates?.[0]?.content?.parts?.[0]?.text || '';
+}
+
+/** Streaming call via Netlify Edge Function (production) */
+async function _callGeminiStream(prompt, bodyEl) {
+  const idToken = await STATE.fireUser?.getIdToken();
+  if (!idToken) throw new Error('יש להתחבר כדי להשתמש בתכונה זו');
+
+  const res = await fetch('/api/generate-question', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${idToken}`,
+    },
+    body: JSON.stringify({ prompt }),
+  });
+
+  if (!res.ok) {
+    const errData = await res.json().catch(() => ({}));
+    throw new Error(errData?.error || `Server error: ${res.status}`);
+  }
+
+  // Set up streaming display
+  const wrapper = document.createElement('div');
+  wrapper.className = 'qv-text gemini-result';
+  wrapper.style.cssText = 'direction:rtl;line-height:1.8;';
+  bodyEl.innerHTML = '';
+  bodyEl.appendChild(wrapper);
+
+  let fullText = '';
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split('\n');
+    buffer = lines.pop() || '';
+
+    for (const line of lines) {
+      if (!line.startsWith('data: ')) continue;
+      const payload = line.slice(6).trim();
+      if (payload === '[DONE]') continue;
+
+      try {
+        const chunk = JSON.parse(payload);
+        if (chunk.error) throw new Error(chunk.error);
+        if (chunk.text) {
+          fullText += chunk.text;
+          wrapper.textContent = fullText;  // safe text preview while streaming
+        }
+      } catch (e) {
+        if (e.message && !e.message.startsWith('Unexpected')) throw e;
+      }
+    }
+  }
+
+  return fullText;
+}
+
+/** Render Gemini text with MathJax (shared by both paths) */
+async function _renderGeminiResult(container, text) {
+  const wrapper = container.querySelector('.gemini-result') || document.createElement('div');
+  if (!wrapper.parentElement) {
+    wrapper.className = 'qv-text gemini-result';
+    wrapper.style.cssText = 'direction:rtl;line-height:1.8;';
+    container.innerHTML = '';
+    container.appendChild(wrapper);
+  }
+  wrapper.textContent = text;
+
+  if (window.MathJax) {
+    await MathJax.typesetPromise([wrapper]);
+    // After MathJax, convert remaining newlines to <br> and bold in text nodes
+    const walk = document.createTreeWalker(wrapper, NodeFilter.SHOW_TEXT);
+    const textNodes = [];
+    while (walk.nextNode()) textNodes.push(walk.currentNode);
+    textNodes.forEach(node => {
+      if (node.parentElement?.closest('mjx-container')) return;
+      if (node.textContent.includes('\n') || /\*\*.+?\*\*/.test(node.textContent)) {
+        const span = document.createElement('span');
+        span.innerHTML = node.textContent
+          .replace(/&/g, '&amp;').replace(/</g, '&lt;')
+          .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+          .replace(/\n/g, '<br>');
+        node.replaceWith(span);
+      }
+    });
+  }
+}
+
+function _showGeminiError(msg) {
+  const body = document.getElementById('gemini-body');
+  if (!body) return;
+  body.innerHTML = `<div style="text-align:center;padding:1.5rem;color:#dc2626">
+    <p style="font-weight:600">שגיאה ביצירת שאלה</p>
+    <p style="font-size:.85rem;color:#6b7280;margin-top:.5rem">${esc(msg)}</p>
+    <button class="btn-gemini" style="margin-top:1rem" onclick="_geminiRegenerate()">נסה שוב</button>
+  </div>`;
+}
+
+function _buildGeminiPrompt(sourceText) {
+  return `אתה מרצה בכיר למתמטיקה באוניברסיטה (מומחה לאלגברה לינארית, חדו"א ועוד).
+המטרה שלך היא ליצור שאלת תרגול *אחת* חדשה שדומה בדיוק לשאלה המקורית שסופקה לך.
+
+הנחיות קריטיות:
+1. זהות קונספטואלית: שמור על אותו נושא מתמטי, אותה רמת קושי ואותו מבנה של השאלה המקורית.
+2. נתונים הגיוניים: שנה את המספרים, המטריצות או הווקטורים, אבל ודא מתמטית שהשאלה עדיין פתירה בצורה "נקייה" (לדוגמה: אם בשאלה המקורית הפתרון כלל מספרים שלמים, אל תיצור מטריצה שתניב שברים מסובכים).
+3. עיצוב MathJax: כל ביטוי מתמטי, משוואה, מטריצה או משתנה חייב להיות עטוף ב-LaTeX תקין. השתמש ב-$ עבור מתמטיקה בשורה (inline) וב-$$ עבור משוואות מופרדות.
+4. פלט נקי: החזר *אך ורק* את הטקסט של השאלה החדשה בעברית. אל תוסיף הקדמות ("הנה השאלה שביקשת"), ואל תוסיף את הפתרון.
+
+השאלה המקורית:
+${sourceText}`;
+}
+
+function _geminiRegenerate() {
+  const overlay = document.getElementById('gemini-modal-overlay');
+  if (!overlay) return;
+  const sourceText = overlay.dataset.sourceText || '';
+  if (sourceText) _callGeminiAPI(sourceText);
+}
+
+async function _geminiSave() {
+  const overlay = document.getElementById('gemini-modal-overlay');
+  if (!overlay) return;
+  const uid = STATE.fireUser?.uid;
+  if (!uid) { toast('יש להתחבר כדי לשמור', 'error'); return; }
+
+  const sourceText   = overlay.dataset.sourceText || '';
+  const generatedText = overlay.dataset.generatedText || '';
+  const type          = overlay.dataset.type || 'question';
+  if (!generatedText) { toast('אין שאלה לשמירה', 'error'); return; }
+
+  const saveBtn = document.getElementById('gemini-save-btn');
+  if (saveBtn) { saveBtn.disabled = true; saveBtn.textContent = 'שומר...'; }
+
+  const entry = {
+    id:            genId(),
+    originalText:  sourceText,
+    generatedText: generatedText,
+    createdAt:     new Date().toISOString(),
+    type:          type,
+    courseId:       STATE.courseId || '',
+  };
+
+  try {
+    await db.collection('users').doc(uid).update({
+      aiQuestions: firebase.firestore.FieldValue.arrayUnion(entry)
+    });
+    // Update local state
+    if (!STATE.userData.aiQuestions) STATE.userData.aiQuestions = [];
+    STATE.userData.aiQuestions.push(entry);
+    toast('✅ השאלה נשמרה!', 'info');
+    // Brief visual feedback on button, keep modal open
+    if (saveBtn) {
+      saveBtn.textContent = '✅ נשמר!';
+      saveBtn.disabled = true;
+      setTimeout(() => { saveBtn.textContent = '💾 שמור'; saveBtn.disabled = false; }, 1500);
+    }
+  } catch (e) {
+    console.error('Error saving AI question:', e);
+    toast('שגיאה בשמירה — נסה שוב', 'error');
+    if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = '💾 שמור'; }
+  }
+}
+
+function closeGeminiModal() {
+  _stopGeminiLoading();
+  document.getElementById('gemini-modal-overlay')?.remove();
+  document.body.style.overflow = '';
+}
+
+/* ── AI Questions Tab ──────────────────────────────────────── */
+function renderAIQuestionsTab() {
+  const tc = document.getElementById('tab-content');
+  if (!tc) return;
+
+  const items = STATE.userData?.aiQuestions || [];
+
+  if (!items.length) {
+    tc.innerHTML = `<div class="empty" style="margin-top:2rem">
+      <span class="ei">✨</span>
+      <h3>אין שאלות שנוצרו</h3>
+      <p>לחץ על כפתור ✨ ליד שאלה כדי ליצור שאלה דומה באמצעות AI</p>
+    </div>`;
+    return;
+  }
+
+  // Show newest first
+  const sorted = [...items].reverse();
+  const copySVG = `<svg width="15" height="15" viewBox="0 0 16 16" fill="#9ca3af">
+    <path d="M4 1.5H3a2 2 0 0 0-2 2V14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V3.5a2 2 0 0 0-2-2h-1v1h1a1 1 0 0 1 1 1V14a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V3.5a1 1 0 0 1 1-1h1v-1z"/>
+    <path d="M9.5 1a.5.5 0 0 1 .5.5v1a.5.5 0 0 1-.5.5h-3a.5.5 0 0 1-.5-.5v-1a.5.5 0 0 1 .5-.5h3zm-3-1A1.5 1.5 0 0 0 5 1.5v1A1.5 1.5 0 0 0 6.5 4h3A1.5 1.5 0 0 0 11 2.5v-1A1.5 1.5 0 0 0 9.5 0h-3z"/></svg>`;
+
+  tc.innerHTML = `<div style="margin-top:.5rem">
+    <p style="color:var(--muted);font-size:.85rem;margin-bottom:1rem">
+      ${items.length} שאלות שנוצרו באמצעות AI
+    </p>
+    ${sorted.map((item, idx) => {
+      const realIdx = items.length - 1 - idx;
+      return `<div class="ai-q-card">
+        <details style="margin-bottom:.5rem">
+          <summary style="cursor:pointer;font-size:.82rem;color:var(--muted);font-weight:600">📄 שאלה מקורית</summary>
+          <div style="padding:.5rem .75rem;font-size:.88rem;background:#f9fafb;border-radius:8px;margin-top:.5rem;white-space:pre-wrap;direction:rtl" class="ai-q-original-${realIdx}">${esc(item.originalText || '')}</div>
+        </details>
+        <div class="ai-q-text ai-q-generated-${realIdx}">${esc(item.generatedText || '')}</div>
+        <div class="ai-q-actions">
+          <button class="qv-btn" onclick="copyAiQuestion(${realIdx})" title="העתק LaTeX">${copySVG}</button>
+          <button class="btn btn-sm" style="color:#dc2626;border-color:#fecaca" onclick="deleteAiQuestion(${realIdx})">🗑️ מחק</button>
+        </div>
+      </div>`;
+    }).join('')}
+  </div>`;
+
+  // Render MathJax for all generated/original texts (safe: textContent + MathJax)
+  sorted.forEach((item, idx) => {
+    const realIdx = items.length - 1 - idx;
+    const genEl = tc.querySelector(`.ai-q-generated-${realIdx}`);
+    if (genEl) _renderGeminiResult(genEl, item.generatedText || '');
+    const origEl = tc.querySelector(`.ai-q-original-${realIdx}`);
+    if (origEl) _renderGeminiResult(origEl, item.originalText || '');
+  });
+
+  if (window.MathJax) MathJax.typesetPromise([tc]);
+}
+
+async function copyAiQuestion(index) {
+  const items = STATE.userData?.aiQuestions || [];
+  const item = items[index];
+  if (!item) return;
+  try {
+    await navigator.clipboard.writeText(item.generatedText || '');
+    toast('📋 השאלה הועתקה', 'info');
+  } catch (e) {
+    console.error('Copy failed:', e);
+    toast('שגיאה בהעתקה', 'error');
+  }
+}
+
+async function deleteAiQuestion(index) {
+  if (!confirm('למחוק את השאלה?')) return;
+  const uid = STATE.fireUser?.uid;
+  if (!uid) return;
+
+  const items = STATE.userData?.aiQuestions || [];
+  if (index < 0 || index >= items.length) return;
+
+  const removed = items[index];
+  items.splice(index, 1);
+  STATE.userData.aiQuestions = items;
+
+  // Re-render immediately
+  renderAIQuestionsTab();
+
+  try {
+    await db.collection('users').doc(uid).update({
+      aiQuestions: firebase.firestore.FieldValue.arrayRemove(removed)
+    });
+    toast('🗑️ השאלה נמחקה', 'info');
+  } catch (e) {
+    console.error('Error deleting AI question:', e);
+    toast('שגיאה במחיקה', 'error');
+  }
 }
