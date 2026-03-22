@@ -17,7 +17,7 @@ service cloud.firestore {
     }
 
     match /access_requests/{requestId} {
-      allow create: if true;
+      allow create: if false;
       allow read, list, update, delete: if isAdmin();
     }
 
@@ -33,7 +33,22 @@ service cloud.firestore {
 
     match /users/{userId} {
       allow read: if isAdmin() || (isLoggedIn() && request.auth.uid == userId);
-      allow write: if isLoggedIn() && request.auth.uid == userId;
+
+      // Students can update only safe fields on their own document.
+      // The critical fields role, uid, and email are BLOCKED from self-writes.
+      allow update: if isLoggedIn()
+        && request.auth.uid == userId
+        && !request.resource.data.diff(resource.data).affectedKeys()
+            .hasAny(['role', 'uid', 'email']);
+
+      // Admins can update any user document (they need to manage roles)
+      allow update: if isAdmin();
+
+      // New user document creation — force role to 'student' so nobody
+      // can create their doc with role:'admin' on first login
+      allow create: if isLoggedIn()
+        && request.auth.uid == userId
+        && request.resource.data.role == 'student';
 
       // AI task results written by background function (Admin SDK)
       // Users can only read their own tasks

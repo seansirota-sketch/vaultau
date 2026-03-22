@@ -3028,9 +3028,10 @@ async function renderPermissionsSection() {
  */
 async function sendWelcomeEmail(email, name = '') {
   try {
+    const token = await firebase.auth().currentUser.getIdToken();
     const res = await fetch('/.netlify/functions/send-welcome-email', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
       body: JSON.stringify({ email, name }),
     });
 

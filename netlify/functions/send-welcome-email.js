@@ -14,14 +14,26 @@ const sgMail = require('@sendgrid/mail');
 
 /* ── CORS headers ── */
 const CORS = {
-  'Access-Control-Allow-Origin':  '*',
-  'Access-Control-Allow-Headers': 'Content-Type',
+  'Access-Control-Allow-Origin':  process.env.ALLOWED_ORIGIN || 'https://vaultau.netlify.app',
+  'Access-Control-Allow-Headers': 'Content-Type, Authorization',
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
 };
 
+/* ── HTML escaping utility ── */
+function escapeHtml(str) {
+  if (!str) return '';
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
 /* ── HTML email template ── */
 function buildEmailHtml({ name, email }) {
-  const displayName = name || email.split('@')[0];
+  const displayName = escapeHtml(name || email.split('@')[0]);
+  const safeEmail   = escapeHtml(email);
   // הכתובת המדויקת שביקשת
   const loginUrl = 'https://vaultau.netlify.app/';
 
@@ -64,7 +76,7 @@ function buildEmailHtml({ name, email }) {
 
               <div style="background:#f0fdf4; border-right:4px solid #22c55e; padding:15px; margin-bottom:25px; color:#166534; font-size:14px;">
                 <strong>חשוב:</strong> עליך להירשם עם המייל הזה בלבד: <br>
-                <strong dir="ltr">${email}</strong>
+                <strong dir="ltr">${safeEmail}</strong>
               </div>
 
               <table cellpadding="0" cellspacing="0" width="100%">
@@ -83,7 +95,7 @@ function buildEmailHtml({ name, email }) {
 
               <p style="margin:0;color:#9ca3af;font-size:13px;line-height:1.6;
                         border-top:1px solid #f3f4f6;padding-top:20px">
-                נשלח אל: <span dir="ltr">${email}</span><br>
+                נשלח אל: <span dir="ltr">${safeEmail}</span><br>
                 אם לא ביקשת גישה זו, ניתן להתעלם ממייל זה.
               </p>
             </td>
@@ -126,6 +138,55 @@ exports.handler = async (event) => {
       headers: CORS,
       body: JSON.stringify({ error: 'Method Not Allowed' }),
     };
+  }
+
+  /* ── Auth: extract Bearer token ── */
+  const authHeader = (event.headers && (event.headers['authorization'] || event.headers['Authorization'])) || '';
+  const idToken = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null;
+  if (!idToken) {
+    return { statusCode: 401, headers: CORS, body: JSON.stringify({ error: 'Missing authorization token' }) };
+  }
+
+  /* ── Auth: verify token with Firebase Identity Toolkit ── */
+  const firebaseWebApiKey = process.env.FIREBASE_WEB_API_KEY;
+  if (!firebaseWebApiKey) {
+    return { statusCode: 500, headers: CORS, body: JSON.stringify({ error: 'Server misconfiguration' }) };
+  }
+
+  let uid;
+  try {
+    const verifyRes = await fetch(
+      `https://identitytoolkit.googleapis.com/v1/accounts:lookup?key=${firebaseWebApiKey}`,
+      { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ idToken }) }
+    );
+    if (!verifyRes.ok) {
+      return { statusCode: 401, headers: CORS, body: JSON.stringify({ error: 'Invalid or expired token' }) };
+    }
+    const verifyData = await verifyRes.json();
+    if (!verifyData?.users?.length) {
+      return { statusCode: 401, headers: CORS, body: JSON.stringify({ error: 'Invalid or expired token' }) };
+    }
+    uid = verifyData.users[0].localId;
+  } catch {
+    return { statusCode: 401, headers: CORS, body: JSON.stringify({ error: 'Token verification failed' }) };
+  }
+
+  /* ── Auth: verify caller is admin via Firestore REST API ── */
+  try {
+    const fsRes = await fetch(
+      `https://firestore.googleapis.com/v1/projects/eaxmbank/databases/(default)/documents/users/${uid}`,
+      { headers: { Authorization: `Bearer ${idToken}` } }
+    );
+    if (!fsRes.ok) {
+      return { statusCode: 403, headers: CORS, body: JSON.stringify({ error: 'Admin access required' }) };
+    }
+    const fsData = await fsRes.json();
+    const role = fsData?.fields?.role?.stringValue;
+    if (role !== 'admin') {
+      return { statusCode: 403, headers: CORS, body: JSON.stringify({ error: 'Admin access required' }) };
+    }
+  } catch {
+    return { statusCode: 403, headers: CORS, body: JSON.stringify({ error: 'Admin access required' }) };
   }
 
   /* ── Env vars guard ── */
