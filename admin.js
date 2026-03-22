@@ -269,14 +269,20 @@ async function adminLogin() {
   } catch (e) {
     console.error('adminLogin error:', e.code, e.message);
     const messages = {
+      // auth/user-not-found is no longer emitted by newer Firebase SDK versions.
+      // Kept here for emulator / legacy SDK compatibility only.
       'auth/user-not-found':       'אימייל לא קיים במערכת',
       'auth/wrong-password':       'סיסמה שגויה',
+      // auth/invalid-login-credentials replaces both auth/wrong-password and
+      // auth/user-not-found in newer SDK versions — use a generic message to
+      // avoid leaking whether the email or password is incorrect (user enumeration).
+      'auth/invalid-login-credentials': 'אימייל או סיסמה שגויים',
       'auth/invalid-credential':   'אימייל או סיסמה שגויים',
       'auth/invalid-email':        'פורמט אימייל לא תקין',
       'auth/too-many-requests':    'יותר מדי ניסיונות — נסה שוב מאוחר יותר',
       'auth/network-request-failed': 'שגיאת רשת — בדוק חיבור לאינטרנט',
     };
-    err.textContent = messages[e.code] || `שגיאת התחברות (${e.code}): ${e.message}`;
+    err.textContent = messages[e.code] || 'שגיאת התחברות — נסה שוב';
     err.classList.add('show');
   } finally {
     if (btn) { btn.disabled = false; btn.textContent = 'כניסה ←'; }
