@@ -22,6 +22,11 @@ firebase-export-*/
 # Local emulator rules (open rules, emulator only — never deploy)
 *.rules.local
 
+# VS Code agent customization files (local only)
+.github/agents/
+
 # OS generated files (Mac/Windows hidden files)
 .DS_Store
 Thumbs.db
+
+

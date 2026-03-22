@@ -34,6 +34,12 @@ service cloud.firestore {
     match /users/{userId} {
       allow read: if isAdmin() || (isLoggedIn() && request.auth.uid == userId);
       allow write: if isLoggedIn() && request.auth.uid == userId;
+
+      // AI task results written by background function (Admin SDK)
+      // Users can only read their own tasks
+      match /ai_tasks/{taskId} {
+        allow read: if isLoggedIn() && request.auth.uid == userId;
+      }
     }
 
     match /questionVotes/{questionId} {
@@ -41,8 +47,13 @@ service cloud.firestore {
       allow write: if isLoggedIn();
     }
 
+    match /ai_questions_cache/{docId} {
+      allow read: if isLoggedIn();
+      allow write: if isLoggedIn();
+    }
+
     match /settings/{docId} {
-      allow read: if docId == 'api_keys' ? isAdmin() : isLoggedIn();
+      allow read: if isAdmin();
       allow write: if isAdmin();
     }
 

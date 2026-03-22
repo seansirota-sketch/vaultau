@@ -1388,3 +1388,76 @@ mjx-container { direction: ltr; }
   background: var(--primary, #667eea); color: #fff;
   border-color: var(--primary, #667eea);
 }
+
+/* Gemini AI button — uses standard .qv-btn, no extra class needed */
+
+/* ── Gemini modal ──────────────────────────────────────────── */
+.gemini-modal-overlay {
+  position: fixed; inset: 0;
+  background: rgba(0,0,0,.6);
+  display: flex; align-items: center; justify-content: center;
+  z-index: 10000; padding: 1rem;
+  backdrop-filter: blur(2px);
+}
+.gemini-modal {
+  background: #fff; border-radius: 16px;
+  width: min(94vw, 560px); max-height: 85vh;
+  box-shadow: 0 20px 60px rgba(0,0,0,.3);
+  direction: rtl; overflow: hidden;
+  display: flex; flex-direction: column;
+}
+.gemini-modal-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 1rem 1.25rem;
+  border-bottom: 1px solid var(--border);
+  background: linear-gradient(135deg, #f5f3ff 0%, #eef2ff 100%);
+}
+.gemini-modal-header h3 { margin: 0; font-size: 1rem; font-weight: 700; color: #6d28d9; }
+.gemini-modal-body {
+  padding: 1.25rem; overflow-y: auto; flex: 1;
+  font-size: .92rem; line-height: 1.7; color: var(--text);
+}
+.gemini-modal-body .gemini-result { font-size: .95rem; }
+.gemini-modal-body .gemini-result .math-display {
+  direction: ltr; text-align: center; margin: .6rem 0;
+  overflow-x: auto; padding: .4rem 0;
+}
+.gemini-modal-body .gemini-result .MathJax { direction: ltr; }
+.gemini-modal-body .gemini-loading {
+  display: flex; flex-direction: column; align-items: center;
+  gap: .75rem; padding: 2rem 0; color: var(--muted);
+}
+.gemini-modal-body .gemini-loading .spinner {
+  width: 36px; height: 36px; border: 3px solid #e5e7eb;
+  border-top-color: #7c3aed; border-radius: 50%;
+  animation: spin .7s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+.gemini-modal-footer {
+  display: flex; gap: .75rem; justify-content: flex-end;
+  padding: .85rem 1.25rem; border-top: 1px solid var(--border);
+}
+.gemini-modal-footer .btn-gemini {
+  background: linear-gradient(135deg, #7c3aed 0%, #6366f1 100%);
+  color: #fff; border: none; padding: .45rem 1rem;
+  border-radius: 8px; font-weight: 600; font-size: .85rem;
+  cursor: pointer; font-family: inherit; transition: opacity .15s;
+}
+.gemini-modal-footer .btn-gemini:hover { opacity: .88; }
+.gemini-modal-footer .btn-gemini:disabled { opacity: .5; cursor: not-allowed; }
+
+/* ── AI questions tab card ─────────────────────────────────── */
+.ai-q-card {
+  background: #fff; border: 1.5px solid var(--border);
+  border-radius: 12px; padding: 1rem 1.25rem;
+  margin-bottom: .75rem; position: relative;
+}
+.ai-q-card .ai-q-source {
+  font-size: .78rem; color: var(--muted); margin-bottom: .5rem;
+}
+.ai-q-card .ai-q-text {
+  font-size: .92rem; line-height: 1.7; color: var(--text); white-space: pre-wrap;
+}
+.ai-q-card .ai-q-actions {
+  display: flex; gap: .5rem; justify-content: flex-end; margin-top: .75rem;
+}
