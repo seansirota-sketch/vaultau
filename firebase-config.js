@@ -86,8 +86,19 @@ async function fetchUserData(uid, email) {
   return defaults;
 }
 
+const ALLOWED_USER_FIELDS = [
+  'displayName', 'starredQuestions', 'difficultyVotes',
+  'acceptedTerms', 'acceptedTermsAt', 'surveyDone',
+  'completedExams', 'doneExams', 'inProgressExams',
+  'copyCount', 'lastCopyReset', 'createdAt', 'savedCourses', 'aiQuestions'
+];
+
 async function saveUserData(uid, data) {
-  await db.collection('users').doc(uid).set({ uid, ...data }, { merge: true });
+  const safe = {};
+  for (const key of ALLOWED_USER_FIELDS) {
+    if (key in data) safe[key] = data[key];
+  }
+  await db.collection('users').doc(uid).set({ uid, ...safe }, { merge: true });
 }
 
 function genId() {
