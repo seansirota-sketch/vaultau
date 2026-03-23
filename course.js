@@ -63,6 +63,68 @@ function toast(msg, type = '') {
 /* ── GEMINI – environment detection ────────────────────────── */
 const _isLocalDev = location.hostname === 'localhost' || location.hostname === '127.0.0.1';
 
+/* ── AI Generate – client-side quota & state tracking ──────── */
+let _aiGenerateInProgress = false;   // prevent concurrent requests
+let _aiQuotaRemaining = null;        // populated from response headers
+let _aiQuotaLimit = null;
+
+function _updateQuotaBadge() {
+  const badge = document.getElementById('gemini-quota-badge');
+  if (badge && _aiQuotaRemaining !== null && _aiQuotaLimit !== null) {
+    badge.textContent = `${_aiQuotaRemaining}/${_aiQuotaLimit}`;
+    const pct = _aiQuotaRemaining / _aiQuotaLimit;
+    if (pct <= 0) {
+      badge.style.background = 'rgba(239,68,68,.15)'; badge.style.color = '#ef4444';
+    } else if (pct <= 0.2) {
+      badge.style.background = 'rgba(245,158,11,.15)'; badge.style.color = '#f59e0b';
+    } else {
+      badge.style.background = 'rgba(99,102,241,.12)'; badge.style.color = '#6366f1';
+    }
+  }
+  _updateNavbarQuotaBadge();
+}
+
+/** Update the navbar quota badge (shown near username) */
+function _updateNavbarQuotaBadge() {
+  const badge = document.getElementById('navbar-quota-badge');
+  if (!badge) return;
+  if (_aiQuotaRemaining === null || _aiQuotaLimit === null) {
+    badge.textContent = '';
+    return;
+  }
+  badge.textContent = `✨ ${_aiQuotaRemaining}/${_aiQuotaLimit}`;
+  const pct = _aiQuotaRemaining / _aiQuotaLimit;
+  if (pct <= 0) {
+    badge.style.background = 'rgba(239,68,68,.25)'; badge.style.color = '#fca5a5';
+  } else if (pct <= 0.2) {
+    badge.style.background = 'rgba(245,158,11,.25)'; badge.style.color = '#fde68a';
+  } else {
+    badge.style.background = 'rgba(255,255,255,.2)'; badge.style.color = '#fff';
+  }
+}
+
+/** Fetch quota from Firestore on page load */
+async function _fetchInitialQuota() {
+  const uid = STATE.fireUser?.uid;
+  if (!uid) return;
+  try {
+    const today = new Date().toISOString().slice(0, 10);
+    const snap = await db.collection('user_quotas').doc(uid).get();
+    if (snap.exists) {
+      const data = snap.data();
+      const dailyUsed = (data.date_key === today) ? (data.requests_today || 0) : 0;
+      _aiQuotaLimit = 10;
+      _aiQuotaRemaining = Math.max(0, 10 - dailyUsed);
+    } else {
+      _aiQuotaLimit = 10;
+      _aiQuotaRemaining = 10;
+    }
+    _updateNavbarQuotaBadge();
+  } catch (e) {
+    console.warn('Failed to fetch quota:', e.message);
+  }
+}
+
 let _geminiKey = null;
 async function _loadGeminiKey() {
   if (_geminiKey) return _geminiKey;
@@ -136,6 +198,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
       // ── 3. Normal load ─────────────────────────────────────
       renderNavbar();
+      _fetchInitialQuota();
       const hs = history.state;
       if (hs && hs.page) {
         STATE.page     = hs.page;
@@ -788,6 +851,7 @@ function renderNavbar() {
         <div class="navbar-user">
           <div class="av">${displayName[0].toUpperCase()}</div>
           <span>${esc(displayName)}</span>
+          <span id="navbar-quota-badge" style="font-size:.72rem;padding:2px 8px;border-radius:12px;background:rgba(255,255,255,.2);color:#fff;white-space:nowrap;cursor:default;margin-right:.4rem" title="מכסת יצירת שאלות יומית"></span>
         </div>
         <button class="btn btn-ghost btn-sm" onclick="doLogout()">יציאה</button>
       </div>
@@ -2297,15 +2361,35 @@ function openGeminiModal(qOrSubId, type) {
   overlay.innerHTML = `
     <div class="gemini-modal">
       <div class="gemini-modal-header">
-        <h3>✨ יצירת שאלה דומה</h3>
         <button class="qv-btn" onclick="closeGeminiModal()" title="סגור"
-          style="background:none;border:none;font-size:1.2rem;cursor:pointer;color:#6b7280">✕</button>
+          style="background:none;border:none;font-size:1.2rem;cursor:pointer;color:#6b7280;margin-left:0;margin-right:auto">✕</button>
+        <h3 style="flex:1;text-align:center;margin:0">✨ יצירת שאלה דומה</h3>
+        <div style="display:flex;align-items:center;gap:.6rem">
+          <div id="gemini-rate-wrap" style="display:none;gap:.3rem;align-items:center" title="דרג את איכות השאלה">
+            <button class="qv-btn" id="gemini-rate-up" onclick="_rateQuestion('up')" style="font-size:1rem;padding:2px 6px">👍</button>
+            <button class="qv-btn" id="gemini-rate-down" onclick="_rateQuestion('down')" style="font-size:1rem;padding:2px 6px">👎</button>
+          </div>
+          <span id="gemini-quota-badge" style="font-size:.75rem;padding:2px 8px;border-radius:12px;background:rgba(99,102,241,.12);color:#6366f1;white-space:nowrap">${_aiQuotaRemaining !== null && _aiQuotaLimit !== null ? `${_aiQuotaRemaining}/${_aiQuotaLimit}` : ''}</span>
+        </div>
+      </div>
+      <!-- Difficulty selector -->
+      <div id="gemini-config-row" style="display:flex;gap:.6rem;padding:1rem 1.25rem;border-bottom:1px solid #f3f4f6;flex-wrap:wrap;align-items:center;justify-content:center">
+        <label style="font-size:.9rem;color:var(--muted);font-weight:600">רמת קושי:</label>
+        <select id="gemini-difficulty" style="font-size:.9rem;padding:5px 12px;border-radius:8px;border:1px solid #d1d5db">
+          <option value="same">כמו המקור</option>
+          <option value="easy">קלה</option>
+          <option value="medium">בינונית</option>
+          <option value="hard">קשה</option>
+        </select>
+        <button class="btn-gemini" id="gemini-start-btn" onclick="_geminiStartGenerate()" style="margin-right:1rem;padding:6px 24px;font-size:.9rem">✨ צור שאלה</button>
       </div>
       <div class="gemini-modal-body" id="gemini-body">
+        <div style="text-align:center;padding:2rem;color:var(--muted);font-size:.95rem">בחר רמת קושי ולחץ על "צור שאלה"</div>
       </div>
       <div class="gemini-modal-footer" id="gemini-footer" style="display:none">
         <button class="btn-gemini" onclick="closeGeminiModal()">סגור</button>
         <button class="btn-gemini" id="gemini-regen-btn" onclick="_geminiRegenerate()">🔄 שאלה נוספת</button>
+        <button class="btn-gemini" id="gemini-copy-btn" onclick="_copyGeneratedQuestion()">📋 העתק</button>
         <button class="btn-gemini" id="gemini-save-btn" onclick="_geminiSave()" style="background:linear-gradient(135deg,#059669 0%,#10b981 100%)">💾 שמור</button>
       </div>
     </div>`;
@@ -2322,31 +2406,35 @@ function openGeminiModal(qOrSubId, type) {
   overlay.dataset.type = type;
   overlay.dataset.qOrSubId = qOrSubId;
 
-  // Start dynamic loading UI
-  _startGeminiLoading(document.getElementById('gemini-body'));
-
-  // Check global cache first before calling the API
-  _loadFromCacheOrGenerate(qOrSubId, sourceText);
+  // Modal is now open — user selects difficulty and clicks generate
 }
 
 /* ── Global AI Questions Cache ─────────────────────────────── */
+const CACHE_TTL_MS = 6 * 60 * 60 * 1000;  // 6 hours
+
 /**
  * Check Firestore cache for existing AI-generated questions.
- * If found, display immediately; otherwise call the API.
+ * If found (and not expired), display immediately; otherwise call the API.
  */
-async function _loadFromCacheOrGenerate(qOrSubId, sourceText) {
+async function _loadFromCacheOrGenerate(cacheKey, sourceText) {
   const bodyEl = document.getElementById('gemini-body');
   const footer = document.getElementById('gemini-footer');
   if (!bodyEl) return;
 
   try {
-    const cacheDoc = await db.collection('ai_questions_cache').doc(qOrSubId).get();
+    const cacheDoc = await db.collection('ai_questions_cache').doc(cacheKey).get();
     if (cacheDoc.exists) {
       const cached = cacheDoc.data();
       const items = cached.items || [];
-      if (items.length) {
-        // Pick a random cached question
-        const pick = items[Math.floor(Math.random() * items.length)];
+      // Filter out expired items (older than 6 hours)
+      const now = Date.now();
+      const fresh = items.filter(item => {
+        if (!item.createdAt) return false;
+        return (now - new Date(item.createdAt).getTime()) < CACHE_TTL_MS;
+      });
+      if (fresh.length) {
+        // Pick a random fresh cached question
+        const pick = fresh[Math.floor(Math.random() * fresh.length)];
         const text = pick.text || '';
         if (text) {
           _stopGeminiLoading();
@@ -2354,6 +2442,7 @@ async function _loadFromCacheOrGenerate(qOrSubId, sourceText) {
           if (overlay) overlay.dataset.generatedText = text;
           _renderGeminiResult(bodyEl, text);
           if (footer) footer.style.display = 'flex';
+          _showRateButtons();
           return;
         }
       }
@@ -2362,22 +2451,33 @@ async function _loadFromCacheOrGenerate(qOrSubId, sourceText) {
     console.warn('Cache lookup failed, generating fresh:', e.message);
   }
 
-  // No cache hit — generate via API
+  // No cache hit (or all expired) — generate via API
   _callGeminiAPI(sourceText);
 }
 
 /**
  * Save a generated question to the global cache collection.
+ * Includes TTL-aware cleanup: removes expired items on write.
  */
-async function _saveToCache(qOrSubId, sourceText, generatedText) {
+async function _saveToCache(cacheKey, sourceText, generatedText) {
   try {
-    const ref = db.collection('ai_questions_cache').doc(qOrSubId);
+    const ref = db.collection('ai_questions_cache').doc(cacheKey);
+    const snap = await ref.get();
+    const now = Date.now();
+    let items = [];
+
+    if (snap.exists) {
+      // Keep only non-expired items
+      items = (snap.data().items || []).filter(item =>
+        item.createdAt && (now - new Date(item.createdAt).getTime()) < CACHE_TTL_MS
+      );
+    }
+
+    items.push({ text: generatedText, createdAt: new Date().toISOString() });
+
     await ref.set({
       sourceText,
-      items: firebase.firestore.FieldValue.arrayUnion({
-        text: generatedText,
-        createdAt: new Date().toISOString(),
-      }),
+      items,
       updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
     }, { merge: true });
   } catch (e) {
@@ -2394,6 +2494,20 @@ async function _callGeminiAPI(sourceText) {
   const bodyEl = document.getElementById('gemini-body');
   const footer = document.getElementById('gemini-footer');
   if (!bodyEl) return;
+
+  // Prevent concurrent generation requests
+  if (_aiGenerateInProgress) {
+    toast('יצירת שאלה כבר בתהליך, נא להמתין', 'error');
+    return;
+  }
+
+  // Client-side quota pre-check (avoids round-trip if quota is known exhausted)
+  if (_aiQuotaRemaining !== null && _aiQuotaRemaining <= 0) {
+    _showGeminiError('מכסת השאלות היומית מוצתה. נסה שוב מחר.');
+    return;
+  }
+
+  _aiGenerateInProgress = true;
 
   // Show loading
   _startGeminiLoading(bodyEl);
@@ -2417,17 +2531,28 @@ async function _callGeminiAPI(sourceText) {
     const overlay = document.getElementById('gemini-modal-overlay');
     if (overlay) overlay.dataset.generatedText = text;
 
-    // Save to global cache for future users
+    // Save to global cache for future users (keyed by question + difficulty)
     const qOrSubId = overlay?.dataset?.qOrSubId;
-    if (qOrSubId) _saveToCache(qOrSubId, sourceText, text);
+    const difficulty = document.getElementById('gemini-difficulty')?.value || 'same';
+    const cacheKey = qOrSubId ? `${qOrSubId}_${difficulty}` : null;
+    if (cacheKey) _saveToCache(cacheKey, sourceText, text);
 
     // Display final response
     _renderGeminiResult(bodyEl, text);
     if (footer) footer.style.display = 'flex';
+    _showRateButtons();
+
+    // Decrement local quota counter (for local dev where edge function doesn't set headers)
+    if (_isLocalDev && _aiQuotaRemaining !== null && _aiQuotaRemaining > 0) {
+      _aiQuotaRemaining--;
+    }
+    _updateQuotaBadge();
 
   } catch (e) {
     _stopGeminiLoading();
     _showGeminiError(e.message);
+  } finally {
+    _aiGenerateInProgress = false;
   }
 }
 
@@ -2469,8 +2594,20 @@ async function _callGeminiStream(prompt, bodyEl) {
 
   if (!res.ok) {
     const errData = await res.json().catch(() => ({}));
+    // Surface quota info on 429
+    if (res.status === 429 && errData.quota) {
+      _aiQuotaRemaining = 0;
+      _aiQuotaLimit = errData.quota.limit;
+    }
     throw new Error(errData?.error || `Server error: ${res.status}`);
   }
+
+  // Read quota headers from SSE response
+  const qr = res.headers.get('X-Quota-Remaining');
+  const ql = res.headers.get('X-Quota-Limit');
+  if (qr !== null) _aiQuotaRemaining = parseInt(qr, 10);
+  if (ql !== null) _aiQuotaLimit = parseInt(ql, 10);
+  _updateQuotaBadge();
 
   // Set up streaming display
   const wrapper = document.createElement('div');
@@ -2547,16 +2684,63 @@ async function _renderGeminiResult(container, text) {
 function _showGeminiError(msg) {
   const body = document.getElementById('gemini-body');
   if (!body) return;
+
+  // Add quota info if available
+  let quotaHtml = '';
+  if (_aiQuotaRemaining !== null && _aiQuotaLimit !== null) {
+    quotaHtml = `<p style="font-size:.8rem;color:#9ca3af;margin-top:.5rem">מכסה: ${_aiQuotaLimit - (_aiQuotaRemaining || 0)}/${_aiQuotaLimit} שאלות היום</p>`;
+  }
+
   body.innerHTML = `<div style="text-align:center;padding:1.5rem;color:#dc2626">
     <p style="font-weight:600">שגיאה ביצירת שאלה</p>
     <p style="font-size:.85rem;color:#6b7280;margin-top:.5rem">${esc(msg)}</p>
+    ${quotaHtml}
     <button class="btn-gemini" style="margin-top:1rem" onclick="_geminiRegenerate()">נסה שוב</button>
   </div>`;
 }
 
+/** Start generation after user picks difficulty and clicks the button */
+function _geminiStartGenerate() {
+  const overlay = document.getElementById('gemini-modal-overlay');
+  if (!overlay) return;
+  const sourceText = overlay.dataset.sourceText || '';
+  const qOrSubId = overlay.dataset.qOrSubId || '';
+  if (!sourceText) return;
+
+  const difficulty = document.getElementById('gemini-difficulty')?.value || 'same';
+
+  // Hide config row, start loading
+  const configRow = document.getElementById('gemini-config-row');
+  if (configRow) configRow.style.display = 'none';
+
+  const cacheKey = `${qOrSubId}_${difficulty}`;
+  _startGeminiLoading(document.getElementById('gemini-body'));
+  _loadFromCacheOrGenerate(cacheKey, sourceText);
+}
+
 function _buildGeminiPrompt(sourceText) {
+  const difficulty = document.getElementById('gemini-difficulty')?.value || 'same';
+  const template   = 'similar';
+
+  const difficultyInstructions = {
+    same:   'שמור על אותה רמת קושי כמו השאלה המקורית.',
+    easy:   'הפוך את השאלה לקלה יותר — שלבים פחותים, מספרים פשוטים יותר, פחות מלכודות.',
+    medium: 'צור שאלה ברמת קושי בינונית — דומה למקור אך עם שינויים מתונים.',
+    hard:   'הקשה את השאלה — הוסף שלבים, שילוב מושגים, או מקרי קצה מאתגרים.',
+  };
+
+  const templateInstructions = {
+    similar:    'צור שאלה *אחת* חדשה שדומה לשאלה המקורית, עם אותו מבנה ומושגים אך נתונים שונים.',
+    exam:       'צור שאלת בחינה פורמלית *אחת* — כתוב כאילו מדובר בבחינת אמצע/סוף סמסטר, עם ניסוח רשמי ומדויק. כלול את כל הסעיפים הנדרשים.',
+    conceptual: 'צור שאלה מושגית/תיאורטית *אחת* — שאלת הבנה שבודקת את ההבנה העמוקה של המושגים, ללא חישובים כבדים. למשל: "הוכח או הפרך", "הסבר מדוע", "תן דוגמה נגדית".',
+    proof:      'צור שאלת הוכחה *אחת* — שאלה שדורשת הוכחה מתמטית פורמלית, תוך שימוש באותם כלים ומושגים שמופיעים בשאלה המקורית.',
+  };
+
   return `אתה מרצה בכיר למתמטיקה באוניברסיטה (מומחה לאלגברה לינארית, חדו"א ועוד).
-המטרה שלך היא ליצור שאלת תרגול *אחת* חדשה שדומה לשאלה המקורית שסופקה לך.
+
+${templateInstructions[template] || templateInstructions.similar}
+
+רמת קושי: ${difficultyInstructions[difficulty] || difficultyInstructions.same}
 
 הנחיות קריטיות:
 1. אותו מבנה ואותם מושגים: שמור על אותו נושא מתמטי, אותו סוג שאלה (חישוב/הוכחה/בדיקה), אותו מספר סעיפים, ואותם מושגים בדיוק שמופיעים בשאלה המקורית. אל תכניס מושגים או כלים שלא מופיעים בשאלה המקורית.
@@ -2718,5 +2902,60 @@ async function deleteAiQuestion(index) {
   } catch (e) {
     console.error('Error deleting AI question:', e);
     toast('שגיאה במחיקה', 'error');
+  }
+}
+
+function _showRateButtons() {
+  const wrap = document.getElementById('gemini-rate-wrap');
+  if (wrap) wrap.style.display = 'flex';
+}
+
+function _copyGeneratedQuestion() {
+  const overlay = document.getElementById('gemini-modal-overlay');
+  if (!overlay) return;
+  const text = overlay.dataset.generatedText || '';
+  if (!text) { toast('אין שאלה להעתקה', 'error'); return; }
+  navigator.clipboard.writeText(text).then(() => {
+    toast('📋 השאלה הועתקה!', 'info');
+  }).catch(() => {
+    toast('שגיאה בהעתקה', 'error');
+  });
+}
+
+/* ── Quality Rating (thumbs up/down) ─────────────────────── */
+async function _rateQuestion(rating) {
+  const overlay = document.getElementById('gemini-modal-overlay');
+  if (!overlay) return;
+  const uid = STATE.fireUser?.uid;
+  if (!uid) return;
+
+  const qOrSubId = overlay.dataset.qOrSubId || '';
+  const generatedText = overlay.dataset.generatedText || '';
+  if (!generatedText) return;
+
+  const upBtn   = document.getElementById('gemini-rate-up');
+  const downBtn = document.getElementById('gemini-rate-down');
+
+  // Visual feedback
+  if (rating === 'up') {
+    if (upBtn) { upBtn.style.background = '#dcfce7'; upBtn.disabled = true; }
+    if (downBtn) downBtn.disabled = true;
+  } else {
+    if (downBtn) { downBtn.style.background = '#fef2f2'; downBtn.disabled = true; }
+    if (upBtn) upBtn.disabled = true;
+  }
+
+  try {
+    await db.collection('question_ratings').add({
+      uid,
+      questionId: qOrSubId,
+      rating,
+      generatedTextPreview: generatedText.slice(0, 200),
+      courseId: STATE.courseId || '',
+      createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+    });
+    toast(rating === 'up' ? '👍 תודה על המשוב!' : '👎 תודה, נשתפר!', 'info');
+  } catch (e) {
+    console.warn('Failed to save rating:', e.message);
   }
 }

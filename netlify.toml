@@ -34,6 +34,9 @@
   [functions.parse-result]
     timeout = 10
 
+  [functions.pre-generate]
+    schedule = "0 2 * * *"   # Daily at 2:00 AM UTC
+
 # ── Edge Functions ──
 [[edge_functions]]
   path = "/api/generate-question"

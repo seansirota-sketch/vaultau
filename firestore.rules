@@ -67,6 +67,26 @@ service cloud.firestore {
       allow write: if isLoggedIn();
     }
 
+    // Per-user AI generation quota (daily/weekly counters)
+    match /user_quotas/{userId} {
+      allow read: if isLoggedIn() && request.auth.uid == userId;
+      allow write: if isLoggedIn() && request.auth.uid == userId;
+    }
+
+    // AI generation usage logs (analytics / cost tracking)
+    match /generate_usage/{docId} {
+      allow create: if isLoggedIn()
+        && request.resource.data.uid == request.auth.uid;
+      allow read: if isAdmin();
+    }
+
+    // Question quality ratings (thumbs up/down)
+    match /question_ratings/{docId} {
+      allow create: if isLoggedIn()
+        && request.resource.data.uid == request.auth.uid;
+      allow read: if isAdmin();
+    }
+
     match /settings/{docId} {
       allow read: if isAdmin();
       allow write: if isAdmin();
