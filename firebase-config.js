@@ -98,7 +98,7 @@ async function saveUserData(uid, data) {
   for (const key of ALLOWED_USER_FIELDS) {
     if (key in data) safe[key] = data[key];
   }
-  await db.collection('users').doc(uid).set({ uid, ...safe }, { merge: true });
+  await db.collection('users').doc(uid).update(safe);
 }
 
 function genId() {

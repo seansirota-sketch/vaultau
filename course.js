@@ -109,13 +109,19 @@ document.addEventListener('DOMContentLoaded', () => {
       STATE.fireUser = user;
       // Save user data on first sign-in (display name may have just been set).
       if (!STATE.userData) {
-        await saveUserData(user.uid, {
-          uid:              user.uid,
-          displayName:      user.displayName || '',
-          email:            email,
-          starredQuestions: [],
-          createdAt:        firebase.firestore.FieldValue.serverTimestamp(),
-        }).catch(() => {});
+        try {
+          await db.collection('users').doc(user.uid).set({
+            uid:              user.uid,
+            email:            email,
+            displayName:      user.displayName || '',
+            role:             'student',
+            starredQuestions: [],
+            difficultyVotes:  {},
+            createdAt:        firebase.firestore.FieldValue.serverTimestamp(),
+          }, { merge: true });
+        } catch (e) {
+          console.error('Failed to create user document on first login:', e);
+        }
       }
       STATE.userData = await fetchUserData(user.uid, user.email);
       STATE.doneExams       = STATE.userData?.doneExams       || [];
