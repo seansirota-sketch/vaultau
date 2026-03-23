@@ -111,13 +111,10 @@ document.addEventListener('DOMContentLoaded', () => {
       if (!STATE.userData) {
         try {
           await db.collection('users').doc(user.uid).set({
-            uid:              user.uid,
-            email:            email,
-            displayName:      user.displayName || '',
-            role:             'student',
-            starredQuestions: [],
-            difficultyVotes:  {},
-            createdAt:        firebase.firestore.FieldValue.serverTimestamp(),
+            uid:         user.uid,
+            email:       email,
+            displayName: user.displayName || '',
+            createdAt:   firebase.firestore.FieldValue.serverTimestamp(),
           }, { merge: true });
         } catch (e) {
           console.error('Failed to create user document on first login:', e);
