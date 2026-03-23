@@ -107,15 +107,20 @@ document.addEventListener('DOMContentLoaded', () => {
       const email = (user.email || '').toLowerCase().trim();
 
       STATE.fireUser = user;
-      // Save user data on first sign-in (display name may have just been set).
+      // Save user data on first sign-in — only create if doc doesn't exist yet.
+      // Must include role:'student' to satisfy Firestore create rule.
       if (!STATE.userData) {
         try {
-          await db.collection('users').doc(user.uid).set({
-            uid:         user.uid,
-            email:       email,
-            displayName: user.displayName || '',
-            createdAt:   firebase.firestore.FieldValue.serverTimestamp(),
-          }, { merge: true });
+          const docSnap = await db.collection('users').doc(user.uid).get();
+          if (!docSnap.exists) {
+            await db.collection('users').doc(user.uid).set({
+              uid:         user.uid,
+              email:       email,
+              displayName: user.displayName || '',
+              createdAt:   firebase.firestore.FieldValue.serverTimestamp(),
+              role:        'student',
+            });
+          }
         } catch (e) {
           console.error('Failed to create user document on first login:', e);
         }
