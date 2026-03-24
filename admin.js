@@ -383,6 +383,7 @@ function _applySectionUI(name) {
   if (name === 'permissions') renderPermissionsSection();
   if (name === 'requests')    renderRequestsSection();
   if (name === 'reports')     renderReportsSection();
+  if (name === 'ai-monitor')  renderAIMonitor();
 }
 
 // Public — called from nav clicks; pushes history entry
@@ -3123,7 +3124,185 @@ async function addAuthorizedEmails() {
     console.error('addAuthorizedEmails error:', e);
     toast('שגיאה בשמירה: ' + e.message, 'error');
   } finally {
+    const btn = document.getElementById('add-emails-btn');
     if (btn) { btn.disabled = false; btn.textContent = '🔓 הוסף מיילים למערכת'; }
+  }
+}
+
+/* ── AI MONITORING DASHBOARD ─────────────────────────────── */
+// Token-based pricing (USD per 1M tokens)
+const GEMINI_INPUT_PER_M   = 1.25;
+const GEMINI_OUTPUT_PER_M  = 5.00;
+const CLAUDE_INPUT_PER_M   = 3.00;
+const CLAUDE_OUTPUT_PER_M  = 15.00;
+// Flat-rate fallback for older docs that lack token counts
+const GEMINI_COST_PER_Q    = 0.0025;
+const CLAUDE_COST_PER_Q    = 0.0185;
+const COST_ALERT_DAILY     = 10;   // alert if daily cost > $10
+
+async function renderAIMonitor() {
+  const statsGrid     = document.getElementById('ai-stats-grid');
+  const costSummary   = document.getElementById('ai-cost-summary');
+  const usageTable    = document.getElementById('ai-usage-table');
+  const topUsersEl    = document.getElementById('ai-top-users');
+  const alertsEl      = document.getElementById('ai-alerts');
+  const hitRateEl     = document.getElementById('ai-hit-rate');
+  const errorRateEl   = document.getElementById('ai-error-rate');
+  const ratingsEl     = document.getElementById('ai-ratings-summary');
+  if (!statsGrid) return;
+
+  statsGrid.innerHTML   = '<div style="color:var(--muted)">טוען...</div>';
+  costSummary.innerHTML = '<div style="color:var(--muted)">טוען...</div>';
+
+  try {
+    const todayStr = new Date().toISOString().slice(0, 10);
+    const [todaySnap, recentSnap, cacheSnap, ratingsSnap] = await Promise.all([
+      db.collection('generate_usage').where('date_key', '==', todayStr).get(),
+      db.collection('generate_usage').orderBy('timestamp', 'desc').limit(50).get(),
+      db.collection('ai_questions_cache').get(),
+      db.collection('question_ratings').orderBy('createdAt', 'desc').limit(100).get(),
+    ]);
+
+    const todayDocs = todaySnap.docs.map(d => d.data());
+    const totalToday  = todayDocs.length;
+    const geminiToday = todayDocs.filter(d => d.api === 'gemini').length;
+    const claudeToday = todayDocs.filter(d => d.api === 'claude').length;
+    const errorToday  = todayDocs.filter(d => d.status === 'error').length;
+    const successToday = totalToday - errorToday;
+    const cacheDocs   = cacheSnap.size;
+    const avgLatency  = totalToday > 0
+      ? Math.round(todayDocs.reduce((s, d) => s + (d.latencyMs || 0), 0) / totalToday)
+      : 0;
+    const uniqueUsers = new Set(todayDocs.map(d => d.uid)).size;
+
+    // Cache hit rate estimation: cached items served vs total requests
+    const cachedToday = todayDocs.filter(d => d.cached === true).length;
+    const hitRate     = totalToday > 0 ? Math.round(cachedToday / totalToday * 100) : 0;
+
+    // Error rate
+    const errorRate   = totalToday > 0 ? (errorToday / totalToday * 100).toFixed(1) : '0';
+
+    // Quality ratings summary
+    const ratingsDocs = ratingsSnap.docs.map(d => d.data());
+    const thumbsUp    = ratingsDocs.filter(d => d.rating === 'up').length;
+    const thumbsDown  = ratingsDocs.filter(d => d.rating === 'down').length;
+    const totalRatings = thumbsUp + thumbsDown;
+    const satisfactionPct = totalRatings > 0 ? Math.round(thumbsUp / totalRatings * 100) : 0;
+
+    statsGrid.innerHTML = `
+      <div class="stat-card"><div class="stat-val">🚀 ${totalToday}</div><div class="stat-lbl">יצירות היום</div></div>
+      <div class="stat-card"><div class="stat-val">👤 ${uniqueUsers}</div><div class="stat-lbl">משתמשים פעילים</div></div>
+      <div class="stat-card"><div class="stat-val">⚡ ${avgLatency}ms</div><div class="stat-lbl">זמן תגובה ממוצע</div></div>
+      <div class="stat-card"><div class="stat-val">📦 ${cacheDocs}</div><div class="stat-lbl">שאלות במטמון</div></div>
+      <div class="stat-card"><div class="stat-val">🔷 ${geminiToday}</div><div class="stat-lbl">Gemini</div></div>
+      <div class="stat-card"><div class="stat-val">🔶 ${claudeToday}</div><div class="stat-lbl">Claude (fallback)</div></div>
+      <div class="stat-card"><div class="stat-val" style="color:${parseFloat(errorRate) > 5 ? '#dc2626' : '#059669'}">${parseFloat(errorRate) > 5 ? '🔴' : '🟢'} ${errorRate}%</div><div class="stat-lbl">שיעור שגיאות</div></div>
+      <div class="stat-card"><div class="stat-val" style="color:${hitRate > 50 ? '#059669' : '#f59e0b'}">${hitRate > 50 ? '🟢' : '🟡'} ${hitRate}%</div><div class="stat-lbl">שיעור מטמון</div></div>`;
+
+    const costToday = todayDocs.reduce((sum, d) => {
+      if (d.inputTokens || d.outputTokens) {
+        const inRate  = d.api === 'claude' ? CLAUDE_INPUT_PER_M  : GEMINI_INPUT_PER_M;
+        const outRate = d.api === 'claude' ? CLAUDE_OUTPUT_PER_M : GEMINI_OUTPUT_PER_M;
+        return sum + ((d.inputTokens || 0) / 1_000_000 * inRate) + ((d.outputTokens || 0) / 1_000_000 * outRate);
+      }
+      return sum + (d.api === 'claude' ? CLAUDE_COST_PER_Q : GEMINI_COST_PER_Q);
+    }, 0);
+    const estMonthly = costToday * 30;
+    const costPct = Math.min(Math.round(costToday / COST_ALERT_DAILY * 100), 100);
+    const costBarColor = costPct > 80 ? '#dc2626' : costPct > 50 ? '#f59e0b' : '#059669';
+    costSummary.innerHTML = `
+      <div style="display:flex;flex-direction:column;gap:1rem;padding:.3rem 0">
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:1rem;text-align:center">
+          <div><div style="font-size:1.4rem;font-weight:800;color:#059669">$${costToday.toFixed(4)}</div><div style="font-size:.75rem;color:var(--muted);margin-top:.15rem">עלות היום</div></div>
+          <div><div style="font-size:1.4rem;font-weight:800;color:#6366f1">$${estMonthly.toFixed(2)}</div><div style="font-size:.75rem;color:var(--muted);margin-top:.15rem">הערכה חודשית</div></div>
+          <div><div style="font-size:1.4rem;font-weight:800;color:#f59e0b">${totalToday > 0 ? (costToday / totalToday * 1000).toFixed(2) : '0'}¢</div><div style="font-size:.75rem;color:var(--muted);margin-top:.15rem">ממוצע לשאלה</div></div>
+        </div>
+        <div>
+          <div style="display:flex;justify-content:space-between;font-size:.72rem;color:var(--muted);margin-bottom:.3rem"><span>תקציב יומי</span><span>$${costToday.toFixed(2)} / $${COST_ALERT_DAILY}</span></div>
+          <div style="background:#f3f4f6;border-radius:6px;height:8px;overflow:hidden"><div style="width:${costPct}%;height:100%;background:${costBarColor};border-radius:6px;transition:width .3s"></div></div>
+        </div>
+      </div>`;
+
+    // \u2500\u2500 Cost Alert \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+    if (alertsEl) {
+      const alerts = [];
+      if (costToday > COST_ALERT_DAILY) alerts.push(`\u26a0\ufe0f \u05e2\u05dc\u05d5\u05ea \u05d9\u05d5\u05de\u05d9\u05ea ($${costToday.toFixed(2)}) \u05d7\u05d5\u05e8\u05d2\u05ea \u05de-$${COST_ALERT_DAILY}`);
+      if (parseFloat(errorRate) > 5) alerts.push(`\u26a0\ufe0f \u05e9\u05d9\u05e2\u05d5\u05e8 \u05e9\u05d2\u05d9\u05d0\u05d5\u05ea \u05d2\u05d1\u05d5\u05d4 (${errorRate}%) \u2014 \u05d1\u05d3\u05d5\u05e7 \u05ea\u05e7\u05d9\u05e0\u05d5\u05ea API`);
+      if (estMonthly > 100) alerts.push(`\u26a0\ufe0f \u05d4\u05e2\u05e8\u05db\u05ea \u05e2\u05dc\u05d5\u05ea \u05d7\u05d5\u05d3\u05e9\u05d9\u05ea ($${estMonthly.toFixed(0)}) \u05d7\u05d5\u05e8\u05d2\u05ea \u05de-$100`);
+      if (hitRate < 30 && totalToday > 20) alerts.push(`\u2139\ufe0f \u05e9\u05d9\u05e2\u05d5\u05e8 \u05de\u05d8\u05de\u05d5\u05df \u05e0\u05de\u05d5\u05da (${hitRate}%) \u2014 \u05e9\u05e7\u05d5\u05dc \u05dc\u05d4\u05d2\u05d3\u05d9\u05dc TTL`);
+
+      if (alerts.length) {
+        alertsEl.innerHTML = alerts.map(a => `<div style="padding:.5rem .8rem;background:${a.startsWith('\u26a0\ufe0f') ? '#fef2f2' : '#eff6ff'};border-radius:8px;font-size:.85rem;color:${a.startsWith('\u26a0\ufe0f') ? '#991b1b' : '#1e40af'}">${a}</div>`).join('');
+        alertsEl.style.display = 'flex';
+      } else {
+        alertsEl.innerHTML = '<div style="padding:.5rem .8rem;background:#f0fdf4;border-radius:8px;font-size:.85rem;color:#166534">\u2705 \u05d4\u05db\u05dc \u05ea\u05e7\u05d9\u05df \u2014 \u05d0\u05d9\u05df \u05d4\u05ea\u05e8\u05d0\u05d5\u05ea</div>';
+        alertsEl.style.display = 'flex';
+      }
+    }
+
+    // \u2500\u2500 Quality ratings panel \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+    if (ratingsEl) {
+      if (totalRatings === 0) {
+        ratingsEl.innerHTML = '<div style="color:var(--muted);padding:1.5rem;text-align:center;font-size:.9rem">אין דירוגים עדיין</div>';
+      } else {
+        ratingsEl.innerHTML = `
+          <div style="display:flex;flex-direction:column;gap:1rem;padding:.5rem 0">
+            <div style="display:flex;align-items:center;justify-content:center;gap:2.5rem">
+              <div style="text-align:center"><span style="font-size:2rem">👍</span><div style="font-size:1.5rem;font-weight:800;color:#059669;margin-top:.2rem">${thumbsUp}</div><div style="font-size:.7rem;color:var(--muted)">חיובי</div></div>
+              <div style="text-align:center"><span style="font-size:2rem">👎</span><div style="font-size:1.5rem;font-weight:800;color:#dc2626;margin-top:.2rem">${thumbsDown}</div><div style="font-size:.7rem;color:var(--muted)">שלילי</div></div>
+            </div>
+            <div>
+              <div style="display:flex;justify-content:space-between;font-size:.72rem;color:var(--muted);margin-bottom:.3rem"><span>שביעות רצון</span><span>${satisfactionPct}% (${totalRatings} דירוגים)</span></div>
+              <div style="background:#f3f4f6;border-radius:6px;height:8px;overflow:hidden">
+                <div style="width:${satisfactionPct}%;height:100%;background:linear-gradient(90deg,#22c55e,#059669);border-radius:6px;transition:width .3s"></div>
+              </div>
+            </div>
+          </div>`;
+      }
+    }
+
+    const recentDocs = recentSnap.docs.map(d => d.data());
+    if (!recentDocs.length) {
+      usageTable.innerHTML = '<div style="color:var(--muted);padding:1rem">אין נתוני שימוש עדיין</div>';
+    } else {
+      const rows = recentDocs.map(d => {
+        const ts = d.timestamp ? new Date(d.timestamp).toLocaleString('he-IL', { hour:'2-digit', minute:'2-digit', day:'numeric', month:'short' }) : '-';
+        const apiBadge = d.api === 'claude'
+          ? '<span style="color:#f59e0b;font-weight:600">Claude</span>'
+          : d.api === 'none'
+          ? '<span style="color:#dc2626;font-weight:600">None</span>'
+          : '<span style="color:#6366f1;font-weight:600">Gemini</span>';
+        const statusBadge = d.status === 'error'
+          ? '<span style="color:#dc2626">✗</span>'
+          : '<span style="color:#059669">✓</span>';
+        return '<tr><td style="font-size:.8rem">' + ts + '</td><td>' + esc((d.uid || '').slice(0, 8)) + '…</td><td>' + apiBadge + '</td><td>' + statusBadge + '</td><td>' + (d.latencyMs || 0) + 'ms</td><td>' + (d.inputTokens > 0 ? d.inputTokens + ' tok' : (d.promptLength || 0) + ' ch') + '</td><td>' + (d.outputTokens > 0 ? d.outputTokens + ' tok' : (d.responseLength || 0) + ' ch') + '</td></tr>';
+      }).join('');
+
+      usageTable.innerHTML = '<table class="tbl" style="width:100%"><thead><tr><th>זמן</th><th>משתמש</th><th>API</th><th>סטטוס</th><th>השהייה</th><th>טוקנים (קלט)</th><th>טוקנים (פלט)</th></tr></thead><tbody>' + rows + '</tbody></table>';
+    }
+
+    const userCounts = {};
+    todayDocs.forEach(d => { userCounts[d.uid] = (userCounts[d.uid] || 0) + 1; });
+    const sorted = Object.entries(userCounts).sort((a, b) => b[1] - a[1]).slice(0, 10);
+
+    if (!sorted.length) {
+      topUsersEl.innerHTML = '<div style="color:var(--muted);padding:1rem">אין שימוש היום</div>';
+    } else {
+      const uids = sorted.map(([uid]) => uid);
+      const userDocs = await Promise.all(uids.map(uid => db.collection('users').doc(uid).get()));
+      const emailMap = {};
+      userDocs.forEach(snap => { if (snap.exists) emailMap[snap.id] = snap.data().email || snap.id; });
+
+      topUsersEl.innerHTML = sorted.map(([uid, count]) => {
+        const email = emailMap[uid] || uid.slice(0, 12) + '…';
+        const pct = Math.min(Math.round(count / 10 * 100), 100);
+        return '<div style="display:flex;align-items:center;gap:.8rem;padding:.4rem 0"><span style="flex:1;font-size:.85rem">' + esc(email) + '</span><div style="flex:2;background:#f3f4f6;border-radius:6px;height:18px;overflow:hidden"><div style="width:' + pct + '%;height:100%;background:linear-gradient(90deg,#667eea,#764ba2);border-radius:6px"></div></div><span style="font-weight:700;min-width:2.5rem;text-align:left">' + count + '</span></div>';
+      }).join('');
+    }
+
+  } catch (e) {
+    console.error('AI Monitor error:', e);
+    statsGrid.innerHTML = '<div style="color:#dc2626;padding:1rem">שגיאה בטעינה: ' + esc(e.message) + '</div>';
   }
 }
 

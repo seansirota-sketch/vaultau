@@ -177,6 +177,10 @@
           דיווחים
           <span id="reports-badge" style="display:none;background:#b91c1c;color:#fff;border-radius:10px;padding:.05rem .42rem;font-size:.68rem;font-weight:700;margin-right:auto"></span>
         </a>
+        <a id="nav-ai-monitor" onclick="showSection('ai-monitor')">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2a4 4 0 0 1 4 4c0 1.95-2 3-2 8h-4c0-5-2-6.05-2-8a4 4 0 0 1 4-4z"/><line x1="10" y1="17" x2="14" y2="17"/><line x1="10" y1="20" x2="14" y2="20"/><line x1="11" y1="23" x2="13" y2="23"/></svg>
+          ניטור AI
+        </a>
         <div class="nav-divider"></div>
           <a href="index.html">
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
@@ -643,6 +647,40 @@
           </div>
           <div id="bulk-log" style="padding:1rem 1.25rem;display:flex;flex-direction:column;gap:.4rem;
                max-height:360px;overflow-y:auto;font-size:.84rem"></div>
+        </div>
+      </div>
+
+      <!-- ── AI MONITORING ──────────────────────────────────── -->
+      <div class="adm-section" id="sec-ai-monitor">
+        <div class="sec-header">
+          <h2 class="sec-title">ניטור AI — יצירת שאלות</h2>
+          <button class="btn btn-secondary btn-sm" onclick="renderAIMonitor()">🔄 רענן</button>
+        </div>
+        <!-- Alerts -->
+        <div id="ai-alerts" style="display:none;flex-direction:column;gap:.4rem;margin-bottom:1rem"></div>
+        <!-- Stats cards — 4 columns -->
+        <div id="ai-stats-grid" style="display:grid;grid-template-columns:repeat(4,1fr);gap:.85rem;margin-bottom:1.5rem"></div>
+        <!-- Two-column row: cost + ratings side by side -->
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:1rem;margin-bottom:1.5rem" id="ai-panels-row">
+          <div class="ac" style="margin-bottom:0">
+            <div class="ac-title">💰 עלויות וצריכה</div>
+            <div id="ai-cost-summary" style="padding:1rem"><span style="color:var(--muted)">לחץ רענון כדי לטעון נתונים</span></div>
+          </div>
+          <div class="ac" style="margin-bottom:0">
+            <div class="ac-title">⭐ איכות שאלות — דירוגי משתמשים</div>
+            <div id="ai-ratings-summary" style="padding:1rem"><span style="color:var(--muted)">טוען...</span></div>
+          </div>
+        </div>
+        <!-- Two-column row: usage table + top users -->
+        <div style="display:grid;grid-template-columns:3fr 2fr;gap:1rem" id="ai-bottom-row">
+          <div class="ac" style="margin-bottom:0">
+            <div class="ac-title">📊 שימוש אחרון (50 אחרונים)</div>
+            <div id="ai-usage-table" style="overflow-x:auto;max-height:400px;overflow-y:auto"></div>
+          </div>
+          <div class="ac" style="margin-bottom:0">
+            <div class="ac-title">👥 משתמשים מובילים (היום)</div>
+            <div id="ai-top-users" style="padding:1rem"></div>
+          </div>
         </div>
       </div>
 

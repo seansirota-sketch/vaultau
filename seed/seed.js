@@ -117,6 +117,19 @@ async function clearAllAuthUsers() {
   if (res.status >= 400) console.warn('Could not clear auth users:', res.status);
 }
 
+async function createDoc(collection, data) {
+  const path = `/v1/projects/${PROJECT_ID}/databases/(default)/documents/${collection}`;
+  const res = await request({
+    hostname: FIRESTORE_HOST,
+    port: FIRESTORE_PORT,
+    path,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' }
+  }, toFirestoreDoc(data));
+  if (res.status >= 400) throw new Error(`Firestore POST ${collection} failed: ${res.status} ${JSON.stringify(res.body)}`);
+  return res.body;
+}
+
 // ── Seed Data ──────────────────────────────────────────────────────────────
 
 const COURSES = [
@@ -404,7 +417,7 @@ async function main() {
   // 1. Clear existing data
   console.log('🧹 Clearing existing data...');
   await clearAllAuthUsers();
-  for (const col of ['courses', 'exams', 'authorized_users', 'users']) {
+  for (const col of ['courses', 'exams', 'authorized_users', 'users', 'generate_usage', 'question_ratings', 'ai_questions_cache']) {
     await clearCollection(col);
   }
   console.log('   ✓ Done\n');
@@ -470,6 +483,56 @@ async function main() {
   // 6. settings/global
   await setDoc('settings', 'global', { isSurveyActive: false });
   console.log('   ✓ settings/global');
+
+  // 7. AI monitoring seed data (generate_usage, question_ratings, ai_questions_cache)
+  console.log('\n🤖 Creating AI monitoring seed data...');
+
+  const todayStr = new Date().toISOString().slice(0, 10);
+  const now = new Date();
+  const apis = ['gemini', 'gemini', 'gemini', 'gemini', 'claude'];
+  const statuses = ['success', 'success', 'success', 'success', 'success', 'success', 'error'];
+
+  // generate_usage: 15 entries for today
+  for (let i = 0; i < 15; i++) {
+    const ts = new Date(now.getTime() - i * 600000); // every 10 min
+    const api = apis[i % apis.length];
+    const status = statuses[i % statuses.length];
+    await createDoc('generate_usage', {
+      uid: 'seed-user-' + (i % 3),
+      api,
+      latencyMs: 800 + Math.floor(Math.random() * 1200),
+      cached: i % 4 === 0,
+      promptLength: 200 + Math.floor(Math.random() * 300),
+      responseLength: 500 + Math.floor(Math.random() * 1000),
+      status,
+      errorMessage: status === 'error' ? 'Gemini API 429 rate limited' : '',
+      timestamp: ts.toISOString(),
+      date_key: todayStr,
+    });
+  }
+  console.log('   ✓ 15 generate_usage entries');
+
+  // question_ratings: 8 entries
+  for (let i = 0; i < 8; i++) {
+    await createDoc('question_ratings', {
+      uid: 'seed-user-' + (i % 3),
+      questionId: 'q' + (i + 1),
+      rating: i < 6 ? 'up' : 'down',
+      generatedTextPreview: 'שאלה לדוגמה מספר ' + (i + 1),
+      courseId: i % 2 === 0 ? 'calculus' : 'datastructs',
+      createdAt: new Date(now.getTime() - i * 3600000).toISOString(),
+    });
+  }
+  console.log('   ✓ 8 question_ratings entries');
+
+  // ai_questions_cache: 3 entries
+  for (let i = 0; i < 3; i++) {
+    await setDoc('ai_questions_cache', 'cache-' + i, {
+      courseId: i % 2 === 0 ? 'calculus' : 'datastructs',
+      items: [{ text: 'שאלת דוגמה מטמון ' + i, createdAt: now.toISOString() }],
+    });
+  }
+  console.log('   ✓ 3 ai_questions_cache entries');
 
   console.log('\n✅ All done!');
 }

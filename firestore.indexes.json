@@ -1,0 +1,21 @@
+{
+  "indexes": [
+    {
+      "collectionGroup": "generate_usage",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "date_key", "order": "ASCENDING" },
+        { "fieldPath": "timestamp", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "question_ratings",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "courseId", "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "DESCENDING" }
+      ]
+    }
+  ],
+  "fieldOverrides": []
+}
