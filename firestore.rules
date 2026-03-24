@@ -68,9 +68,26 @@ service cloud.firestore {
     }
 
     // Per-user AI generation quota (daily/weekly counters)
+    // Users can read their own quota; writes are restricted so they
+    // cannot lower counters within the same day.
     match /user_quotas/{userId} {
       allow read: if isLoggedIn() && request.auth.uid == userId;
-      allow write: if isLoggedIn() && request.auth.uid == userId;
+
+      // Allow create if the doc doesn't exist yet (first request ever)
+      allow create: if isLoggedIn() && request.auth.uid == userId;
+
+      // Allow update when:
+      //   a) same day — counter must be incrementing (no reset)
+      //   b) new day  — date_key changed, counter resets to 1
+      allow update: if isLoggedIn() && request.auth.uid == userId
+        && (
+          // Same day: only allow increment
+          (request.resource.data.date_key == resource.data.date_key
+            && request.resource.data.requests_today >= resource.data.requests_today)
+          ||
+          // Day rollover: date_key changed, allow counter reset
+          request.resource.data.date_key != resource.data.date_key
+        );
     }
 
     // AI generation usage logs (analytics / cost tracking)
@@ -81,8 +98,12 @@ service cloud.firestore {
     }
 
     // Question quality ratings (thumbs up/down)
+    // Doc ID = uid_questionId — one rating per user per question
     match /question_ratings/{docId} {
       allow create: if isLoggedIn()
+        && request.resource.data.uid == request.auth.uid;
+      allow update: if isLoggedIn()
+        && resource.data.uid == request.auth.uid
         && request.resource.data.uid == request.auth.uid;
       allow read: if isAdmin();
     }

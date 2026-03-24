@@ -64,6 +64,7 @@ function toast(msg, type = '') {
 const _isLocalDev = location.hostname === 'localhost' || location.hostname === '127.0.0.1';
 
 /* ── AI Generate – client-side quota & state tracking ──────── */
+const AI_DAILY_QUOTA = 10;           // must match QUOTA_DAILY in edge function
 let _aiGenerateInProgress = false;   // prevent concurrent requests
 let _aiQuotaRemaining = null;        // populated from response headers
 let _aiQuotaLimit = null;
@@ -113,15 +114,40 @@ async function _fetchInitialQuota() {
     if (snap.exists) {
       const data = snap.data();
       const dailyUsed = (data.date_key === today) ? (data.requests_today || 0) : 0;
-      _aiQuotaLimit = 10;
-      _aiQuotaRemaining = Math.max(0, 10 - dailyUsed);
+      _aiQuotaLimit = AI_DAILY_QUOTA;
+      _aiQuotaRemaining = Math.max(0, AI_DAILY_QUOTA - dailyUsed);
     } else {
-      _aiQuotaLimit = 10;
-      _aiQuotaRemaining = 10;
+      _aiQuotaLimit = AI_DAILY_QUOTA;
+      _aiQuotaRemaining = AI_DAILY_QUOTA;
     }
     _updateNavbarQuotaBadge();
   } catch (e) {
     console.warn('Failed to fetch quota:', e.message);
+  }
+}
+
+/** One-shot cleanup: delete orphaned cache docs from old key format (no difficulty suffix) */
+async function _cleanupOrphanedCache() {
+  const flag = 'vaultau_cache_cleanup_done';
+  if (localStorage.getItem(flag)) return;
+  try {
+    const snap = await db.collection('ai_questions_cache').get();
+    const batch = db.batch();
+    let count = 0;
+    snap.docs.forEach(doc => {
+      // New keys contain '_' (e.g. "questionId_hard"). Old keys don't.
+      if (!doc.id.includes('_')) {
+        batch.delete(doc.ref);
+        count++;
+      }
+    });
+    if (count > 0) {
+      await batch.commit();
+      console.log(`Cleaned up ${count} orphaned cache docs`);
+    }
+    localStorage.setItem(flag, '1');
+  } catch (e) {
+    console.warn('Cache cleanup failed:', e.message);
   }
 }
 
@@ -226,6 +252,7 @@ document.addEventListener('DOMContentLoaded', () => {
       // ── 3. Normal load ─────────────────────────────────────
       renderNavbar();
       _fetchInitialQuota();
+      _cleanupOrphanedCache();
       const hs = history.state;
       if (hs && hs.page) {
         STATE.page     = hs.page;
@@ -2974,7 +3001,9 @@ async function _rateQuestion(rating) {
   }
 
   try {
-    await db.collection('question_ratings').add({
+    // Use deterministic doc ID to prevent duplicate ratings per user+question
+    const ratingDocId = `${uid}_${qOrSubId}`;
+    await db.collection('question_ratings').doc(ratingDocId).set({
       uid,
       questionId: qOrSubId,
       rating,

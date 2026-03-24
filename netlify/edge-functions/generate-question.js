@@ -27,14 +27,10 @@ const FIRESTORE_BASE   = `https://firestore.googleapis.com/v1/projects/${FIREBAS
 const MAX_PROMPT_LENGTH   = 8000;   // characters
 const MAX_RETRIES         = 2;
 const RETRY_BASE_MS       = 200;
-const CACHE_TTL_HOURS     = 6;
 
-// ── Quota tiers ─────────────────────────────────────────────
-const QUOTA_TIERS = {
-  free:       { daily: 10,  weekly: 50  },
-  premium:    { daily: 100, weekly: 500 },
-  enterprise: { daily: Infinity, weekly: Infinity },
-};
+// ── Quota limits ───────────────────────────────────────────
+const QUOTA_DAILY  = 10;
+const QUOTA_WEEKLY = 50;
 
 // ── Feature flags (env vars) ────────────────────────────────
 function featureEnabled(name, fallback = true) {
@@ -42,11 +38,6 @@ function featureEnabled(name, fallback = true) {
   if (val === undefined || val === null) return fallback;
   return val === 'true' || val === '1';
 }
-
-// ── Gemini health cache (smart API routing) ─────────────────
-let _geminiHealthy = true;
-let _geminiLastCheck = 0;
-const HEALTH_CACHE_MS = 60_000; // remember failure for 1 minute
 
 // ── Main handler ────────────────────────────────────────────
 export default async (request, _context) => {
@@ -98,55 +89,32 @@ export default async (request, _context) => {
       : { used: 0, remaining: Infinity, limit: Infinity, resetAt: '' };
 
     if (quota.remaining <= 0) {
-      const tierLimits = QUOTA_TIERS[quota.tier || 'free'];
       const msg = quota.reason === 'weekly'
-        ? `מכסת השאלות השבועית (${tierLimits.weekly}) מוצתה. נסה שוב ביום ראשון.`
-        : `מכסת השאלות היומית (${tierLimits.daily}) מוצתה. נסה שוב מחר.`;
+        ? `מכסת השאלות השבועית (${QUOTA_WEEKLY}) מוצתה. נסה שוב ביום ראשון.`
+        : `מכסת השאלות היומית (${QUOTA_DAILY}) מוצתה. נסה שוב מחר.`;
       return jsonResponse(429, {
         error: msg,
         quota: { used: quota.used, limit: quota.limit, resetAt: quota.resetAt }
       });
     }
 
-    // ── 4. Call AI with smart routing + fallback ────────────
+    // ── 4. Call AI: Gemini primary → Claude fallback ────────
     const startTime = Date.now();
-    let apiUsed = chooseAPI();
+    let apiUsed = 'gemini';
     let stream;
-    let errorMsg = null;
 
-    if (apiUsed === 'gemini') {
-      try {
-        stream = await callGeminiWithRetry(sanitizedPrompt);
-        markGeminiHealthy(true);
-      } catch (geminiErr) {
-        console.warn('Gemini failed, trying Claude fallback:', geminiErr.message);
-        markGeminiHealthy(false);
-        apiUsed = 'claude';
-        try {
-          stream = await callClaudeFallback(sanitizedPrompt);
-        } catch (claudeErr) {
-          errorMsg = claudeErr.message;
-          console.error('Both APIs failed:', errorMsg);
-          logUsage(uid, idToken, { api: 'none', latencyMs: Date.now() - startTime, cached: false, promptLength: sanitizedPrompt.length, responseLength: 0, inputTokens: 0, outputTokens: 0, status: 'error', errorMessage: errorMsg }).catch(() => {});
-          return jsonResponse(503, { error: 'שירות יצירת השאלות אינו זמין כרגע. נסה שוב מאוחר יותר.' });
-        }
-      }
-    } else {
-      // Claude chosen (Gemini marked unhealthy)
+    try {
+      stream = await callGeminiWithRetry(sanitizedPrompt);
+    } catch (geminiErr) {
+      console.warn('Gemini failed, trying Claude fallback:', geminiErr.message);
+      apiUsed = 'claude';
       try {
         stream = await callClaudeFallback(sanitizedPrompt);
       } catch (claudeErr) {
-        // Claude also down — last resort: try Gemini anyway
-        apiUsed = 'gemini';
-        try {
-          stream = await callGeminiWithRetry(sanitizedPrompt);
-          markGeminiHealthy(true);
-        } catch (geminiErr) {
-          errorMsg = geminiErr.message;
-          console.error('Both APIs failed:', errorMsg);
-          logUsage(uid, idToken, { api: 'none', latencyMs: Date.now() - startTime, cached: false, promptLength: sanitizedPrompt.length, responseLength: 0, inputTokens: 0, outputTokens: 0, status: 'error', errorMessage: errorMsg }).catch(() => {});
-          return jsonResponse(503, { error: 'שירות יצירת השאלות אינו זמין כרגע. נסה שוב מאוחר יותר.' });
-        }
+        const errorMsg = claudeErr.message;
+        console.error('Both APIs failed:', errorMsg);
+        logUsage(uid, idToken, { api: 'none', latencyMs: Date.now() - startTime, cached: false, promptLength: sanitizedPrompt.length, responseLength: 0, inputTokens: 0, outputTokens: 0, status: 'error', errorMessage: errorMsg }).catch(() => {});
+        return jsonResponse(503, { error: 'שירות יצירת השאלות אינו זמין כרגע. נסה שוב מאוחר יותר.' });
       }
     }
 
@@ -224,83 +192,108 @@ async function checkQuota(uid, idToken) {
     const res = await fetch(url, { headers: { 'Authorization': `Bearer ${idToken}` } });
 
     if (res.status === 404 || !res.ok) {
-      // No quota doc yet → free tier, full quota
-      return { used: 0, remaining: QUOTA_TIERS.free.daily, limit: QUOTA_TIERS.free.daily, resetAt: tomorrowISO(), tier: 'free' };
+      return { used: 0, remaining: QUOTA_DAILY, limit: QUOTA_DAILY, resetAt: tomorrowISO() };
     }
 
     const doc = await res.json();
     const fields = doc.fields || {};
-    const tier = fields.tier?.stringValue || 'free';
-    const limits = QUOTA_TIERS[tier] || QUOTA_TIERS.free;
-
-    // Enterprise = unlimited
-    if (limits.daily === Infinity) {
-      return { used: 0, remaining: Infinity, limit: Infinity, resetAt: '', tier };
-    }
 
     const storedDay   = fields.date_key?.stringValue || '';
     const storedWeek  = fields.week_key?.stringValue || '';
     const usedToday   = parseInt(fields.requests_today?.integerValue || '0', 10);
     const usedWeek    = parseInt(fields.requests_this_week?.integerValue || '0', 10);
 
-    // Daily reset
-    const dailyUsed = (storedDay === todayKey()) ? usedToday : 0;
+    const dailyUsed  = (storedDay === todayKey())  ? usedToday : 0;
+    const weeklyUsed = (storedWeek === weekKey()) ? usedWeek   : 0;
 
-    // Weekly reset
-    const weeklyUsed = (storedWeek === weekKey()) ? usedWeek : 0;
-
-    // Block if either limit is hit
-    if (weeklyUsed >= limits.weekly) {
-      return { used: weeklyUsed, remaining: 0, limit: limits.weekly, resetAt: nextSundayISO(), reason: 'weekly', tier };
+    if (weeklyUsed >= QUOTA_WEEKLY) {
+      return { used: weeklyUsed, remaining: 0, limit: QUOTA_WEEKLY, resetAt: nextSundayISO(), reason: 'weekly' };
     }
 
-    const remaining = limits.daily - dailyUsed;
-    return { used: dailyUsed, remaining, limit: limits.daily, resetAt: tomorrowISO(), tier };
+    const remaining = QUOTA_DAILY - dailyUsed;
+    return { used: dailyUsed, remaining, limit: QUOTA_DAILY, resetAt: tomorrowISO() };
   } catch (err) {
     console.warn('Quota check failed, allowing request:', err.message);
-    return { used: 0, remaining: QUOTA_TIERS.free.daily, limit: QUOTA_TIERS.free.daily, resetAt: tomorrowISO(), tier: 'free' };
+    return { used: 0, remaining: QUOTA_DAILY, limit: QUOTA_DAILY, resetAt: tomorrowISO() };
   }
 }
 
 async function incrementQuota(uid, idToken) {
   const url = `${FIRESTORE_BASE}/user_quotas/${uid}`;
+  const now = new Date().toISOString();
+  const today = todayKey();
+  const week  = weekKey();
 
-  // Read-then-write (atomic updates aren't available via REST without transactions)
-  let currentDaily = 0;
-  let currentWeekly = 0;
+  // First, read to check if date_key needs resetting
+  let needsReset = false;
+  let needsWeekReset = false;
   try {
     const getRes = await fetch(url, { headers: { 'Authorization': `Bearer ${idToken}` } });
     if (getRes.ok) {
       const doc = await getRes.json();
       const storedDay  = doc.fields?.date_key?.stringValue || '';
       const storedWeek = doc.fields?.week_key?.stringValue || '';
-      if (storedDay === todayKey()) {
-        currentDaily = parseInt(doc.fields?.requests_today?.integerValue || '0', 10);
-      }
-      if (storedWeek === weekKey()) {
-        currentWeekly = parseInt(doc.fields?.requests_this_week?.integerValue || '0', 10);
-      }
+      if (storedDay !== today) needsReset = true;
+      if (storedWeek !== week) needsWeekReset = true;
+    } else {
+      needsReset = true;
+      needsWeekReset = true;
     }
-  } catch { /* proceed with 0 */ }
+  } catch { needsReset = true; needsWeekReset = true; }
 
-  const now = new Date().toISOString();
-  const patchBody = {
-    fields: {
-      requests_today:     { integerValue: String(currentDaily + 1) },
-      requests_this_week: { integerValue: String(currentWeekly + 1) },
-      date_key:           { stringValue: todayKey() },
-      week_key:           { stringValue: weekKey() },
-      last_request:       { stringValue: now },
-    }
+  // If day or week rolled over, reset counters then set to 1
+  if (needsReset || needsWeekReset) {
+    const patchBody = {
+      fields: {
+        requests_today:     { integerValue: '1' },
+        requests_this_week: { integerValue: needsWeekReset ? '1' : undefined },
+        date_key:           { stringValue: today },
+        week_key:           { stringValue: week },
+        last_request:       { stringValue: now },
+      }
+    };
+    // Remove undefined fields
+    if (!needsWeekReset) delete patchBody.fields.requests_this_week;
+
+    const fields = Object.keys(patchBody.fields);
+    const mask = fields.map(f => `updateMask.fieldPaths=${f}`).join('&');
+    await fetch(`${url}?${mask}`, {
+      method: 'PATCH',
+      headers: { 'Authorization': `Bearer ${idToken}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(patchBody),
+    });
+    return;
+  }
+
+  // Same day — use Firestore commit with fieldTransforms for atomic increment
+  const commitUrl = `https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT}/databases/(default)/documents:commit`;
+  const docPath = `projects/${FIREBASE_PROJECT}/databases/(default)/documents/user_quotas/${uid}`;
+  const commitBody = {
+    writes: [{
+      transform: {
+        document: docPath,
+        fieldTransforms: [
+          { fieldPath: 'requests_today',     increment: { integerValue: '1' } },
+          { fieldPath: 'requests_this_week', increment: { integerValue: '1' } },
+        ]
+      }
+    }, {
+      update: {
+        name: docPath,
+        fields: {
+          last_request: { stringValue: now },
+          date_key:     { stringValue: today },
+          week_key:     { stringValue: week },
+        }
+      },
+      updateMask: { fieldPaths: ['last_request', 'date_key', 'week_key'] }
+    }]
   };
 
-  const mask = ['requests_today', 'requests_this_week', 'date_key', 'week_key', 'last_request']
-    .map(f => `updateMask.fieldPaths=${f}`).join('&');
-
-  await fetch(`${url}?${mask}`, {
-    method: 'PATCH',
+  await fetch(commitUrl, {
+    method: 'POST',
     headers: { 'Authorization': `Bearer ${idToken}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify(patchBody),
+    body: JSON.stringify(commitBody),
   });
 }
 
@@ -344,20 +337,6 @@ async function logUsage(uid, idToken, data) {
     headers: { 'Authorization': `Bearer ${idToken}`, 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   });
-}
-
-// ── Smart API routing (health-aware) ──────────────────────
-function chooseAPI() {
-  // If Gemini failed recently, route to Claude
-  if (!_geminiHealthy && (Date.now() - _geminiLastCheck) < HEALTH_CACHE_MS) {
-    return 'claude';
-  }
-  return 'gemini';
-}
-
-function markGeminiHealthy(healthy) {
-  _geminiHealthy = healthy;
-  _geminiLastCheck = Date.now();
 }
 
 // ── Gemini API with retry ───────────────────────────────────
@@ -475,16 +454,6 @@ async function pipeGeminiStream(geminiRes, writer, encoder) {
     }
   }
   return { fullText, inputTokens, outputTokens };
-}
-
-function extractGeminiText(line) {
-  if (!line.startsWith('data: ')) return null;
-  const json = line.slice(6).trim();
-  if (!json || json === '[DONE]') return null;
-  try {
-    const chunk = JSON.parse(json);
-    return chunk?.candidates?.[0]?.content?.parts?.[0]?.text || null;
-  } catch { return null; }
 }
 
 async function pipeClaudeStream(claudeRes, writer, encoder) {
