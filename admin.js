@@ -3130,9 +3130,15 @@ async function addAuthorizedEmails() {
 }
 
 /* ── AI MONITORING DASHBOARD ─────────────────────────────── */
-const GEMINI_COST_PER_Q  = 0.0025;
-const CLAUDE_COST_PER_Q  = 0.0185;
-const COST_ALERT_DAILY   = 10;   // alert if daily cost > $10
+// Token-based pricing (USD per 1M tokens)
+const GEMINI_INPUT_PER_M   = 1.25;
+const GEMINI_OUTPUT_PER_M  = 5.00;
+const CLAUDE_INPUT_PER_M   = 3.00;
+const CLAUDE_OUTPUT_PER_M  = 15.00;
+// Flat-rate fallback for older docs that lack token counts
+const GEMINI_COST_PER_Q    = 0.0025;
+const CLAUDE_COST_PER_Q    = 0.0185;
+const COST_ALERT_DAILY     = 10;   // alert if daily cost > $10
 
 async function renderAIMonitor() {
   const statsGrid     = document.getElementById('ai-stats-grid');
@@ -3193,7 +3199,14 @@ async function renderAIMonitor() {
       <div class="stat-card"><div class="stat-val" style="color:${parseFloat(errorRate) > 5 ? '#dc2626' : '#059669'}">${parseFloat(errorRate) > 5 ? '🔴' : '🟢'} ${errorRate}%</div><div class="stat-lbl">שיעור שגיאות</div></div>
       <div class="stat-card"><div class="stat-val" style="color:${hitRate > 50 ? '#059669' : '#f59e0b'}">${hitRate > 50 ? '🟢' : '🟡'} ${hitRate}%</div><div class="stat-lbl">שיעור מטמון</div></div>`;
 
-    const costToday  = geminiToday * GEMINI_COST_PER_Q + claudeToday * CLAUDE_COST_PER_Q;
+    const costToday = todayDocs.reduce((sum, d) => {
+      if (d.inputTokens || d.outputTokens) {
+        const inRate  = d.api === 'claude' ? CLAUDE_INPUT_PER_M  : GEMINI_INPUT_PER_M;
+        const outRate = d.api === 'claude' ? CLAUDE_OUTPUT_PER_M : GEMINI_OUTPUT_PER_M;
+        return sum + ((d.inputTokens || 0) / 1_000_000 * inRate) + ((d.outputTokens || 0) / 1_000_000 * outRate);
+      }
+      return sum + (d.api === 'claude' ? CLAUDE_COST_PER_Q : GEMINI_COST_PER_Q);
+    }, 0);
     const estMonthly = costToday * 30;
     const costPct = Math.min(Math.round(costToday / COST_ALERT_DAILY * 100), 100);
     const costBarColor = costPct > 80 ? '#dc2626' : costPct > 50 ? '#f59e0b' : '#059669';
@@ -3262,10 +3275,10 @@ async function renderAIMonitor() {
         const statusBadge = d.status === 'error'
           ? '<span style="color:#dc2626">✗</span>'
           : '<span style="color:#059669">✓</span>';
-        return '<tr><td style="font-size:.8rem">' + ts + '</td><td>' + esc((d.uid || '').slice(0, 8)) + '…</td><td>' + apiBadge + '</td><td>' + statusBadge + '</td><td>' + (d.latencyMs || 0) + 'ms</td><td>' + (d.promptLength || 0) + '</td><td>' + (d.responseLength || 0) + '</td></tr>';
+        return '<tr><td style="font-size:.8rem">' + ts + '</td><td>' + esc((d.uid || '').slice(0, 8)) + '…</td><td>' + apiBadge + '</td><td>' + statusBadge + '</td><td>' + (d.latencyMs || 0) + 'ms</td><td>' + (d.inputTokens > 0 ? d.inputTokens + ' tok' : (d.promptLength || 0) + ' ch') + '</td><td>' + (d.outputTokens > 0 ? d.outputTokens + ' tok' : (d.responseLength || 0) + ' ch') + '</td></tr>';
       }).join('');
 
-      usageTable.innerHTML = '<table class="tbl" style="width:100%"><thead><tr><th>זמן</th><th>משתמש</th><th>API</th><th>סטטוס</th><th>השהייה</th><th>אורך בקשה</th><th>אורך תשובה</th></tr></thead><tbody>' + rows + '</tbody></table>';
+      usageTable.innerHTML = '<table class="tbl" style="width:100%"><thead><tr><th>זמן</th><th>משתמש</th><th>API</th><th>סטטוס</th><th>השהייה</th><th>טוקנים (קלט)</th><th>טוקנים (פלט)</th></tr></thead><tbody>' + rows + '</tbody></table>';
     }
 
     const userCounts = {};

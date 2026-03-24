@@ -127,7 +127,7 @@ export default async (request, _context) => {
         } catch (claudeErr) {
           errorMsg = claudeErr.message;
           console.error('Both APIs failed:', errorMsg);
-          logUsage(uid, idToken, { api: 'none', latencyMs: Date.now() - startTime, cached: false, promptLength: sanitizedPrompt.length, responseLength: 0, status: 'error', errorMessage: errorMsg }).catch(() => {});
+          logUsage(uid, idToken, { api: 'none', latencyMs: Date.now() - startTime, cached: false, promptLength: sanitizedPrompt.length, responseLength: 0, inputTokens: 0, outputTokens: 0, status: 'error', errorMessage: errorMsg }).catch(() => {});
           return jsonResponse(503, { error: 'שירות יצירת השאלות אינו זמין כרגע. נסה שוב מאוחר יותר.' });
         }
       }
@@ -144,7 +144,7 @@ export default async (request, _context) => {
         } catch (geminiErr) {
           errorMsg = geminiErr.message;
           console.error('Both APIs failed:', errorMsg);
-          logUsage(uid, idToken, { api: 'none', latencyMs: Date.now() - startTime, cached: false, promptLength: sanitizedPrompt.length, responseLength: 0, status: 'error', errorMessage: errorMsg }).catch(() => {});
+          logUsage(uid, idToken, { api: 'none', latencyMs: Date.now() - startTime, cached: false, promptLength: sanitizedPrompt.length, responseLength: 0, inputTokens: 0, outputTokens: 0, status: 'error', errorMessage: errorMsg }).catch(() => {});
           return jsonResponse(503, { error: 'שירות יצירת השאלות אינו זמין כרגע. נסה שוב מאוחר יותר.' });
         }
       }
@@ -157,12 +157,14 @@ export default async (request, _context) => {
 
     // Fire-and-forget background processing
     (async () => {
-      let fullText = '';
+      let fullText     = '';
+      let inputTokens  = 0;
+      let outputTokens = 0;
       try {
         if (apiUsed === 'gemini') {
-          fullText = await pipeGeminiStream(stream, writer, encoder);
+          ({ fullText, inputTokens, outputTokens } = await pipeGeminiStream(stream, writer, encoder));
         } else {
-          fullText = await pipeClaudeStream(stream, writer, encoder);
+          ({ fullText, inputTokens, outputTokens } = await pipeClaudeStream(stream, writer, encoder));
         }
         await writer.write(encoder.encode('data: [DONE]\n\n'));
       } catch (err) {
@@ -173,7 +175,7 @@ export default async (request, _context) => {
 
       // ── 6. Post-stream: log usage + increment quota ──────
       const latencyMs = Date.now() - startTime;
-      logUsage(uid, idToken, { api: apiUsed, latencyMs, cached: false, promptLength: sanitizedPrompt.length, responseLength: fullText.length, status: 'success', errorMessage: '' }).catch(() => {});
+      logUsage(uid, idToken, { api: apiUsed, latencyMs, cached: false, promptLength: sanitizedPrompt.length, responseLength: fullText.length, inputTokens, outputTokens, status: 'success', errorMessage: '' }).catch(() => {});
       incrementQuota(uid, idToken).catch(() => {});
     })();
 
@@ -328,6 +330,8 @@ async function logUsage(uid, idToken, data) {
       cached:         { booleanValue: data.cached },
       promptLength:   { integerValue: String(data.promptLength) },
       responseLength: { integerValue: String(data.responseLength) },
+      inputTokens:    { integerValue: String(data.inputTokens  || 0) },
+      outputTokens:   { integerValue: String(data.outputTokens || 0) },
       status:         { stringValue: data.status || 'success' },
       errorMessage:   { stringValue: data.errorMessage || '' },
       timestamp:      { stringValue: new Date().toISOString() },
@@ -421,8 +425,17 @@ async function callClaudeFallback(prompt) {
 async function pipeGeminiStream(geminiRes, writer, encoder) {
   const reader  = geminiRes.body.getReader();
   const decoder = new TextDecoder();
-  let buffer    = '';
-  let fullText  = '';
+  let buffer       = '';
+  let fullText     = '';
+  let inputTokens  = 0;
+  let outputTokens = 0;
+
+  const parseChunk = line => {
+    if (!line.startsWith('data: ')) return null;
+    const json = line.slice(6).trim();
+    if (!json || json === '[DONE]') return null;
+    try { return JSON.parse(json); } catch { return null; }
+  };
 
   while (true) {
     const { done, value } = await reader.read();
@@ -432,23 +445,36 @@ async function pipeGeminiStream(geminiRes, writer, encoder) {
     buffer = lines.pop() || '';
 
     for (const line of lines) {
-      const text = extractGeminiText(line);
+      const chunk = parseChunk(line);
+      if (!chunk) continue;
+      const text = chunk?.candidates?.[0]?.content?.parts?.[0]?.text || null;
       if (text) {
         fullText += text;
         await writer.write(encoder.encode(`data: ${JSON.stringify({ text })}\n\n`));
+      }
+      if (chunk.usageMetadata) {
+        inputTokens  = chunk.usageMetadata.promptTokenCount     || 0;
+        outputTokens = chunk.usageMetadata.candidatesTokenCount || 0;
       }
     }
   }
 
   // Flush remaining buffer
   if (buffer) {
-    const text = extractGeminiText(buffer);
-    if (text) {
-      fullText += text;
-      await writer.write(encoder.encode(`data: ${JSON.stringify({ text })}\n\n`));
+    const chunk = parseChunk(buffer);
+    if (chunk) {
+      const text = chunk?.candidates?.[0]?.content?.parts?.[0]?.text || null;
+      if (text) {
+        fullText += text;
+        await writer.write(encoder.encode(`data: ${JSON.stringify({ text })}\n\n`));
+      }
+      if (chunk.usageMetadata) {
+        inputTokens  = chunk.usageMetadata.promptTokenCount     || 0;
+        outputTokens = chunk.usageMetadata.candidatesTokenCount || 0;
+      }
     }
   }
-  return fullText;
+  return { fullText, inputTokens, outputTokens };
 }
 
 function extractGeminiText(line) {
@@ -464,8 +490,10 @@ function extractGeminiText(line) {
 async function pipeClaudeStream(claudeRes, writer, encoder) {
   const reader  = claudeRes.body.getReader();
   const decoder = new TextDecoder();
-  let buffer    = '';
-  let fullText  = '';
+  let buffer       = '';
+  let fullText     = '';
+  let inputTokens  = 0;
+  let outputTokens = 0;
 
   while (true) {
     const { done, value } = await reader.read();
@@ -480,8 +508,12 @@ async function pipeClaudeStream(claudeRes, writer, encoder) {
       if (!json || json === '[DONE]') continue;
       try {
         const evt = JSON.parse(json);
-        // Claude SSE: content_block_delta events carry the text
-        if (evt.type === 'content_block_delta') {
+        if (evt.type === 'message_start') {
+          inputTokens  = evt.message?.usage?.input_tokens  || 0;
+          outputTokens = evt.message?.usage?.output_tokens || 0;
+        } else if (evt.type === 'message_delta') {
+          outputTokens = evt.usage?.output_tokens || outputTokens;
+        } else if (evt.type === 'content_block_delta') {
           const text = evt.delta?.text || '';
           if (text) {
             fullText += text;
@@ -491,7 +523,7 @@ async function pipeClaudeStream(claudeRes, writer, encoder) {
       } catch { /* skip */ }
     }
   }
-  return fullText;
+  return { fullText, inputTokens, outputTokens };
 }
 
 // ── Utilities ───────────────────────────────────────────────

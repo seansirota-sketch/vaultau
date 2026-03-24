@@ -125,6 +125,28 @@ async function _fetchInitialQuota() {
   }
 }
 
+/** Persist quota usage to Firestore so it survives page refresh (local dev + production fallback) */
+async function _persistQuotaToFirestore() {
+  const uid = STATE.fireUser?.uid;
+  if (!uid) return;
+  try {
+    const today = new Date().toISOString().slice(0, 10);
+    const ref = db.collection('user_quotas').doc(uid);
+    const snap = await ref.get();
+    let currentDaily = 0;
+    if (snap.exists && snap.data().date_key === today) {
+      currentDaily = snap.data().requests_today || 0;
+    }
+    await ref.set({
+      date_key: today,
+      requests_today: currentDaily + 1,
+      last_request: new Date().toISOString(),
+    }, { merge: true });
+  } catch (e) {
+    console.warn('Failed to persist quota:', e.message);
+  }
+}
+
 let _geminiKey = null;
 async function _loadGeminiKey() {
   if (_geminiKey) return _geminiKey;
@@ -853,10 +875,10 @@ function renderNavbar() {
         <span class="ni">📚</span> VaultAU
       </span>
       <div class="navbar-actions">
+        <span id="navbar-quota-badge" style="font-size:.72rem;padding:2px 8px;border-radius:12px;background:rgba(255,255,255,.2);color:#fff;white-space:nowrap;cursor:default" title="מכסת יצירת שאלות יומית"></span>
         <div class="navbar-user">
           <div class="av">${displayName[0].toUpperCase()}</div>
           <span>${esc(displayName)}</span>
-          <span id="navbar-quota-badge" style="font-size:.72rem;padding:2px 8px;border-radius:12px;background:rgba(255,255,255,.2);color:#fff;white-space:nowrap;cursor:default;margin-right:.4rem" title="מכסת יצירת שאלות יומית"></span>
         </div>
         <button class="btn btn-ghost btn-sm" onclick="doLogout()">יציאה</button>
       </div>
@@ -2547,9 +2569,10 @@ async function _callGeminiAPI(sourceText) {
     if (footer) footer.style.display = 'flex';
     _showRateButtons();
 
-    // Decrement local quota counter (for local dev where edge function doesn't set headers)
+    // Decrement local quota counter and persist to Firestore
     if (_isLocalDev && _aiQuotaRemaining !== null && _aiQuotaRemaining > 0) {
       _aiQuotaRemaining--;
+      _persistQuotaToFirestore();
     }
     _updateQuotaBadge();
 
