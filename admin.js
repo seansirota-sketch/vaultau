@@ -11,6 +11,12 @@ function esc(s) {
     .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
+function safeUrl(u) {
+  if (!u) return '';
+  try { const p = new URL(u); return ['https:','http:'].includes(p.protocol) ? esc(u) : ''; }
+  catch { return ''; }
+}
+
 function toast(msg, type = '') {
   const c = document.getElementById('toast-wrap');
   if (!c) return;
@@ -350,6 +356,7 @@ async function initAdmin() {
     await renderCoursesList();
     setupUploadZone();
     setupBulkZone();
+    setupBulkSolZone();
     _renderLecturersWidget();
     // ── Auto-add lecturer when user leaves the input field ───────
     const lecInp = document.getElementById('ae-lecturer-input');
@@ -496,6 +503,7 @@ async function normalizeLecturerNames(detectedNames, manualList) {
 ══════════════════════════════════════════════════════════ */
 
 let _bulkFiles = []; // Array of File objects
+let _bulkSolFiles = []; // Array of File objects for solution PDFs
 
 function onBulkFilesSelected(input) {
   const files = Array.from(input.files || []);
@@ -509,17 +517,16 @@ function onBulkFilesSelected(input) {
 
 function renderBulkFileList() {
   const list = document.getElementById('bulk-file-list');
-  const btn  = document.getElementById('bulk-start-btn');
   if (!list) return;
 
   if (!_bulkFiles.length) {
     list.style.display = 'none';
-    if (btn) btn.disabled = true;
+    updateBulkStartBtn();
     return;
   }
 
   list.style.display = 'flex';
-  if (btn) btn.disabled = false;
+  updateBulkStartBtn();
 
   list.innerHTML = _bulkFiles.map((f, i) => `
     <div id="bulk-file-row-${i}" style="display:flex;align-items:center;gap:.6rem;padding:.5rem .75rem;
@@ -546,14 +553,87 @@ function removeBulkFile(i) {
 
 function clearBulkFiles() {
   _bulkFiles = [];
+  _bulkSolFiles = [];
   const zone = document.getElementById('bulk-zone');
   if (zone) {
     zone.querySelector('.uz-text').textContent = 'גרור מספר קבצי PDF לכאן';
     zone.querySelector('.uz-sub').textContent  = 'או לחץ לבחירה — ניתן לבחור מספר קבצים בו-זמנית';
   }
+  const solZone = document.getElementById('bulk-sol-zone');
+  if (solZone) {
+    solZone.querySelector('.uz-text').textContent = 'גרור קבצי פתרונות לכאן';
+    solZone.querySelector('.uz-sub').textContent  = 'או לחץ לבחירה — ניתן לבחור מספר קבצים בו-זמנית';
+  }
   renderBulkFileList();
+  renderBulkSolFileList();
   const logCard = document.getElementById('bulk-log-card');
   if (logCard) logCard.style.display = 'none';
+}
+
+/* ── Bulk solution file management ─────────────────────────── */
+
+function onBulkSolFilesSelected(input) {
+  const files = Array.from(input.files || []);
+  if (!files.length) return;
+  files.forEach(f => {
+    if (!_bulkSolFiles.find(x => x.name === f.name)) _bulkSolFiles.push(f);
+  });
+  renderBulkSolFileList();
+  input.value = '';
+}
+
+function renderBulkSolFileList() {
+  const list = document.getElementById('bulk-sol-file-list');
+  if (!list) return;
+
+  if (!_bulkSolFiles.length) {
+    list.style.display = 'none';
+    updateBulkStartBtn();
+    return;
+  }
+
+  list.style.display = 'flex';
+  updateBulkStartBtn();
+
+  list.innerHTML = _bulkSolFiles.map((f, i) => `
+    <div id="bulk-sol-row-${i}" style="display:flex;align-items:center;gap:.6rem;padding:.5rem .75rem;
+         background:var(--bg,#f9fafb);border:1.5px solid var(--border,#e5e7eb);border-radius:8px">
+      <span style="font-size:1.1rem">📝</span>
+      <span style="flex:1;font-size:.85rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(f.name)}</span>
+      <span style="font-size:.75rem;color:var(--muted)">${(f.size/1024).toFixed(0)} KB</span>
+      <span id="bulk-sol-status-${i}" style="font-size:.8rem;min-width:60px;text-align:center"></span>
+      <button class="btn btn-danger btn-sm" onclick="removeBulkSolFile(${i})" style="flex-shrink:0">✕</button>
+    </div>`).join('');
+
+  const zone = document.getElementById('bulk-sol-zone');
+  if (zone) {
+    zone.querySelector('.uz-text').textContent = `${_bulkSolFiles.length} קבצי פתרונות נבחרו`;
+    zone.querySelector('.uz-sub').textContent  = 'לחץ להוספת קבצים נוספים';
+  }
+}
+
+function removeBulkSolFile(i) {
+  _bulkSolFiles.splice(i, 1);
+  renderBulkSolFileList();
+}
+
+function setBulkSolFileStatus(i, icon, color) {
+  const el = document.getElementById(`bulk-sol-status-${i}`);
+  if (el) { el.textContent = icon; el.style.color = color; }
+}
+
+/** Parse solution filename: e.g. 2022AB_sol.pdf → { title: "2022AB", type: "sol" } */
+function parseSolFilename(filename) {
+  const f = filename.replace(/\.[^/.]+$/, ''); // strip extension
+  const m = f.match(/^(20\d{2}[A-Za-z]{2})_(sol|all)$/i);
+  if (!m) return null;
+  return { title: m[1].toUpperCase(), type: m[2].toLowerCase() };
+}
+
+/** Enable bulk start button when at least one file (exam or solution) is selected */
+function updateBulkStartBtn() {
+  const btn = document.getElementById('bulk-start-btn');
+  if (btn) btn.disabled = !_bulkFiles.length && !_bulkSolFiles.length;
 }
 
 function bulkLog(msg, type = '') {
@@ -576,7 +656,7 @@ function setBulkFileStatus(i, icon, color) {
 async function startBulkUpload() {
   const courseId = document.getElementById('bulk-course').value;
   if (!courseId) { toast('נא לבחור קורס', 'error'); return; }
-  if (!_bulkFiles.length) { toast('לא נבחרו קבצים', 'error'); return; }
+  if (!_bulkFiles.length && !_bulkSolFiles.length) { toast('לא נבחרו קבצים', 'error'); return; }
 
   const btn = document.getElementById('bulk-start-btn');
   if (btn) { btn.disabled = true; btn.textContent = '⏳ מעלה...'; }
@@ -598,11 +678,13 @@ async function startBulkUpload() {
 
   let succeeded = 0;
   let failed    = 0;
+  const totalExams = _bulkFiles.length;
 
+  // ── Phase 1: Upload exam files ───────────────────────────
   for (let i = 0; i < _bulkFiles.length; i++) {
     const file = _bulkFiles[i];
     const label = document.getElementById(`bulk-progress-label`);
-    if (label) label.textContent = `${i + 1} / ${_bulkFiles.length}`;
+    if (label) label.textContent = `מבחנים: ${i + 1} / ${_bulkFiles.length}`;
 
     setBulkFileStatus(i, '⏳', '#d97706');
     bulkLog(`מתחיל: ${file.name}`, 'info');
@@ -670,6 +752,7 @@ async function startBulkUpload() {
         moed:      known.moed     || meta.moed     || null,
         lecturers: lecturers.length ? lecturers : null,
         pdfUrl,
+        solutionPdfUrl: null,
         parsedModel: result.model || null,
         verified: false,
         questions: questions.map(q => ({
@@ -698,14 +781,108 @@ async function startBulkUpload() {
     }
   }
 
+  // ── Phase 2: Upload solution files ───────────────────────
+  let solSucceeded = 0;
+  let solFailed    = 0;
+
+  if (_bulkSolFiles.length) {
+    bulkLog(`\n━━━ מתחיל העלאת ${_bulkSolFiles.length} פתרונות ━━━`, 'info');
+  }
+
+  for (let i = 0; i < _bulkSolFiles.length; i++) {
+    const file = _bulkSolFiles[i];
+    const label = document.getElementById('bulk-progress-label');
+    if (label) label.textContent = `פתרונות: ${i + 1} / ${_bulkSolFiles.length}`;
+
+    setBulkSolFileStatus(i, '⏳', '#d97706');
+    bulkLog(`פתרון: ${file.name}`, 'info');
+
+    try {
+      // 1. Parse filename to extract exam title and type
+      const parsed = parseSolFilename(file.name);
+      if (!parsed) {
+        setBulkSolFileStatus(i, '⚠️', '#d97706');
+        bulkLog(`  דולג — שם קובץ לא תקין. נדרש פורמט YYYYXZ_sol או YYYYXZ_all`, 'warn');
+        solFailed++;
+        continue;
+      }
+
+      // 2. Find the matching exam in this course
+      const examSnap = await db.collection('exams')
+        .where('courseId', '==', courseId)
+        .where('title', '==', parsed.title)
+        .get();
+
+      if (examSnap.empty) {
+        setBulkSolFileStatus(i, '⚠️', '#d97706');
+        bulkLog(`  לא נמצא מבחן "${parsed.title}" בקורס — דולג`, 'warn');
+        solFailed++;
+        continue;
+      }
+
+      const examDoc = examSnap.docs[0];
+      const examData = examDoc.data();
+
+      // 3. Determine solutionPdfUrl
+      let solutionPdfUrl;
+
+      if (parsed.type === 'all') {
+        // _all: same file as the exam PDF — just point to pdfUrl
+        if (examData.pdfUrl) {
+          solutionPdfUrl = examData.pdfUrl;
+          bulkLog(`  _all — משתמש ב-PDF המבחן הקיים כפתרון`, 'info');
+        } else {
+          // No exam PDF exists, upload this file as both exam and solution
+          showSpinner(`📤 ${file.name} — מעלה PDF...`);
+          const stor = typeof storage !== 'undefined' && storage ? storage : firebase.storage();
+          const ref = stor.ref(`exam-pdfs/${examDoc.id}.pdf`);
+          await ref.put(file);
+          solutionPdfUrl = await ref.getDownloadURL();
+          bulkLog(`  _all — הועלה כ-PDF מבחן + פתרון`, 'info');
+        }
+      } else {
+        // _sol: upload as separate solution PDF
+        showSpinner(`📤 ${file.name} — מעלה פתרון...`);
+        const stor = typeof storage !== 'undefined' && storage ? storage : firebase.storage();
+        const ref = stor.ref(`solution-pdfs/${examDoc.id}.pdf`);
+        await ref.put(file);
+        solutionPdfUrl = await ref.getDownloadURL();
+      }
+
+      // 4. Update exam document with solutionPdfUrl
+      await db.collection('exams').doc(examDoc.id).update({
+        solutionPdfUrl,
+        updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+      });
+
+      setBulkSolFileStatus(i, '✅', '#065f46');
+      bulkLog(`  פתרון עודכן בהצלחה → ${parsed.title}`, 'success');
+      solSucceeded++;
+
+    } catch (err) {
+      console.error(err);
+      setBulkSolFileStatus(i, '❌', '#991b1b');
+      bulkLog(`  שגיאה: ${err.message}`, 'error');
+      solFailed++;
+    }
+  }
+
   hideSpinner();
   if (btn) { btn.disabled = false; btn.textContent = '🚀 התחל העלאה'; }
 
   const label = document.getElementById('bulk-progress-label');
-  if (label) label.textContent = `הסתיים — ${succeeded} הצליחו, ${failed} נכשלו`;
+  const totalAll = totalExams + _bulkSolFiles.length;
+  const successAll = succeeded + solSucceeded;
+  const failAll = failed + solFailed;
+  if (label) label.textContent = `הסתיים — ${successAll} הצליחו, ${failAll} נכשלו`;
 
-  bulkLog(`━━━ סיום: ${succeeded}/${_bulkFiles.length} הועלו בהצלחה ━━━`, succeeded === _bulkFiles.length ? 'success' : 'warn');
-  toast(`הועלו ${succeeded}/${_bulkFiles.length} מבחנים`, succeeded === _bulkFiles.length ? 'success' : '');
+  if (totalExams) {
+    bulkLog(`━━━ מבחנים: ${succeeded}/${totalExams} הועלו בהצלחה ━━━`, succeeded === totalExams ? 'success' : 'warn');
+  }
+  if (_bulkSolFiles.length) {
+    bulkLog(`━━━ פתרונות: ${solSucceeded}/${_bulkSolFiles.length} עודכנו בהצלחה ━━━`, solSucceeded === _bulkSolFiles.length ? 'success' : 'warn');
+  }
+  toast(`סיום: ${successAll}/${totalAll} הועלו`, successAll === totalAll ? 'success' : '');
 
   await refreshDashboard();
   await populateAllSelects();
@@ -1257,6 +1434,23 @@ function setupBulkZone() {
   });
 }
 
+function setupBulkSolZone() {
+  const zone = document.getElementById('bulk-sol-zone');
+  if (!zone) return;
+  zone.addEventListener('dragover',  e => { e.preventDefault(); zone.classList.add('drag'); });
+  zone.addEventListener('dragleave', () => zone.classList.remove('drag'));
+  zone.addEventListener('dragenter', e => { e.preventDefault(); zone.classList.add('drag'); });
+  zone.addEventListener('drop', e => {
+    e.preventDefault(); zone.classList.remove('drag');
+    const files = Array.from(e.dataTransfer.files).filter(f =>
+      f.type === 'application/pdf' || f.name.toLowerCase().endsWith('.pdf'));
+    if (files.length) {
+      files.forEach(f => { if (!_bulkSolFiles.find(x => x.name === f.name)) _bulkSolFiles.push(f); });
+      renderBulkSolFileList();
+    }
+  });
+}
+
 async function handleFileInput(file) {
   const statusEl = document.getElementById('upload-status');
   const zone     = document.getElementById('upload-zone');
@@ -1370,6 +1564,7 @@ async function handleFileInput(file) {
 let parsedQuestions = [];
 let _editingExamId  = null;  // tracks the exam being edited (for safe update, not delete-first)
 let _examPdfFile    = null;  // File object selected for PDF download upload
+let _solPdfFile     = null;  // File object selected for solution PDF upload
 let _parsedModel    = null;  // which Claude model parsed the current exam
 
 function onExamPdfSelected(input) {
@@ -1425,6 +1620,80 @@ async function uploadExamPdf(examId) {
       (error) => {
         clearTimeout(timeout);
         // Give a human-readable error based on Firebase error codes
+        const messages = {
+          'storage/unauthorized':     'אין הרשאה להעלות — בדוק Firebase Storage Rules',
+          'storage/canceled':         'ההעלאה בוטלה',
+          'storage/unknown':          'שגיאת רשת לא ידועה',
+          'storage/quota-exceeded':   'חרגת ממכסת האחסון',
+          'storage/unauthenticated':  'לא מחובר — יש להתחבר מחדש',
+        };
+        reject(new Error(messages[error.code] || `שגיאת Storage: ${error.code} — ${error.message}`));
+      },
+      async () => {
+        clearTimeout(timeout);
+        try {
+          const url = await uploadTask.snapshot.ref.getDownloadURL();
+          resolve(url);
+        } catch (e) {
+          reject(new Error('ההעלאה הצליחה אך לא ניתן לקבל URL: ' + e.message));
+        }
+      }
+    );
+  });
+}
+
+/* ── Solution PDF handlers (add/edit exam) ─────────────────── */
+
+function onSolPdfSelected(input) {
+  const file = input.files[0];
+  if (!file) return;
+  _solPdfFile = file;
+  const nameEl  = document.getElementById('ae-sol-name');
+  const clearEl = document.getElementById('ae-sol-clear');
+  if (nameEl)  nameEl.textContent = file.name;
+  if (clearEl) clearEl.style.display = '';
+}
+
+function clearSolPdf() {
+  _solPdfFile = null;
+  const fileEl    = document.getElementById('ae-sol-file');
+  const nameEl    = document.getElementById('ae-sol-name');
+  const clearEl   = document.getElementById('ae-sol-clear');
+  const urlEl     = document.getElementById('ae-sol-url');
+  const currentEl = document.getElementById('ae-sol-current');
+  if (fileEl)    fileEl.value = '';
+  if (nameEl)    nameEl.textContent = 'לא נבחר קובץ';
+  if (clearEl)   clearEl.style.display = 'none';
+  if (urlEl)     urlEl.value = '';
+  if (currentEl) currentEl.style.display = 'none';
+}
+
+async function uploadSolPdf(examId) {
+  if (!_solPdfFile) return null;
+
+  const stor = typeof storage !== 'undefined' && storage
+    ? storage
+    : firebase.storage();
+
+  if (!stor) throw new Error('Firebase Storage לא זמין — וודא שה-SDK נטען');
+
+  const ref = stor.ref(`solution-pdfs/${examId}.pdf`);
+
+  return await new Promise((resolve, reject) => {
+    const uploadTask = ref.put(_solPdfFile);
+
+    const timeout = setTimeout(() => {
+      uploadTask.cancel();
+      reject(new Error('העלאת פתרון נכשלה: חרגה מ-60 שניות'));
+    }, 60000);
+
+    uploadTask.on('state_changed',
+      (snapshot) => {
+        const pct = Math.round((snapshot.bytesTransferred / snapshot.totalBytes) * 100);
+        showSpinner(`📤 מעלה פתרון... ${pct}%`);
+      },
+      (error) => {
+        clearTimeout(timeout);
         const messages = {
           'storage/unauthorized':     'אין הרשאה להעלות — בדוק Firebase Storage Rules',
           'storage/canceled':         'ההעלאה בוטלה',
@@ -1706,6 +1975,25 @@ async function submitAddExam() {
       }
     }
 
+    // ── Upload Solution PDF if one was selected ──────────────────
+    let solutionPdfUrl = document.getElementById('ae-sol-url')?.value || null;
+    if (_solPdfFile) {
+      showSpinner('📤 מעלה פתרון...');
+      try {
+        solutionPdfUrl = await uploadSolPdf(examId);
+        toast('✅ פתרון הועלה בהצלחה', 'success');
+      } catch (solErr) {
+        console.error('Solution PDF upload failed:', solErr);
+        const goAhead = confirm(`העלאת הפתרון נכשלה:\n${solErr.message}\n\nהאם לשמור את המבחן ללא פתרון?`);
+        if (!goAhead) {
+          if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = '💾 שמור מבחן'; }
+          hideSpinner();
+          return;
+        }
+        solutionPdfUrl = null;
+      }
+    }
+
     const exam   = {
       id:        examId,
       courseId,
@@ -1715,6 +2003,7 @@ async function submitAddExam() {
       moed:      moed || null,
       lecturers: lecturers.length ? lecturers : null,
       pdfUrl:    pdfUrl || null,
+      solutionPdfUrl: solutionPdfUrl || null,
       parsedModel: _parsedModel || null,
       verified:  false,
       questions: questions.map(q => ({
@@ -1758,6 +2047,7 @@ function resetForm() {
   ['ae-title','ae-year'].forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
   _clearLecturers();
   clearExamPdf();
+  clearSolPdf();
   parsedQuestions = [];
   _editingExamId  = null;
   _parsedModel    = null;
@@ -2205,10 +2495,27 @@ async function editExam(courseId, examId) {
       if (pdfClearEl)   pdfClearEl.style.display = '';
       if (pdfCurrentEl) {
         pdfCurrentEl.style.display = '';
-        pdfCurrentEl.innerHTML = `קובץ נוכחי: <a href="${exam.pdfUrl}" target="_blank" rel="noopener" style="color:var(--blue)">פתח PDF ↗</a>`;
+        pdfCurrentEl.innerHTML = `קובץ נוכחי: <a href="${safeUrl(exam.pdfUrl)}" target="_blank" rel="noopener" style="color:var(--blue)">פתח PDF ↗</a>`;
       }
     } else {
       clearExamPdf();
+    }
+
+    // ── Solution PDF ───────────────────────────────────────────
+    const solUrlEl     = document.getElementById('ae-sol-url');
+    const solNameEl    = document.getElementById('ae-sol-name');
+    const solClearEl   = document.getElementById('ae-sol-clear');
+    const solCurrentEl = document.getElementById('ae-sol-current');
+    if (exam.solutionPdfUrl) {
+      if (solUrlEl)     solUrlEl.value = exam.solutionPdfUrl;
+      if (solNameEl)    solNameEl.textContent = 'פתרון קיים (ניתן להחליף)';
+      if (solClearEl)   solClearEl.style.display = '';
+      if (solCurrentEl) {
+        solCurrentEl.style.display = '';
+        solCurrentEl.innerHTML = `פתרון נוכחי: <a href="${safeUrl(exam.solutionPdfUrl)}" target="_blank" rel="noopener" style="color:var(--blue)">פתח פתרון ↗</a>`;
+      }
+    } else {
+      clearSolPdf();
     }
 
     // ── Questions ──────────────────────────────────────────────

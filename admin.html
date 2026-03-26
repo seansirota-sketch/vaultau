@@ -337,6 +337,28 @@
           </div>
         </div>
 
+        <!-- Solution PDF upload -->
+        <div class="ac">
+          <div class="ac-title">📎 PDF פתרון (אופציונלי)</div>
+          <div style="padding:1.25rem;display:flex;flex-direction:column;gap:.8rem">
+            <p style="font-size:.83rem;color:var(--muted);margin:0">
+              העלה את קובץ הפתרון — יופיע כפתור SOL ליד המבחן ברשימה.
+            </p>
+            <div style="display:flex;align-items:center;gap:.75rem;flex-wrap:wrap">
+              <label class="btn btn-secondary" style="cursor:pointer;margin:0;display:inline-flex;align-items:center;gap:.4rem">
+                📎 בחר קובץ פתרון
+                <input type="file" id="ae-sol-file" accept=".pdf"
+                  style="display:none" onchange="onSolPdfSelected(this)">
+              </label>
+              <span id="ae-sol-name" style="font-size:.85rem;color:var(--muted)">לא נבחר קובץ</span>
+              <button id="ae-sol-clear" class="btn btn-danger btn-sm"
+                style="display:none" onclick="clearSolPdf()">✕ הסר</button>
+            </div>
+            <input type="hidden" id="ae-sol-url">
+            <div id="ae-sol-current" style="display:none;font-size:.8rem;color:var(--blue)"></div>
+          </div>
+        </div>
+
         <!-- Save button -->
         <div style="display:flex;justify-content:flex-end;gap:.75rem;padding:0 1.25rem 1.25rem;margin-top:.5rem">
           <button class="btn btn-secondary" onclick="resetForm()">איפוס</button>
@@ -618,7 +640,7 @@
         </div>
 
         <div class="ac">
-          <div class="ac-title">בחר קבצי PDF</div>
+          <div class="ac-title">בחר קבצי מבחנים (PDF)</div>
           <div style="padding:1.25rem;display:flex;flex-direction:column;gap:1rem">
             <label class="upload-zone" id="bulk-zone" style="cursor:pointer">
               <input type="file" id="bulk-file-input" accept=".pdf" multiple style="display:none"
@@ -629,14 +651,33 @@
             </label>
 
             <div id="bulk-file-list" style="display:none;display:flex;flex-direction:column;gap:.5rem"></div>
-
-            <div style="display:flex;gap:.75rem;justify-content:flex-end;margin-top:.5rem">
-              <button class="btn btn-secondary" onclick="clearBulkFiles()">נקה</button>
-              <button id="bulk-start-btn" class="btn btn-primary btn-lg" onclick="startBulkUpload()" disabled>
-                🚀 התחל העלאה
-              </button>
-            </div>
           </div>
+        </div>
+
+        <div class="ac">
+          <div class="ac-title">📎 קבצי פתרונות (PDF) <span style="font-weight:400;color:var(--muted);font-size:.8rem">(אופציונלי)</span></div>
+          <div style="padding:1.25rem;display:flex;flex-direction:column;gap:1rem">
+            <p style="font-size:.82rem;color:var(--muted);margin:0">
+              שם הקובץ חייב להיות בפורמט <strong dir="ltr">YYYYXZ_sol</strong> או <strong dir="ltr">YYYYXZ_all</strong> — לדוגמה: <code>2022AB_sol.pdf</code> או <code>2017AA_all.pdf</code><br>
+              <strong>_sol</strong> = פתרון נפרד &nbsp;|&nbsp; <strong>_all</strong> = קובץ משולב (מבחן + פתרון) — הפתרון יצביע על אותו PDF של המבחן.
+            </p>
+            <label class="upload-zone" id="bulk-sol-zone" style="cursor:pointer">
+              <input type="file" id="bulk-sol-input" accept=".pdf" multiple style="display:none"
+                     onchange="onBulkSolFilesSelected(this)">
+              <span class="uz-icon">📝</span>
+              <div class="uz-text">גרור קבצי פתרונות לכאן</div>
+              <div class="uz-sub">או לחץ לבחירה — ניתן לבחור מספר קבצים בו-זמנית</div>
+            </label>
+
+            <div id="bulk-sol-file-list" style="display:none;display:flex;flex-direction:column;gap:.5rem"></div>
+          </div>
+        </div>
+
+        <div style="display:flex;gap:.75rem;justify-content:flex-end;padding:0 1.25rem;margin-top:.5rem">
+          <button class="btn btn-secondary" onclick="clearBulkFiles()">נקה הכל</button>
+          <button id="bulk-start-btn" class="btn btn-primary btn-lg" onclick="startBulkUpload()" disabled>
+            🚀 התחל העלאה
+          </button>
         </div>
 
         <!-- Progress log -->
