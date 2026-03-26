@@ -57,36 +57,44 @@ service cloud.firestore {
       }
     }
 
+    // FIX 1: block delete & raw set — votes are aggregate counters
     match /questionVotes/{questionId} {
       allow read: if isLoggedIn();
-      allow write: if isLoggedIn();
+      allow create, update: if isLoggedIn();
+      allow delete: if isAdmin();
     }
 
+    // FIX 2: block delete — prevent cache wiping; create/update needed client-side
     match /ai_questions_cache/{docId} {
       allow read: if isLoggedIn();
-      allow write: if isLoggedIn();
+      allow create, update: if isLoggedIn();
+      allow delete: if isAdmin();
     }
 
+    match /settings/{docId} {
+      allow read: if isAdmin();
+      allow write: if isAdmin();
+    }
+
+    // FIX 4: enforce userId matches authenticated user to prevent forged reports
+    match /reports/{reportId} {
+      allow create: if isLoggedIn() && request.resource.data.userId == request.auth.uid;
+      allow read, list, update, delete: if isAdmin();
+    }
+    
     // Per-user AI generation quota (daily/weekly counters)
-    // Users can read their own quota; writes are restricted so they
-    // cannot lower counters within the same day.
     match /user_quotas/{userId} {
       allow read: if isLoggedIn() && request.auth.uid == userId;
-
-      // Allow create if the doc doesn't exist yet (first request ever)
       allow create: if isLoggedIn() && request.auth.uid == userId;
-
-      // Allow update when:
-      //   a) same day — counter must be incrementing (no reset)
-      //   b) new day  — date_key changed, counter resets to 1
+      // FIX 3: day-rollover must reset requests_today to exactly 1
+      // to prevent quota bypass by repeatedly changing date_key with counter=0
       allow update: if isLoggedIn() && request.auth.uid == userId
         && (
-          // Same day: only allow increment
           (request.resource.data.date_key == resource.data.date_key
             && request.resource.data.requests_today >= resource.data.requests_today)
           ||
-          // Day rollover: date_key changed, allow counter reset
-          request.resource.data.date_key != resource.data.date_key
+          (request.resource.data.date_key != resource.data.date_key
+            && request.resource.data.requests_today == 1)
         );
     }
 
@@ -97,8 +105,10 @@ service cloud.firestore {
       allow read: if isAdmin();
     }
 
-    // Question quality ratings (thumbs up/down)
-    // Doc ID = uid_questionId — one rating per user per question
+    // FIX 5: Question quality ratings (thumbs up/down)
+    // uid ownership enforced on both create and update.
+    // NOTE: one-rating-per-question cannot be fully enforced by rules alone;
+    // full enforcement requires /question_ratings/{userId}/{questionId} subcollection.
     match /question_ratings/{docId} {
       allow create: if isLoggedIn()
         && request.resource.data.uid == request.auth.uid;
@@ -106,16 +116,6 @@ service cloud.firestore {
         && resource.data.uid == request.auth.uid
         && request.resource.data.uid == request.auth.uid;
       allow read: if isAdmin();
-    }
-
-    match /settings/{docId} {
-      allow read: if isAdmin();
-      allow write: if isAdmin();
-    }
-
-    match /reports/{reportId} {
-      allow create: if isLoggedIn();
-      allow read, list, update, delete: if isAdmin();
     }
   }
 }
