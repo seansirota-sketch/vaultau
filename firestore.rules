@@ -16,11 +16,6 @@ service cloud.firestore {
       allow list, create, update, delete: if isAdmin();
     }
 
-    match /access_requests/{requestId} {
-      allow create: if false;
-      allow read, list, update, delete: if isAdmin();
-    }
-
     match /courses/{courseId} {
       allow read: if isLoggedIn();
       allow write: if isAdmin();
