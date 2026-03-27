@@ -7,7 +7,7 @@
  * Creates:
  *  - 2 courses
  *  - 10 exams (5 per course) with Hebrew questions
- *  - 3 authorized_users
+ *  - users
  *  - 3 users (Firestore)
  *  - 3 Auth accounts (via emulator REST API)
  */
@@ -417,7 +417,7 @@ async function main() {
   // 1. Clear existing data
   console.log('🧹 Clearing existing data...');
   await clearAllAuthUsers();
-  for (const col of ['courses', 'exams', 'authorized_users', 'users', 'generate_usage', 'question_ratings', 'ai_questions_cache']) {
+  for (const col of ['courses', 'exams', 'users', 'generate_usage', 'question_ratings', 'ai_questions_cache']) {
     await clearCollection(col);
   }
   console.log('   ✓ Done\n');
@@ -438,7 +438,7 @@ async function main() {
     console.log(`   ✓ ${data.title}`);
   }
 
-  // 4. Auth users + Firestore users + authorized_users
+  // 4. Auth users + Firestore users
   console.log('\n👤 Creating users...');
   for (const u of USERS_SEED) {
     const uid = await createAuthUser(u.email, u.password, u.displayName);
@@ -450,13 +450,6 @@ async function main() {
       role:             u.role,
       starredQuestions: [],
       difficultyVotes:  {},
-    });
-
-    await setDoc('authorized_users', u.email, {
-      email:   u.email,
-      active:  true,
-      source:  'seed',
-      addedAt: new Date().toISOString(),
     });
 
     console.log(`   ✓ ${u.email} (uid: ${uid})`);

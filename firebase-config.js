@@ -12,10 +12,6 @@ const firebaseConfig = {
   measurementId: "G-SF9W1XBZZK"
 };
 
-var PILOT_STUDENTS = [
-  "studetn@mail.tau.ac.il"
-];
-
 const CLAUDE_ENDPOINT = "/.netlify/functions/parse-exam";
 
 if (!firebase.apps.length) {
@@ -104,30 +100,4 @@ async function saveUserData(uid, data) {
 function genId() {
   if (typeof crypto !== 'undefined' && crypto.randomUUID) return crypto.randomUUID();
   return Math.random().toString(36).substr(2, 9) + Date.now().toString(36);
-}
-
-/**
- * Check whether a given email is authorized to access the app.
- * Priority:
- *   1. Firestore `authorized_users/{email}` with active:true.
- *   2. Falls back to static PILOT_STUDENTS if Firestore is unreachable.
- *
- * @param {string} email  — raw email, will be normalized internally
- * @returns {Promise<boolean>}
- */
-async function isUserAuthorized(email) {
-  if (!email) return false;
-  const normalized = email.toLowerCase().trim();
-
-  // Dynamic check via Firestore
-  try {
-    // source:'server' bypasses the local Firestore cache — ensures we always
-    // get the latest authorization status, not a stale 'document not found'.
-    const doc = await db.collection('authorized_users').doc(normalized).get({ source: 'server' });
-    return doc.exists && doc.data()?.active === true;
-  } catch (err) {
-    console.warn('isUserAuthorized: Firestore unreachable, falling back to static list', err);
-    // Offline / rules-error fallback — use the static list
-    return (window.PILOT_STUDENTS || []).some(e => e.toLowerCase() === normalized);
-  }
 }
