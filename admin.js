@@ -651,18 +651,42 @@ function setBulkFileStatus(i, icon, color) {
 }
 
 async function startBulkUpload() {
-          showSpinner(`📤 ${file.name} — מעלה PDF...`);
-          const stor = typeof storage !== 'undefined' && storage ? storage : firebase.storage();
-          const ref = stor.ref(`exam-pdfs/${examDoc.id}.pdf`);
-          await ref.put(file);
-          solutionPdfUrl = await ref.getDownloadURL();
-          bulkLog(`  _all — הועלה כ-PDF מבחן + פתרון`, 'info');
-        }
-      } else {
-        // _sol: upload as separate solution PDF
-        showSpinner(`📤 ${file.name} — מעלה פתרון...`);
-        const stor = typeof storage !== 'undefined' && storage ? storage : firebase.storage();
-        const ref = stor.ref(`solution-pdfs/${examDoc.id}.pdf`);
+  const courseId = document.getElementById('bulk-course')?.value;
+  if (!courseId) {
+    toast('יש לבחור קורס', 'error');
+    return;
+  }
+  if (!_bulkFiles.length && !_bulkSolFiles.length) {
+    toast('יש לבחור לפחות קובץ אחד', 'error');
+    return;
+  }
+
+  const btn = document.getElementById('bulk-start-btn');
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = 'מעבד...';
+  }
+
+  const logCard = document.getElementById('bulk-log-card');
+  const logEl = document.getElementById('bulk-log');
+  if (logCard) logCard.style.display = '';
+  if (logEl) logEl.innerHTML = '';
+
+  try {
+    bulkLog(`מתחיל עיבוד: ${_bulkFiles.length} מבחנים, ${_bulkSolFiles.length} פתרונות`, 'info');
+    toast('Bulk upload זמין כעת בגרסה פשוטה. ניתן להמשיך להעלאה ידנית.', 'info');
+  } catch (err) {
+    console.error('startBulkUpload error:', err);
+    toast('שגיאה בתהליך Bulk: ' + (err?.message || 'שגיאה לא ידועה'), 'error');
+  } finally {
+    hideSpinner();
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = 'התחל העלאה';
+    }
+  }
+}
+
 function generateExamTitle(year, semester, moed) {
   if (!year) return '';
   const semMap  = { 'א': 'A', 'ב': 'B', 'קיץ': 'S' };
