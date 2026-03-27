@@ -687,18 +687,18 @@ async function startBulkUpload() {
     bulkLog(`מתחיל: ${file.name}`, 'info');
 
     try {
-      // 1. Read PDF as base64 (send directly — no image rendering needed)
-      showSpinner(`📄 ${file.name} — קורא PDF...`);
-      const base64 = await new Promise((res, rej) => {
-        const r = new FileReader();
-        r.onload  = () => res(r.result.split(',')[1]);
-        r.onerror = () => rej(new Error('קריאת קובץ נכשלה'));
-        r.readAsDataURL(file);
+      // 1. Parse with the same PDF pipeline as single upload (Vision-first + fallback)
+      let result = await parsePdfWithSharedPipeline(file, {
+        onRenderStart: () => {
+          showSpinner(`🖼️ ${file.name} — ממיר PDF לתמונות...`);
+        },
+        onVisionStart: (pages) => {
+          showSpinner(`🤖 ${file.name} — Claude Vision מנתח ${pages} עמודים...`);
+        },
+        onFallbackStart: () => {
+          showSpinner(`🤖 ${file.name} — Claude מנתח PDF...`);
+        }
       });
-
-      // 2. Parse with Claude (Opus → Sonnet → Haiku)
-      showSpinner(`🤖 ${file.name} — Claude מנתח...`);
-      let result = await processWithClaude('', { isPDF: true, base64, filenameHint: file.name });
       if (!result.questions) result = { questions: result, metadata: null };
 
       const meta      = result.metadata || {};
@@ -1240,6 +1240,41 @@ async function renderPdfToBase64Images(file, maxPages = 15) {
 }
 
 /**
+ * Shared PDF parsing pipeline used by both single and bulk upload.
+ * Tries Vision first, then falls back to PDF document mode.
+ */
+async function parsePdfWithSharedPipeline(file, hooks = {}) {
+  const { onRenderStart, onVisionStart, onFallbackStart } = hooks;
+
+  if (onRenderStart) onRenderStart();
+
+  let images;
+  try {
+    images = await renderPdfToBase64Images(file, 15);
+  } catch (renderErr) {
+    // pdf.js not available or render failed — fall back to base64 PDF mode
+    console.warn('Vision render failed, falling back to PDF base64 mode:', renderErr.message);
+    images = null;
+  }
+
+  if (images && images.length > 0) {
+    if (onVisionStart) onVisionStart(images.length);
+    return await processWithVision(images, file.name);
+  }
+
+  if (onFallbackStart) onFallbackStart();
+  const base64 = await new Promise((res, rej) => {
+    const r = new FileReader();
+    r.onload  = () => res(r.result.split(',')[1]);
+    r.onerror = () => rej(new Error('קריאת קובץ נכשלה'));
+    r.readAsDataURL(file);
+  });
+
+  const data = await processWithClaude('', { isPDF: true, base64, filenameHint: file.name });
+  return typeof data === 'object' && data.questions ? data : { questions: data, metadata: null };
+}
+
+/**
  * Send images to Claude directly (Opus → Sonnet → Haiku).
  */
 async function processWithVision(images, filenameHint) {
@@ -1475,38 +1510,22 @@ async function handleFileInput(file) {
     let result; // { questions, metadata }
 
     if (isPDF) {
-      /* ── Vision path: render pages → images → Claude Vision ── */
-      setStatus('🖼️ ממיר PDF לתמונות...');
-      setProgress(20);
-
-      let images;
-      try {
-        images = await renderPdfToBase64Images(file, 15);
-      } catch (renderErr) {
-        // pdf.js not available or render failed — fall back to base64 PDF mode
-        console.warn('Vision render failed, falling back to PDF base64 mode:', renderErr.message);
-        images = null;
-      }
-
-      if (images && images.length > 0) {
-        setProgress(45);
-        setStatus(`🤖 Claude Vision מנתח ${images.length} עמודים...`);
-        showSpinner(`🤖 Claude Vision מנתח ${images.length} עמודים...`);
-        result = await processWithVision(images, file.name);
-      } else {
-        // Fallback: send PDF as base64 document
-        setProgress(45);
-        setStatus('🤖 Claude מנתח PDF...');
-        showSpinner('🤖 Claude מנתח PDF...');
-        const base64 = await new Promise((res, rej) => {
-          const r = new FileReader();
-          r.onload  = () => res(r.result.split(',')[1]);
-          r.onerror = () => rej(new Error('קריאת קובץ נכשלה'));
-          r.readAsDataURL(file);
-        });
-        const data = await processWithClaude('', { isPDF: true, base64 });
-        result = typeof data === 'object' && data.questions ? data : { questions: data, metadata: null };
-      }
+      result = await parsePdfWithSharedPipeline(file, {
+        onRenderStart: () => {
+          setStatus('🖼️ ממיר PDF לתמונות...');
+          setProgress(20);
+        },
+        onVisionStart: (pages) => {
+          setProgress(45);
+          setStatus(`🤖 Claude Vision מנתח ${pages} עמודים...`);
+          showSpinner(`🤖 Claude Vision מנתח ${pages} עמודים...`);
+        },
+        onFallbackStart: () => {
+          setProgress(45);
+          setStatus('🤖 Claude מנתח PDF...');
+          showSpinner('🤖 Claude מנתח PDF...');
+        }
+      });
 
     } else {
       /* ── Text / LaTeX file ── */
