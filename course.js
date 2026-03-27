@@ -807,15 +807,7 @@ async function doSignupStep2() {
     );
     await cred.user.updateProfile({ displayName: _verifyState.name });
 
-    // Mark email as verified in user data (Firestore)
-    try {
-      await db.collection('users').doc(cred.user.uid).set(
-        { emailVerified: true },
-        { merge: true }
-      );
-    } catch (_) {}
-
-    // onAuthStateChanged will handle the rest
+    // onAuthStateChanged will handle user-doc creation + terms modal
 
   } catch (e) {
     const messages = {
@@ -1070,12 +1062,17 @@ async function acceptTerms() {
     const uid = STATE.fireUser?.uid;
     if (!uid) throw new Error('לא מחובר');
 
-    const now = firebase.firestore.Timestamp.now();
-    await saveUserData(uid, {
+    const now = firebase.firestore.FieldValue.serverTimestamp();
+    // Write directly with role+uid+email so this works as both CREATE (if
+    // the user doc wasn't persisted yet due to signup race) and UPDATE.
+    await db.collection('users').doc(uid).set({
       acceptedTerms:   true,
-      acceptedTermsAt: now,       // exact timestamp of acceptance
-    });
-    STATE.userData = { ...STATE.userData, acceptedTerms: true, acceptedTermsAt: now };
+      acceptedTermsAt: now,
+      role:  'student',
+      uid:   uid,
+      email: (STATE.fireUser.email || '').toLowerCase().trim(),
+    }, { merge: true });
+    STATE.userData = { ...STATE.userData, acceptedTerms: true, acceptedTermsAt: new Date() };
 
     // Continue to normal app load
     renderNavbar();
