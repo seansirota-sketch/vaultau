@@ -351,6 +351,7 @@ async function initAdmin() {
     await refreshDashboard();
     await renderManageTable();
     // טעינת בדאג'ים ברקע
+    _loadRequestsBadge();
     _loadReportsBadge();
     await renderCoursesList();
     setupUploadZone();
@@ -386,6 +387,8 @@ function _applySectionUI(name) {
   if (name === 'analytics')   renderAnalytics();
   if (name === 'users')       renderUserStats();
   if (name === 'survey')      renderSurveyManager();
+  if (name === 'permissions') renderPermissionsSection();
+  if (name === 'requests')    renderRequestsSection();
   if (name === 'reports')     renderReportsSection();
   if (name === 'ai-monitor')  renderAIMonitor();
 }
@@ -651,42 +654,409 @@ function setBulkFileStatus(i, icon, color) {
 }
 
 async function startBulkUpload() {
-  const courseId = document.getElementById('bulk-course')?.value;
-  if (!courseId) {
-    toast('יש לבחור קורס', 'error');
-    return;
-  }
-  if (!_bulkFiles.length && !_bulkSolFiles.length) {
-    toast('יש לבחור לפחות קובץ אחד', 'error');
-    return;
-  }
+  const courseId = document.getElementById('bulk-course').value;
+  if (!courseId) { toast('נא לבחור קורס', 'error'); return; }
+  if (!_bulkFiles.length && !_bulkSolFiles.length) { toast('לא נבחרו קבצים', 'error'); return; }
 
   const btn = document.getElementById('bulk-start-btn');
-  if (btn) {
-    btn.disabled = true;
-    btn.textContent = 'מעבד...';
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ מעלה...'; }
+
+  // Show log
+  const logCard = document.getElementById('bulk-log-card');
+  const logEl   = document.getElementById('bulk-log');
+  if (logCard) logCard.style.display = '';
+  if (logEl)   logEl.innerHTML = '';
+
+  // Invalidate lecturer cache so we pick up any newly added names
+  _knownLecturers = null;
+
+  // Collect manual lecturer list once before the loop
+  const manualLecturers = getBulkKnownLecturers();
+  if (manualLecturers.length) {
+    bulkLog(`רשימת מרצים ידועים: ${manualLecturers.join(', ')}`, 'info');
   }
 
-  const logCard = document.getElementById('bulk-log-card');
-  const logEl = document.getElementById('bulk-log');
-  if (logCard) logCard.style.display = '';
-  if (logEl) logEl.innerHTML = '';
+  let succeeded = 0;
+  let failed    = 0;
+  const totalExams = _bulkFiles.length;
 
-  try {
-    bulkLog(`מתחיל עיבוד: ${_bulkFiles.length} מבחנים, ${_bulkSolFiles.length} פתרונות`, 'info');
-    toast('Bulk upload זמין כעת בגרסה פשוטה. ניתן להמשיך להעלאה ידנית.', 'info');
-  } catch (err) {
-    console.error('startBulkUpload error:', err);
-    toast('שגיאה בתהליך Bulk: ' + (err?.message || 'שגיאה לא ידועה'), 'error');
-  } finally {
-    hideSpinner();
-    if (btn) {
-      btn.disabled = false;
-      btn.textContent = 'התחל העלאה';
+  // ── Phase 1: Upload exam files ───────────────────────────
+  for (let i = 0; i < _bulkFiles.length; i++) {
+    const file = _bulkFiles[i];
+    const label = document.getElementById(`bulk-progress-label`);
+    if (label) label.textContent = `מבחנים: ${i + 1} / ${_bulkFiles.length}`;
+
+    setBulkFileStatus(i, '⏳', '#d97706');
+    bulkLog(`מתחיל: ${file.name}`, 'info');
+
+    try {
+      // 1. Read PDF as base64 (send directly — no image rendering needed)
+      showSpinner(`📄 ${file.name} — קורא PDF...`);
+      const base64 = await new Promise((res, rej) => {
+        const r = new FileReader();
+        r.onload  = () => res(r.result.split(',')[1]);
+        r.onerror = () => rej(new Error('קריאת קובץ נכשלה'));
+        r.readAsDataURL(file);
+      });
+
+      // 2. Parse with Claude (Opus → Sonnet → Haiku)
+      showSpinner(`🤖 ${file.name} — Claude מנתח...`);
+      let result = await processWithClaude('', { isPDF: true, base64, filenameHint: file.name });
+      if (!result.questions) result = { questions: result, metadata: null };
+
+      const meta      = result.metadata || {};
+      const questions = (result.questions || []).filter(q => q.text || q.subs?.length);
+
+      // 3. Normalize lecturer names against manual list + Firestore
+      let lecturers = meta.lecturers || [];
+      lecturers = await normalizeLecturerNames(lecturers, manualLecturers);
+
+      // 4. Build title from filename
+      const known = parseFilenameForBulk(file.name);
+      const title = generateExamTitle(known.year || meta.year, known.semester || meta.semester, known.moed || meta.moed);
+
+      bulkLog(`  זוהו ${questions.length} שאלות | כותרת: ${title || '(ללא)'} | מרצים: ${lecturers.join(', ') || '—'} | מודל: ${result.model || '?'}`, 'info');
+
+      // 5. Upload PDF to Storage
+      showSpinner(`📤 ${file.name} — מעלה PDF...`);
+      const examId = genId();
+      let pdfUrl = null;
+      try {
+        const stor = typeof storage !== 'undefined' && storage ? storage : firebase.storage();
+        const ref  = stor.ref(`exam-pdfs/${examId}.pdf`);
+        await ref.put(file);
+        pdfUrl = await ref.getDownloadURL();
+      } catch (e) {
+        bulkLog(`  ⚠️ העלאת PDF נכשלה: ${e.message}`, 'warn');
+      }
+
+      // 6. Check for duplicate title in this course
+      const finalTitle = title || file.name.replace(/\.[^/.]+$/, '');
+      const dupSnap = await db.collection('exams')
+        .where('courseId', '==', courseId)
+        .where('title', '==', finalTitle)
+        .get();
+      if (!dupSnap.empty) {
+        setBulkFileStatus(i, '⚠️', '#d97706');
+        bulkLog(`  דולג — מבחן בשם "${finalTitle}" כבר קיים בקורס`, 'warn');
+        failed++;
+        continue;
+      }
+
+      // 7. Save exam to Firestore
+      const exam = {
+        id: examId, courseId,
+        title: finalTitle,
+        year:      known.year     || meta.year     || null,
+        semester:  known.semester || meta.semester || null,
+        moed:      known.moed     || meta.moed     || null,
+        lecturers: lecturers.length ? lecturers : null,
+        pdfUrl,
+        solutionPdfUrl: null,
+        parsedModel: result.model || null,
+        verified: false,
+        questions: questions.map(q => ({
+          id: q.id || genId(), text: q.text, isBonus: q.isBonus === true,
+          subs: (q.subs || []).map(s => ({ id: s.id || genId(), label: s.label, text: s.text }))
+        })),
+        createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+        updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+        createdBy: adminUser?.email || 'admin',
+      };
+
+      await db.collection('exams').doc(examId).set(exam);
+
+      // Invalidate cache so next file benefits from this lecturer
+      _knownLecturers = null;
+
+      setBulkFileStatus(i, '✅', '#065f46');
+      bulkLog(`  הועלה בהצלחה → ${title}`, 'success');
+      succeeded++;
+
+    } catch (err) {
+      console.error(err);
+      setBulkFileStatus(i, '❌', '#991b1b');
+      bulkLog(`  שגיאה: ${err.message}`, 'error');
+      failed++;
     }
   }
+
+  // ── Phase 2: Upload solution files ───────────────────────
+  let solSucceeded = 0;
+  let solFailed    = 0;
+
+  if (_bulkSolFiles.length) {
+    bulkLog(`\n━━━ מתחיל העלאת ${_bulkSolFiles.length} פתרונות ━━━`, 'info');
+  }
+
+  for (let i = 0; i < _bulkSolFiles.length; i++) {
+    const file = _bulkSolFiles[i];
+    const label = document.getElementById('bulk-progress-label');
+    if (label) label.textContent = `פתרונות: ${i + 1} / ${_bulkSolFiles.length}`;
+
+    setBulkSolFileStatus(i, '⏳', '#d97706');
+    bulkLog(`פתרון: ${file.name}`, 'info');
+
+    try {
+      // 1. Parse filename to extract exam title and type
+      const parsed = parseSolFilename(file.name);
+      if (!parsed) {
+        setBulkSolFileStatus(i, '⚠️', '#d97706');
+        bulkLog(`  דולג — שם קובץ לא תקין. נדרש פורמט YYYYXZ_sol או YYYYXZ_all`, 'warn');
+        solFailed++;
+        continue;
+      }
+
+      // 2. Find the matching exam in this course
+      const examSnap = await db.collection('exams')
+        .where('courseId', '==', courseId)
+        .where('title', '==', parsed.title)
+        .get();
+
+      if (examSnap.empty) {
+        setBulkSolFileStatus(i, '⚠️', '#d97706');
+        bulkLog(`  לא נמצא מבחן "${parsed.title}" בקורס — דולג`, 'warn');
+        solFailed++;
+        continue;
+      }
+
+      const examDoc = examSnap.docs[0];
+      const examData = examDoc.data();
+
+      // 3. Determine solutionPdfUrl
+      let solutionPdfUrl;
+
+      if (parsed.type === 'all') {
+        // _all: same file as the exam PDF — just point to pdfUrl
+        if (examData.pdfUrl) {
+          solutionPdfUrl = examData.pdfUrl;
+          bulkLog(`  _all — משתמש ב-PDF המבחן הקיים כפתרון`, 'info');
+        } else {
+          // No exam PDF exists, upload this file as both exam and solution
+          showSpinner(`📤 ${file.name} — מעלה PDF...`);
+          const stor = typeof storage !== 'undefined' && storage ? storage : firebase.storage();
+          const ref = stor.ref(`exam-pdfs/${examDoc.id}.pdf`);
+          await ref.put(file);
+          solutionPdfUrl = await ref.getDownloadURL();
+          bulkLog(`  _all — הועלה כ-PDF מבחן + פתרון`, 'info');
+        }
+      } else {
+        // _sol: upload as separate solution PDF
+        showSpinner(`📤 ${file.name} — מעלה פתרון...`);
+        const stor = typeof storage !== 'undefined' && storage ? storage : firebase.storage();
+        const ref = stor.ref(`solution-pdfs/${examDoc.id}.pdf`);
+        await ref.put(file);
+        solutionPdfUrl = await ref.getDownloadURL();
+      }
+
+      // 4. Update exam document with solutionPdfUrl
+      await db.collection('exams').doc(examDoc.id).update({
+        solutionPdfUrl,
+        updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+      });
+
+      setBulkSolFileStatus(i, '✅', '#065f46');
+      bulkLog(`  פתרון עודכן בהצלחה → ${parsed.title}`, 'success');
+      solSucceeded++;
+
+    } catch (err) {
+      console.error(err);
+      setBulkSolFileStatus(i, '❌', '#991b1b');
+      bulkLog(`  שגיאה: ${err.message}`, 'error');
+      solFailed++;
+    }
+  }
+
+  hideSpinner();
+  if (btn) { btn.disabled = false; btn.textContent = '🚀 התחל העלאה'; }
+
+  const label = document.getElementById('bulk-progress-label');
+  const totalAll = totalExams + _bulkSolFiles.length;
+  const successAll = succeeded + solSucceeded;
+  const failAll = failed + solFailed;
+  if (label) label.textContent = `הסתיים — ${successAll} הצליחו, ${failAll} נכשלו`;
+
+  if (totalExams) {
+    bulkLog(`━━━ מבחנים: ${succeeded}/${totalExams} הועלו בהצלחה ━━━`, succeeded === totalExams ? 'success' : 'warn');
+  }
+  if (_bulkSolFiles.length) {
+    bulkLog(`━━━ פתרונות: ${solSucceeded}/${_bulkSolFiles.length} עודכנו בהצלחה ━━━`, solSucceeded === _bulkSolFiles.length ? 'success' : 'warn');
+  }
+  toast(`סיום: ${successAll}/${totalAll} הועלו`, successAll === totalAll ? 'success' : '');
+
+  await refreshDashboard();
+  await populateAllSelects();
 }
 
+// Thin wrapper so bulk upload can call parseFilename without circular issues
+function parseFilenameForBulk(filename) {
+  return typeof parseFilename === 'function' ? parseFilename(filename) : {};
+}
+
+/* ══════════════════════════════════════════════════════════
+   PARSER ENGINE  (unchanged from original — local parsing)
+══════════════════════════════════════════════════════════ */
+
+function parseExamText(raw) {
+  if (!raw || !raw.trim()) return [];
+  let text = cleanLyX(raw);
+  const blocks = splitIntoQuestions(text);
+  return blocks.map(({ index, body, isBonus }) => {
+    const { mainText, subs } = parseSubQuestions(body.trim());
+    return {
+      id:      genId(),
+      index,
+      text:    mainText.trim(),
+      subs:    subs.map(s => ({ id: genId(), label: s.label, text: s.text })),
+      isBonus: isBonus || BONUS_REGEX.test(mainText),
+    };
+  }).filter(q => q.text.length > 1 || q.subs.length > 0);
+}
+
+function cleanLyX(text) {
+  return text
+    .replace(/\\begin_layout\s+\w+/g, '')
+    .replace(/\\end_layout/g, '\n')
+    .replace(/\\begin_inset\s+\w+[^\n]*/g, '')
+    .replace(/\\end_inset/g, '')
+    .replace(/\\begin_body/g, '')
+    .replace(/\\end_body/g, '')
+    .replace(/\\begin_document/g, '')
+    .replace(/\\end_document/g, '')
+    .replace(/\\lyxformat\s+\d+/g, '')
+    .replace(/\\textclass\s+\w+/g, '')
+    .replace(/\\use_\w+[^\n]*/g, '')
+    .replace(/\\language\s+\w+/g, '')
+    .replace(/\\inputencoding[^\n]*/g, '')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
+const BONUS_TITLE  = 'שאלת בונוס לקבוצות B ו-C';
+const BONUS_REGEX  = /שאלת\s*בונוס(?:\s+לקבוצות\s+[A-Cא-ג]\s+ו[-–]\s*[A-Cא-ג])?/u;
+
+function splitIntoQuestions(text) {
+  // ── Pre-pass: extract bonus question block before normal splitting ──
+  const bonusSplit = text.split(/(?=(?:^|\n)\s*שאלת\s*בונוס)/mu);
+  let bonusBlock   = null;
+  if (bonusSplit.length > 1) {
+    bonusBlock = bonusSplit.pop().trim();   // everything from "שאלת בונוס" onwards
+    text       = bonusSplit.join('').trim(); // rest without the bonus block
+  }
+
+  const hePattern = /(?:^|\n)\s*(שאלה\s*\d+)/mu;
+  if (hePattern.test(text)) {
+    const parts = text.split(/(?=(?:^|\n)\s*שאלה\s*\d+)/mu);
+    const result = [];
+    for (const part of parts) {
+      const trimmed = part.trim();
+      if (!trimmed) continue;
+      const numMatch = trimmed.match(/^שאלה\s*(\d+)/u);
+      const index = numMatch ? parseInt(numMatch[1]) : result.length + 1;
+      const body = trimmed.replace(/^שאלה\s*\d+\s*[:\.\-–]?\s*/u, '').trim();
+      if (body.length > 1) result.push({ index, body });
+    }
+    // Re-attach bonus block at end
+    if (bonusBlock) {
+      const bonusBody = bonusBlock.replace(/^שאלת\s*בונוס[^\n]*/mu, '').trim();
+      result.push({ index: result.length + 1, body: bonusBody || bonusBlock, isBonus: true });
+    }
+    if (result.length > 1) return result;
+  }
+
+  const enPattern = /(?:^|\n)\s*(?:question|problem|ex\.?|exercise)\s*\d+/mi;
+  if (enPattern.test(text)) {
+    const parts = text.split(/(?=(?:^|\n)\s*(?:question|problem|ex\.?|exercise)\s*\d+)/mi);
+    const result = [];
+    for (const part of parts) {
+      const trimmed = part.trim();
+      if (!trimmed) continue;
+      const numMatch = trimmed.match(/^(?:question|problem|ex\.?|exercise)\s*(\d+)/i);
+      const index = numMatch ? parseInt(numMatch[1]) : result.length + 1;
+      const body = trimmed.replace(/^(?:question|problem|ex\.?|exercise)\s*\d+\s*[:\.\-–]?\s*/i, '').trim();
+      if (body.length > 1) result.push({ index, body });
+    }
+    if (result.length > 1) return result;
+  }
+
+  const numPattern = /(?:^|\n)\s*\d+\s*[\.)\]]\s+/m;
+  if (numPattern.test(text)) {
+    const parts = text.split(/(?=(?:^|\n)\s*\d+\s*[\.)\]]\s)/m);
+    const result = [];
+    for (const part of parts) {
+      const trimmed = part.trim();
+      if (!trimmed) continue;
+      const numMatch = trimmed.match(/^(\d+)\s*[\.)\]]\s+/);
+      const index = numMatch ? parseInt(numMatch[1]) : result.length + 1;
+      const body = trimmed.replace(/^\d+\s*[\.)\]]\s+/, '').trim();
+      if (body.length > 1) result.push({ index, body });
+    }
+    if (result.length > 1) return result;
+  }
+
+  const paragraphs = text.split(/\n{2,}/).map(p => p.trim()).filter(p => p.length > 3);
+  return paragraphs.map((body, i) => ({ index: i + 1, body }));
+}
+
+function parseSubQuestions(block) {
+  let fixed = block
+    .replace(/\)\s*([א-תa-zA-Z])\s*\(\s*$/gmu, '\n($1) ')
+    .replace(/\)\s*([א-תa-zA-Z])\s*\(\s*/g, '\n($1) ');
+  fixed = fixed.replace(/\(([א-תa-zA-Z])\)(?!\s*\))/g, '($1) ');
+  const SUB = /(?:^|\n)\s*\(([א-תa-zA-Z])\)\s+/gmu;
+  const matches = [...fixed.matchAll(SUB)];
+  if (!matches.length) return { mainText: block.trim(), subs: [] };
+  const firstPos = matches[0].index;
+  const mainText = fixed.slice(0, firstPos).trim();
+  const subs = [];
+  for (let i = 0; i < matches.length; i++) {
+    const m     = matches[i];
+    const label = '(' + m[1] + ')';
+    const start = m.index + m[0].length;
+    const end   = (i + 1 < matches.length) ? matches[i + 1].index : fixed.length;
+    const text  = fixed.slice(start, end).trim();
+    if (label && text) subs.push({ label, text });
+  }
+  return { mainText, subs };
+}
+
+function inferExamMeta(title) {
+  const meta = { year: '', semester: '', moed: '' };
+  if (!title) return meta;
+  const yearMatch = title.match(/\b(20\d{2}|19\d{2})\b/);
+  if (yearMatch) meta.year = yearMatch[1];
+  const shortPattern = title.match(/(?:20|19)\d{2}([א-ב]|[AB])?([א-ג]|[ABC])?/i);
+  if (shortPattern) {
+    if (shortPattern[1]) {
+      const s = shortPattern[1].toUpperCase();
+      meta.semester = s === 'A' ? 'א' : s === 'B' ? 'ב' : shortPattern[1];
+    }
+    if (shortPattern[2]) {
+      const m = shortPattern[2].toUpperCase();
+      meta.moed = m === 'A' ? 'א' : m === 'B' ? 'ב' : m === 'C' ? 'ג' : shortPattern[2];
+    }
+  }
+  if (!meta.semester) {
+    if (/סמסטר\s*א|semester\s*a/i.test(title))    meta.semester = 'א';
+    else if (/סמסטר\s*ב|semester\s*b/i.test(title)) meta.semester = 'ב';
+    else if (/קיץ|summer/i.test(title))              meta.semester = 'קיץ';
+  }
+  if (!meta.moed) {
+    if (/מועד\s*א|moed\s*a/i.test(title))    meta.moed = 'א';
+    else if (/מועד\s*ב|moed\s*b/i.test(title)) meta.moed = 'ב';
+    else if (/מועד\s*ג|moed\s*c/i.test(title)) meta.moed = 'ג';
+  }
+  return meta;
+}
+
+/* ══════════════════════════════════════════════════════════
+   CLAUDE API  (via your backend endpoint)
+══════════════════════════════════════════════════════════ */
+
+/**
+ * Generate exam title code like "2025AB":
+ * year + semester letter (A=א, B=ב, S=קיץ) + moed letter (A=א, B=ב, C=ג)
+ */
 function generateExamTitle(year, semester, moed) {
   if (!year) return '';
   const semMap  = { 'א': 'A', 'ב': 'B', 'קיץ': 'S' };
@@ -2885,6 +3255,187 @@ async function resetSurveyResponses() {
 }
 
 
+/* ══════════════════════════════════════════════════════════
+   PERMISSIONS MANAGER  (admin)
+   Manages the `authorized_users` Firestore collection.
+   Each document ID = normalized email, with field active:true.
+══════════════════════════════════════════════════════════ */
+
+async function renderPermissionsSection() {
+  const listEl  = document.getElementById('permissions-list-wrap');
+  const countEl = document.getElementById('permissions-count');
+  if (listEl) listEl.innerHTML = '<div class="spinner" style="margin:1.5rem auto"></div>';
+
+  if (!adminUser || adminUser.role !== 'admin') {
+    if (listEl) listEl.innerHTML = '<p style="color:var(--danger)">גישה נדחתה — מנהלים בלבד</p>';
+    return;
+  }
+
+  try {
+    const snap   = await db.collection('authorized_users').get();
+    const emails = snap.docs
+      .filter(d => d.data().active !== false)
+      .map(d => d.id)
+      .sort((a, b) => a.localeCompare(b));
+
+    if (countEl) countEl.textContent = emails.length + ' מיילים מורשים';
+
+    if (!listEl) return;
+
+    if (!emails.length) {
+      listEl.innerHTML = `
+        <div class="empty" style="padding:2rem">
+          <span class="ei">📭</span>
+          <h3>אין מיילים מורשים עדיין</h3>
+          <p>הוסף מיילים בעזרת הטופס למעלה</p>
+        </div>`;
+      return;
+    }
+
+    const rows = emails.map(email => `
+      <tr>
+        <td style="font-size:.85rem;font-family:monospace;direction:ltr;text-align:left">${esc(email)}</td>
+        <td style="text-align:center">
+          <span class="badge" style="background:#dcfce7;color:#166534;border:1px solid #86efac">✓ פעיל</span>
+        </td>
+        <td>
+          <button class="btn btn-danger btn-sm"
+            onclick="deleteAuthorizedEmail('${esc(email)}')">מחק</button>
+        </td>
+      </tr>`).join('');
+
+    listEl.innerHTML = `
+      <table class="tbl">
+        <thead>
+          <tr>
+            <th style="direction:ltr;text-align:left">אימייל</th>
+            <th style="text-align:center">סטטוס</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>${rows}</tbody>
+      </table>`;
+
+  } catch (e) {
+    console.error('renderPermissionsSection error:', e);
+    if (listEl) listEl.innerHTML = `<p style="color:var(--danger);padding:1rem">${esc(e.message)}</p>`;
+  }
+}
+
+/* ══════════════════════════════════════════════════════════
+   PERMISSIONS MANAGER  —  UPDATED addAuthorizedEmails
+   קטע זה מחליף את הפונקציה הקיימת ב-admin.js (שורות 2070–2120)
+   ══════════════════════════════════════════════════════════ */
+
+/**
+ * שולח מייל ברכה דרך Netlify Function.
+ * נקרא בצורה fire-and-forget (לא חוסם את ה-UI).
+ *
+ * @param {string} email  — כתובת המייל של הסטודנט
+ * @param {string} [name] — שם מלא (אופציונלי)
+ */
+async function sendWelcomeEmail(email, name = '') {
+  try {
+    const token = await firebase.auth().currentUser.getIdToken();
+    const res = await fetch('/.netlify/functions/send-welcome-email', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
+      body: JSON.stringify({ email, name }),
+    });
+
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      console.warn(`sendWelcomeEmail failed for ${email}:`, data.error || res.status);
+    } else {
+      console.log(`✉️ Welcome email queued → ${email}`);
+    }
+  } catch (err) {
+    // שגיאת רשת — לא עוצרים את כל תהליך ההוספה בגללה
+    console.warn('sendWelcomeEmail network error:', err.message);
+  }
+}
+
+/* ── מחליף את addAuthorizedEmails הקיימת ── */
+async function addAuthorizedEmails() {
+  if (!adminUser || adminUser.role !== 'admin') {
+    toast('גישה נדחתה — מנהלים בלבד', 'error');
+    return;
+  }
+
+  const textarea = document.getElementById('permissions-textarea');
+  if (!textarea) return;
+
+  const raw = textarea.value;
+  const candidates = raw
+    .split(/[\n\r,;]+/)
+    .map(s => s.trim().toLowerCase())
+    .filter(s => s.includes('@') && s.length > 4);
+
+  const unique = [...new Set(candidates)];
+
+  if (!unique.length) {
+    toast('לא נמצאו כתובות מייל תקינות', 'error');
+    return;
+  }
+
+  const btn = document.getElementById('add-emails-btn');
+  if (btn) { btn.disabled = true; btn.textContent = '💾 שומר...'; }
+
+  try {
+    /* ── 1. טען את הרשימה הקיימת בקריאה אחת (collection-level read) ── */
+    const existingSnap = await db.collection('authorized_users').get();
+    const alreadyActive = new Set(
+      existingSnap.docs
+        .filter(d => d.data().active === true)
+        .map(d => d.id)   // document ID = normalized email
+    );
+
+    // מיילים שלא היו פעילים עד כה — אלה יקבלו מייל ברכה
+    const newEmails = unique.filter(e => !alreadyActive.has(e));
+
+    /* ── 2. כתוב ל-Firestore בצ'אנקים ── */
+    const CHUNK = 400;
+    for (let i = 0; i < unique.length; i += CHUNK) {
+      const batch = db.batch();
+      unique.slice(i, i + CHUNK).forEach(email => {
+        const ref = db.collection('authorized_users').doc(email);
+        batch.set(ref, {
+          active: true,
+          addedBy: adminUser.email,
+          addedAt: firebase.firestore.FieldValue.serverTimestamp(),
+        }, { merge: true });
+      });
+      await batch.commit();
+    }
+
+    toast(`✅ ${unique.length} מיילים נוספו בהצלחה`, 'success');
+    textarea.value = '';
+
+    /* ── 3. שלח מיילי ברכה רק למיילים החדשים — fire-and-forget ── */
+    if (newEmails.length > 0) {
+      toast(`✉️ שולח ${newEmails.length} מיילי ברכה...`, 'info');
+
+      // שולחים במקביל, עם throttle קל (כדי לא לדפוק SendGrid בבת אחת)
+      const MAIL_BATCH = 5; // עד 5 מיילים במקביל
+      for (let i = 0; i < newEmails.length; i += MAIL_BATCH) {
+        const chunk = newEmails.slice(i, i + MAIL_BATCH);
+        await Promise.all(chunk.map(email => sendWelcomeEmail(email)));
+      }
+
+      console.log(`📧 Welcome emails sent to ${newEmails.length} new users`);
+    }
+
+    await renderPermissionsSection();
+
+  } catch (e) {
+    console.error('addAuthorizedEmails error:', e);
+    toast('שגיאה בשמירה: ' + e.message, 'error');
+  } finally {
+    const btn = document.getElementById('add-emails-btn');
+    if (btn) { btn.disabled = false; btn.textContent = '🔓 הוסף מיילים למערכת'; }
+  }
+}
+
 /* ── AI MONITORING DASHBOARD ─────────────────────────────── */
 // Token-based pricing (USD per 1M tokens)
 const GEMINI_INPUT_PER_M   = 1.25;
@@ -3106,6 +3657,225 @@ async function renderAIMonitor() {
   }
 }
 
+
+async function deleteAuthorizedEmail(email) {
+  if (!adminUser || adminUser.role !== 'admin') {
+    toast('גישה נדחתה — מנהלים בלבד', 'error');
+    return;
+  }
+
+  if (!confirm(`האם למחוק את הרשאת הגישה של:\n${email}?`)) return;
+
+  try {
+    await db.collection('authorized_users').doc(email).set(
+      { active: false, revokedBy: adminUser.email,
+        revokedAt: firebase.firestore.FieldValue.serverTimestamp() },
+      { merge: true }
+    );
+    toast(`🗑️ ${email} הוסר מרשימת ההרשאות`, 'info');
+    await renderPermissionsSection();
+  } catch (e) {
+    console.error('deleteAuthorizedEmail error:', e);
+    toast('שגיאה במחיקה: ' + e.message, 'error');
+  }
+}
+
+
+/* ══════════════════════════════════════════════════════════
+   ACCESS REQUESTS PANEL
+   Collection: access_requests
+   Each doc: { name, email, lecturer, timestamp, status }
+══════════════════════════════════════════════════════════ */
+
+/**
+ * טוען ומציג את כל בקשות הגישה הממתינות.
+ * נקרא ע"י showSection('requests') ועל ידי כפתור הרענון.
+ */
+async function renderRequestsSection() {
+  const listEl  = document.getElementById('requests-list-wrap');
+  const countEl = document.getElementById('requests-count');
+  const badge   = document.getElementById('requests-badge');
+
+  if (listEl) listEl.innerHTML = '<div class="spinner" style="margin:1.5rem auto"></div>';
+
+  if (!adminUser || adminUser.role !== 'admin') {
+    if (listEl) listEl.innerHTML = '<p style="color:var(--danger)">גישה נדחתה — מנהלים בלבד</p>';
+    return;
+  }
+
+  try {
+    const snap = await db.collection('access_requests')
+      .where('status', '==', 'pending')
+      .get();
+
+    // Sort client-side to avoid requiring a Firestore composite index
+    const requests = snap.docs
+      .map(d => ({ id: d.id, ...d.data() }))
+      .sort((a, b) => (b.timestamp?.toMillis?.() || 0) - (a.timestamp?.toMillis?.() || 0));
+
+    // Update badge in sidebar
+    if (badge) {
+      if (requests.length > 0) {
+        badge.textContent    = requests.length;
+        badge.style.display  = 'inline-block';
+      } else {
+        badge.style.display  = 'none';
+      }
+    }
+    if (countEl) countEl.textContent = requests.length + ' בקשות ממתינות';
+    if (!listEl) return;
+
+    if (!requests.length) {
+      listEl.innerHTML = `
+        <div class="empty" style="padding:2rem;text-align:center">
+          <span style="font-size:2rem;display:block;margin-bottom:.5rem">📭</span>
+          <h3 style="font-weight:600;margin-bottom:.3rem">אין בקשות ממתינות</h3>
+          <p style="color:var(--muted);font-size:.88rem">כל הבקשות אושרו או שאין בקשות חדשות</p>
+        </div>`;
+      return;
+    }
+
+    const rows = requests.map(req => {
+      const ts = req.timestamp?.toDate?.();
+      const dateStr = ts
+        ? ts.toLocaleDateString('he-IL', { day: '2-digit', month: '2-digit', year: 'numeric',
+            hour: '2-digit', minute: '2-digit' })
+        : '—';
+      return `
+        <tr id="req-row-${esc(req.id)}">
+          <td style="font-weight:600">${esc(req.name || '—')}</td>
+          <td style="font-size:.84rem;font-family:monospace;direction:ltr;text-align:left">${esc(req.email)}</td>
+          <td>${esc(req.lecturer || '—')}</td>
+          <td style="font-size:.8rem;color:var(--muted);white-space:nowrap">${dateStr}</td>
+          <td>
+            <span class="badge" style="background:#fff7ed;color:#9a3412;border:1px solid #fdba74">ממתין</span>
+          </td>
+          <td>
+            <button class="btn btn-success btn-sm" onclick="approveAccessRequest('${esc(req.id)}','${esc(req.email)}','${esc(req.name || '')}')">
+              ✅ אשר גישה
+            </button>
+          </td>
+        </tr>`;
+    }).join('');
+
+    listEl.innerHTML = `
+      <table class="tbl">
+        <thead>
+          <tr>
+            <th>שם</th>
+            <th style="direction:ltr;text-align:left">אימייל</th>
+            <th>מרצה</th>
+            <th>תאריך</th>
+            <th>סטטוס</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>${rows}</tbody>
+      </table>`;
+
+  } catch (e) {
+    console.error('renderRequestsSection error:', e);
+    if (listEl) listEl.innerHTML = `<p style="color:var(--danger);padding:1rem">${esc(e.message)}</p>`;
+  }
+}
+
+/**
+ * מאשר בקשת גישה:
+ *  1. מוסיף את המייל ל-authorized_users (active:true)
+ *  2. מעדכן את הבקשה המקורית ל-status:'approved'
+ *  3. שולח מייל ברכה
+ */
+async function approveAccessRequest(requestId, email, name) {
+  if (!adminUser || adminUser.role !== 'admin') {
+    toast('גישה נדחתה — מנהלים בלבד', 'error');
+    return;
+  }
+
+  const btn = document.querySelector(`#req-row-${CSS.escape(requestId)} .btn-success`);
+  if (btn) { btn.disabled = true; btn.textContent = 'מאשר...'; }
+
+  try {
+    const normalizedEmail = email.toLowerCase().trim();
+
+    // 1. הוסף ל-authorized_users
+    await db.collection('authorized_users').doc(normalizedEmail).set({
+      active:     true,
+      email:      normalizedEmail,
+      name:       name || '',
+      addedBy:    adminUser.email,
+      addedAt:    firebase.firestore.FieldValue.serverTimestamp(),
+      source:     'access_request',
+    }, { merge: true });
+
+    // 2. עדכן סטטוס הבקשה
+    await db.collection('access_requests').doc(requestId).set({
+      status:     'approved',
+      approvedBy: adminUser.email,
+      approvedAt: firebase.firestore.FieldValue.serverTimestamp(),
+    }, { merge: true });
+
+    // 3. שלח מייל ברכה (fire-and-forget)
+    sendWelcomeEmail(normalizedEmail, name);
+
+    toast(`✅ ${normalizedEmail} אושר בהצלחה — נשלח מייל ברכה`, 'success');
+
+    // הסר את השורה מה-UI ללא רענון מלא
+    const row = document.getElementById(`req-row-${requestId}`);
+    if (row) {
+      row.style.transition = 'opacity .3s';
+      row.style.opacity    = '0';
+      setTimeout(() => {
+        row.remove();
+        // עדכן את מונה הבקשות
+        const tbody  = document.querySelector('#requests-list-wrap tbody');
+        const countEl = document.getElementById('requests-count');
+        const badge   = document.getElementById('requests-badge');
+        const remaining = tbody ? tbody.querySelectorAll('tr').length : 0;
+        if (countEl) countEl.textContent = remaining + ' בקשות ממתינות';
+        if (badge) {
+          if (remaining > 0) { badge.textContent = remaining; }
+          else               { badge.style.display = 'none'; }
+        }
+        if (!remaining && tbody) {
+          document.getElementById('requests-list-wrap').innerHTML = `
+            <div class="empty" style="padding:2rem;text-align:center">
+              <span style="font-size:2rem;display:block;margin-bottom:.5rem">📭</span>
+              <h3 style="font-weight:600;margin-bottom:.3rem">אין בקשות ממתינות</h3>
+              <p style="color:var(--muted);font-size:.88rem">כל הבקשות אושרו</p>
+            </div>`;
+        }
+      }, 350);
+    }
+
+  } catch (err) {
+    console.error('approveAccessRequest error:', err);
+    toast('שגיאה באישור הבקשה: ' + err.message, 'error');
+    if (btn) { btn.disabled = false; btn.textContent = '✅ אשר גישה'; }
+  }
+}
+
+/**
+ * טוען בשקט את מספר הבקשות הממתינות ומעדכן את הבדאג' בסיידבר.
+ * נקרא בעת אתחול האדמין.
+ */
+async function _loadRequestsBadge() {
+  try {
+    const snap = await db.collection('access_requests')
+      .where('status', '==', 'pending')
+      .get();
+    const badge = document.getElementById('requests-badge');
+    if (!badge) return;
+    if (snap.size > 0) {
+      badge.textContent   = snap.size;
+      badge.style.display = 'inline-block';
+    } else {
+      badge.style.display = 'none';
+    }
+  } catch (e) {
+    // non-critical — ignore silently
+    console.warn('_loadRequestsBadge:', e.message);
+  }
+}
 
 async function _loadReportsBadge() {
   try {
