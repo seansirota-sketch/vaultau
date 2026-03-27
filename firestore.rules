@@ -11,11 +11,6 @@ service cloud.firestore {
       return request.auth != null;
     }
 
-    match /authorized_users/{email} {
-      allow read: if isLoggedIn() && request.auth.token.email.lower() == email.lower();
-      allow list, create, update, delete: if isAdmin();
-    }
-
     match /courses/{courseId} {
       allow read: if isLoggedIn();
       allow write: if isAdmin();
