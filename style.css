@@ -1025,7 +1025,7 @@ mjx-container { direction: ltr; }
   text-decoration: none; font-size: .6rem; font-weight: 700;
   letter-spacing: -.02em;
 }
-.sol-download-btn:hover { border-color: #0d9488; color: #0d9488; }
+.sol-download-btn:hover { border-color: #eab308; color: #eab308; }
 
 /* ── PDF DOWNLOAD UPLOAD ROW (admin) ────────────────────────── */
 .pdf-download-upload-row {

@@ -1594,14 +1594,14 @@ function applyFilters() {
           ${isDone ? '<span class="badge b-done">✓ בוצע</span>' : isInProgress ? '<span class="badge b-inprogress">⏳ בתהליך</span>' : ''}
         </div>
       </div>
+      ${e.solutionPdfUrl ? `<a class="sol-download-btn" href="${safeUrl(e.solutionPdfUrl)}" target="_blank" rel="noopener"
+        onclick="event.stopPropagation()" title="הורד פתרון">SOL</a>` : ''}
       ${e.pdfUrl ? `<a class="pdf-download-btn" href="${safeUrl(e.pdfUrl)}" target="_blank" rel="noopener"
         onclick="event.stopPropagation()" title="הורד טופס מבחן">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
           <path d="M12 3v13M5 16l7 7 7-7"/><line x1="3" y1="22" x2="21" y2="22"/>
         </svg>
       </a>` : ''}
-      ${e.solutionPdfUrl ? `<a class="sol-download-btn" href="${safeUrl(e.solutionPdfUrl)}" target="_blank" rel="noopener"
-        onclick="event.stopPropagation()" title="הורד פתרון">SOL</a>` : ''}
       <button class="inprogress-toggle-btn ${isInProgress ? 'inprogress-active' : ''}"
         onclick="event.stopPropagation(); toggleInProgress('${e.id}')"
         title="${isInProgress ? 'בטל בתהליך' : 'סמן כבתהליך'}">
