@@ -66,6 +66,7 @@ const _isLocalDev = location.hostname === 'localhost' || location.hostname === '
 /* ── AI Generate – client-side quota & state tracking ──────── */
 const AI_DAILY_QUOTA = 10;           // must match QUOTA_DAILY in edge function
 let _aiGenerateInProgress = false;   // prevent concurrent requests
+let _aiStreamAbort = null;           // AbortController for active stream
 let _aiQuotaRemaining = null;        // populated from response headers
 let _aiQuotaLimit = null;
 
@@ -2602,12 +2603,26 @@ async function _callGeminiAPI(sourceText) {
       _persistQuotaToFirestore();
     }
     _updateQuotaBadge();
+    _updateNavbarQuotaBadge();
 
   } catch (e) {
     _stopGeminiLoading();
+    // Don't show error if user intentionally closed the modal
+    if (e.name === 'AbortError') {
+      // Quota already decremented by closeGeminiModal — just exit
+      return;
+    }
     _showGeminiError(e.message);
+    // Log client-side error to Firestore so admin AI monitor can see it
+    _logClientAIError(e.message).catch(() => {});
+    // Decrement quota on error too — the server already consumed the request
+    if (_aiQuotaRemaining !== null && _aiQuotaRemaining > 0) _aiQuotaRemaining--;
+    _updateQuotaBadge();
+    _updateNavbarQuotaBadge();
+    _persistQuotaToFirestore();
   } finally {
     _aiGenerateInProgress = false;
+    _aiStreamAbort = null;
   }
 }
 
@@ -2615,6 +2630,8 @@ async function _callGeminiAPI(sourceText) {
 async function _callGeminiDirect(prompt) {
   const key = await _loadGeminiKey();
   if (!key) throw new Error('מפתח Gemini לא נטען — פנה למנהל');
+
+  _aiStreamAbort = new AbortController();
 
   const GEMINI_MODEL = 'gemini-3.1-pro-preview';
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${key}`;
@@ -2626,6 +2643,7 @@ async function _callGeminiDirect(prompt) {
       contents: [{ parts: [{ text: prompt }] }],
       generationConfig: { temperature: 0.65, maxOutputTokens: 16384 },
     }),
+    signal: _aiStreamAbort.signal,
   });
 
   const data = await res.json().catch(() => ({}));
@@ -2638,6 +2656,8 @@ async function _callGeminiStream(prompt, bodyEl) {
   const idToken = await STATE.fireUser?.getIdToken();
   if (!idToken) throw new Error('יש להתחבר כדי להשתמש בתכונה זו');
 
+  _aiStreamAbort = new AbortController();
+
   const res = await fetch('/api/generate-question', {
     method: 'POST',
     headers: {
@@ -2645,6 +2665,7 @@ async function _callGeminiStream(prompt, bodyEl) {
       'Authorization': `Bearer ${idToken}`,
     },
     body: JSON.stringify({ prompt }),
+    signal: _aiStreamAbort.signal,
   });
 
   if (!res.ok) {
@@ -2703,6 +2724,28 @@ async function _callGeminiStream(prompt, bodyEl) {
   }
 
   return fullText;
+}
+
+/** Log AI generation error from client side (catches 500s, network failures, etc.) */
+async function _logClientAIError(errorMessage) {
+  try {
+    const uid = STATE.fireUser?.uid;
+    if (!uid) return;
+    await db.collection('generate_usage').add({
+      uid,
+      api: 'none',
+      status: 'error',
+      errorMessage: `[client] ${errorMessage}`,
+      timestamp: new Date().toISOString(),
+      date_key: new Date().toISOString().slice(0, 10),
+      latencyMs: 0,
+      promptLength: 0,
+      responseLength: 0,
+      inputTokens: 0,
+      outputTokens: 0,
+      cached: false,
+    });
+  } catch { /* silently fail — don't break the user experience */ }
 }
 
 /** Render Gemini text with MathJax (shared by both paths) */
@@ -2862,6 +2905,16 @@ async function _geminiSave() {
 
 function closeGeminiModal() {
   _stopGeminiLoading();
+  // If generation is in progress, count it toward quota before aborting
+  if (_aiGenerateInProgress) {
+    if (_aiQuotaRemaining !== null && _aiQuotaRemaining > 0) _aiQuotaRemaining--;
+    _updateQuotaBadge();
+    _updateNavbarQuotaBadge();
+    _persistQuotaToFirestore();
+  }
+  // Abort any in-flight stream and reset the generation lock
+  if (_aiStreamAbort) { _aiStreamAbort.abort(); _aiStreamAbort = null; }
+  _aiGenerateInProgress = false;
   document.getElementById('gemini-modal-overlay')?.remove();
   document.body.style.overflow = '';
 }

@@ -25,8 +25,10 @@ const FIREBASE_PROJECT = 'eaxmbank';
 const FIRESTORE_BASE   = `https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT}/databases/(default)/documents`;
 
 const MAX_PROMPT_LENGTH   = 8000;   // characters
-const MAX_RETRIES         = 2;
-const RETRY_BASE_MS       = 200;
+const MAX_RETRIES         = 1;
+const RETRY_BASE_MS       = 300;
+const GEMINI_TIMEOUT_MS   = 25_000;  // 25s per Gemini attempt
+const CLAUDE_TIMEOUT_MS   = 25_000;  // 25s for Claude fallback
 
 // ── Quota limits ───────────────────────────────────────────
 const QUOTA_DAILY  = 10;
@@ -98,53 +100,58 @@ export default async (request, _context) => {
       });
     }
 
-    // ── 4. Call AI: Gemini primary → Claude fallback ────────
+    // ── 4. Start streaming IMMEDIATELY, then call AI inside ──
+    //    This prevents Netlify's edge-function timeout by sending
+    //    response headers right away (keeps the connection alive).
     const startTime = Date.now();
-    let apiUsed = 'gemini';
-    let stream;
-
-    try {
-      stream = await callGeminiWithRetry(sanitizedPrompt);
-    } catch (geminiErr) {
-      console.warn('Gemini failed, trying Claude fallback:', geminiErr.message);
-      apiUsed = 'claude';
-      try {
-        stream = await callClaudeFallback(sanitizedPrompt);
-      } catch (claudeErr) {
-        const errorMsg = claudeErr.message;
-        console.error('Both APIs failed:', errorMsg);
-        logUsage(uid, idToken, { api: 'none', latencyMs: Date.now() - startTime, cached: false, promptLength: sanitizedPrompt.length, responseLength: 0, inputTokens: 0, outputTokens: 0, status: 'error', errorMessage: errorMsg }).catch(() => {});
-        return jsonResponse(503, { error: 'שירות יצירת השאלות אינו זמין כרגע. נסה שוב מאוחר יותר.' });
-      }
-    }
-
-    // ── 5. Stream response + accumulate for logging ─────────
     const { readable, writable } = new TransformStream();
     const writer  = writable.getWriter();
     const encoder = new TextEncoder();
 
-    // Fire-and-forget background processing
+    // Background: call AI → pipe chunks → log usage
     (async () => {
+      let apiUsed      = 'gemini';
       let fullText     = '';
       let inputTokens  = 0;
       let outputTokens = 0;
+      let status       = 'success';
+      let errorMessage = '';
+
       try {
+        // Send a keep-alive comment so Netlify knows the stream is active
+        await writer.write(encoder.encode(': keepalive\n\n'));
+
+        // ── Call Gemini (primary) → Claude (fallback) ───────
+        let stream;
+        try {
+          stream = await callGeminiWithRetry(sanitizedPrompt);
+        } catch (geminiErr) {
+          console.warn('Gemini failed, trying Claude fallback:', geminiErr.message);
+          apiUsed = 'claude';
+          stream = await callClaudeFallback(sanitizedPrompt);
+        }
+
+        // ── Pipe AI stream to client ────────────────────────
         if (apiUsed === 'gemini') {
           ({ fullText, inputTokens, outputTokens } = await pipeGeminiStream(stream, writer, encoder));
         } else {
           ({ fullText, inputTokens, outputTokens } = await pipeClaudeStream(stream, writer, encoder));
         }
         await writer.write(encoder.encode('data: [DONE]\n\n'));
+
       } catch (err) {
-        try { await writer.write(encoder.encode(`data: ${JSON.stringify({ error: err.message })}\n\n`)); } catch { /* closed */ }
+        status = 'error';
+        errorMessage = err.message || 'Unknown error';
+        console.error('AI generation failed:', errorMessage);
+        try { await writer.write(encoder.encode(`data: ${JSON.stringify({ error: errorMessage })}\n\n`)); } catch { /* closed */ }
       } finally {
         try { await writer.close(); } catch { /* closed */ }
       }
 
-      // ── 6. Post-stream: log usage + increment quota ──────
+      // ── Post-stream: log usage + increment quota ──────────
       const latencyMs = Date.now() - startTime;
-      logUsage(uid, idToken, { api: apiUsed, latencyMs, cached: false, promptLength: sanitizedPrompt.length, responseLength: fullText.length, inputTokens, outputTokens, status: 'success', errorMessage: '' }).catch(() => {});
-      incrementQuota(uid, idToken).catch(() => {});
+      logUsage(uid, idToken, { api: apiUsed, latencyMs, cached: false, promptLength: sanitizedPrompt.length, responseLength: fullText.length, inputTokens, outputTokens, status, errorMessage }).catch(() => {});
+      if (status === 'success') incrementQuota(uid, idToken).catch(() => {});
     })();
 
     return new Response(readable, {
@@ -152,12 +159,21 @@ export default async (request, _context) => {
       headers: { ...corsHeaders(), 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', 'Connection': 'keep-alive',
         'X-Quota-Remaining': String(quota.remaining - 1),
         'X-Quota-Limit':     String(quota.limit),
-        'X-Api-Used':        apiUsed,
       },
     });
 
   } catch (err) {
     console.error('generate-question error:', err);
+    // Log the 500 error so the admin AI monitor can see it
+    if (uid && idToken) {
+      logUsage(uid, idToken, {
+        api: 'none', latencyMs: 0, cached: false,
+        promptLength: 0, responseLength: 0,
+        inputTokens: 0, outputTokens: 0,
+        status: 'error',
+        errorMessage: `[500] ${err.message || 'Server error'}`,
+      }).catch(() => {});
+    }
     return jsonResponse(500, { error: err.message || 'Server error' });
   }
 };
@@ -350,14 +366,18 @@ async function callGeminiWithRetry(prompt) {
       await sleep(RETRY_BASE_MS * Math.pow(2, attempt - 1));
     }
     try {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), GEMINI_TIMEOUT_MS);
       const res = await fetch(`${GEMINI_URL}&key=${apiKey}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        signal: controller.signal,
         body: JSON.stringify({
           contents: [{ parts: [{ text: prompt }] }],
-          generationConfig: { temperature: 0.65, maxOutputTokens: 16384 },
+          generationConfig: { temperature: 0.65, maxOutputTokens: 8192 },
         }),
       });
+      clearTimeout(timer);
       if (res.ok) return res;
 
       const errData = await res.json().catch(() => ({}));
@@ -367,7 +387,10 @@ async function callGeminiWithRetry(prompt) {
       if (res.status >= 400 && res.status < 500 && res.status !== 429) throw lastError;
     } catch (err) {
       lastError = err;
-      if (err.message?.includes('Gemini HTTP 4')) throw err;  // client error, don't retry
+      if (err.name === 'AbortError') {
+        lastError = new Error(`Gemini timeout (${GEMINI_TIMEOUT_MS}ms) — attempt ${attempt + 1}`);
+        console.warn(lastError.message);
+      } else if (err.message?.includes('Gemini HTTP 4')) throw err;  // client error, don't retry
     }
   }
   throw lastError;
@@ -378,20 +401,31 @@ async function callClaudeFallback(prompt) {
   const apiKey = Deno.env.get('ANTHROPIC_API_KEY');
   if (!apiKey) throw new Error('Claude API key not configured');
 
-  const res = await fetch('https://api.anthropic.com/v1/messages', {
-    method: 'POST',
-    headers: {
-      'x-api-key':      apiKey,
-      'content-type':   'application/json',
-      'anthropic-version': '2023-06-01',
-    },
-    body: JSON.stringify({
-      model: CLAUDE_MODEL,
-      max_tokens: 4096,
-      stream: true,
-      messages: [{ role: 'user', content: prompt }],
-    }),
-  });
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), CLAUDE_TIMEOUT_MS);
+  let res;
+  try {
+    res = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'x-api-key':      apiKey,
+        'content-type':   'application/json',
+        'anthropic-version': '2023-06-01',
+      },
+      signal: controller.signal,
+      body: JSON.stringify({
+        model: CLAUDE_MODEL,
+        max_tokens: 4096,
+        stream: true,
+        messages: [{ role: 'user', content: prompt }],
+      }),
+    });
+  } catch (err) {
+    clearTimeout(timer);
+    if (err.name === 'AbortError') throw new Error(`Claude timeout (${CLAUDE_TIMEOUT_MS}ms)`);
+    throw err;
+  }
+  clearTimeout(timer);
 
   if (!res.ok) {
     const errData = await res.json().catch(() => ({}));

@@ -3149,6 +3149,7 @@ async function renderAIMonitor() {
   const hitRateEl     = document.getElementById('ai-hit-rate');
   const errorRateEl   = document.getElementById('ai-error-rate');
   const ratingsEl     = document.getElementById('ai-ratings-summary');
+  const errorLogEl    = document.getElementById('ai-error-log');
   if (!statsGrid) return;
 
   statsGrid.innerHTML   = '<div style="color:var(--muted)">טוען...</div>';
@@ -3156,11 +3157,12 @@ async function renderAIMonitor() {
 
   try {
     const todayStr = new Date().toISOString().slice(0, 10);
-    const [todaySnap, recentSnap, cacheSnap, ratingsSnap] = await Promise.all([
+    const [todaySnap, recentSnap, cacheSnap, ratingsSnap, errorSnap] = await Promise.all([
       db.collection('generate_usage').where('date_key', '==', todayStr).get(),
       db.collection('generate_usage').orderBy('timestamp', 'desc').limit(50).get(),
       db.collection('ai_questions_cache').get(),
       db.collection('question_ratings').orderBy('createdAt', 'desc').limit(100).get(),
+      db.collection('generate_usage').where('status', '==', 'error').orderBy('timestamp', 'desc').limit(20).get(),
     ]);
 
     const todayDocs = todaySnap.docs.map(d => d.data());
@@ -3226,13 +3228,27 @@ async function renderAIMonitor() {
     // \u2500\u2500 Cost Alert \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
     if (alertsEl) {
       const alerts = [];
+
+      // Count 500 / server errors from the error log
+      const errorDocs500 = errorSnap.docs.map(d => d.data()).filter(d =>
+        (d.errorMessage || '').includes('[500]') || (d.errorMessage || '').includes('Server error') || (d.errorMessage || '').includes('[client]')
+      );
+      const errors500Today = errorDocs500.filter(d => d.date_key === todayStr).length;
+      if (errors500Today > 0) alerts.push(`🔴 ${errors500Today} שגיאות שרת (500) היום — שאלות לא נוצרו למשתמשים! בדוק לוג שגיאות למטה`);
+
       if (costToday > COST_ALERT_DAILY) alerts.push(`\u26a0\ufe0f \u05e2\u05dc\u05d5\u05ea \u05d9\u05d5\u05de\u05d9\u05ea ($${costToday.toFixed(2)}) \u05d7\u05d5\u05e8\u05d2\u05ea \u05de-$${COST_ALERT_DAILY}`);
       if (parseFloat(errorRate) > 5) alerts.push(`\u26a0\ufe0f \u05e9\u05d9\u05e2\u05d5\u05e8 \u05e9\u05d2\u05d9\u05d0\u05d5\u05ea \u05d2\u05d1\u05d5\u05d4 (${errorRate}%) \u2014 \u05d1\u05d3\u05d5\u05e7 \u05ea\u05e7\u05d9\u05e0\u05d5\u05ea API`);
       if (estMonthly > 100) alerts.push(`\u26a0\ufe0f \u05d4\u05e2\u05e8\u05db\u05ea \u05e2\u05dc\u05d5\u05ea \u05d7\u05d5\u05d3\u05e9\u05d9\u05ea ($${estMonthly.toFixed(0)}) \u05d7\u05d5\u05e8\u05d2\u05ea \u05de-$100`);
       if (hitRate < 30 && totalToday > 20) alerts.push(`\u2139\ufe0f \u05e9\u05d9\u05e2\u05d5\u05e8 \u05de\u05d8\u05de\u05d5\u05df \u05e0\u05de\u05d5\u05da (${hitRate}%) \u2014 \u05e9\u05e7\u05d5\u05dc \u05dc\u05d4\u05d2\u05d3\u05d9\u05dc TTL`);
 
       if (alerts.length) {
-        alertsEl.innerHTML = alerts.map(a => `<div style="padding:.5rem .8rem;background:${a.startsWith('\u26a0\ufe0f') ? '#fef2f2' : '#eff6ff'};border-radius:8px;font-size:.85rem;color:${a.startsWith('\u26a0\ufe0f') ? '#991b1b' : '#1e40af'}">${a}</div>`).join('');
+        alertsEl.innerHTML = alerts.map(a => {
+          const isCritical = a.startsWith('🔴');
+          const isWarning = a.startsWith('\u26a0\ufe0f');
+          const bg = isCritical ? '#fecaca' : isWarning ? '#fef2f2' : '#eff6ff';
+          const fg = isCritical ? '#7f1d1d' : isWarning ? '#991b1b' : '#1e40af';
+          return `<div style="padding:.5rem .8rem;background:${bg};border-radius:8px;font-size:.85rem;color:${fg};${isCritical ? 'font-weight:700;border:1.5px solid #dc2626' : ''}">${a}</div>`;
+        }).join('');
         alertsEl.style.display = 'flex';
       } else {
         alertsEl.innerHTML = '<div style="padding:.5rem .8rem;background:#f0fdf4;border-radius:8px;font-size:.85rem;color:#166534">\u2705 \u05d4\u05db\u05dc \u05ea\u05e7\u05d9\u05df \u2014 \u05d0\u05d9\u05df \u05d4\u05ea\u05e8\u05d0\u05d5\u05ea</div>';
@@ -3298,6 +3314,34 @@ async function renderAIMonitor() {
         const pct = Math.min(Math.round(count / 10 * 100), 100);
         return '<div style="display:flex;align-items:center;gap:.8rem;padding:.4rem 0"><span style="flex:1;font-size:.85rem">' + esc(email) + '</span><div style="flex:2;background:#f3f4f6;border-radius:6px;height:18px;overflow:hidden"><div style="width:' + pct + '%;height:100%;background:linear-gradient(90deg,#667eea,#764ba2);border-radius:6px"></div></div><span style="font-weight:700;min-width:2.5rem;text-align:left">' + count + '</span></div>';
       }).join('');
+    }
+
+    // ── Error log panel ─────────────────────────────────────
+    if (errorLogEl) {
+      const errorDocs = errorSnap.docs.map(d => d.data());
+      if (!errorDocs.length) {
+        errorLogEl.innerHTML = '<div style="color:#059669;padding:1rem;text-align:center;font-size:.9rem">✅ אין שגיאות אחרונות — הכל תקין</div>';
+      } else {
+        const errorUids = [...new Set(errorDocs.map(d => d.uid).filter(Boolean))];
+        const errorUserDocs = await Promise.all(errorUids.map(uid => db.collection('users').doc(uid).get()));
+        const errorEmailMap = {};
+        errorUserDocs.forEach(snap => { if (snap.exists) errorEmailMap[snap.id] = snap.data().email || snap.id; });
+
+        const errorRows = errorDocs.map(d => {
+          const ts = d.timestamp ? new Date(d.timestamp).toLocaleString('he-IL', { hour:'2-digit', minute:'2-digit', day:'numeric', month:'short' }) : '-';
+          const userEmail = d.uid ? (errorEmailMap[d.uid] || d.uid.slice(0, 8) + '…') : 'N/A';
+          const apiBadge = d.api === 'claude'
+            ? '<span style="color:#f59e0b;font-weight:600">Claude</span>'
+            : d.api === 'none'
+            ? '<span style="color:#9ca3af;font-weight:600">—</span>'
+            : '<span style="color:#6366f1;font-weight:600">Gemini</span>';
+          const errMsg = esc(d.errorMessage || 'שגיאה לא ידועה');
+          const is500 = (d.errorMessage || '').includes('[500]') || (d.errorMessage || '').includes('Server error') || (d.errorMessage || '').includes('[client]');
+          const rowStyle = is500 ? 'background:#fef2f2;font-weight:600' : '';
+          return '<tr style="' + rowStyle + '"><td style="font-size:.8rem;white-space:nowrap">' + ts + '</td><td style="font-size:.8rem">' + esc(userEmail) + '</td><td>' + apiBadge + '</td><td style="font-size:.8rem;color:#dc2626;max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="' + errMsg + '">' + (is500 ? '🔴 ' : '') + errMsg + '</td></tr>';
+        }).join('');
+        errorLogEl.innerHTML = '<table class="tbl" style="width:100%"><thead><tr><th>זמן</th><th>משתמש</th><th>API</th><th>שגיאה</th></tr></thead><tbody>' + errorRows + '</tbody></table>';
+      }
     }
 
   } catch (e) {

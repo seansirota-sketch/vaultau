@@ -9,6 +9,14 @@
       ]
     },
     {
+      "collectionGroup": "generate_usage",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "timestamp", "order": "DESCENDING" }
+      ]
+    },
+    {
       "collectionGroup": "question_ratings",
       "queryScope": "COLLECTION",
       "fields": [
