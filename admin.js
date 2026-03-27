@@ -2447,6 +2447,8 @@ async function editExam(courseId, examId) {
     if (!exam) { toast('מבחן לא נמצא', 'error'); return; }
 
     _editingExamId = examId;
+    // Keep the original model badge when saving edited exams without re-parsing.
+    _parsedModel = exam.parsedModel || null;
 
     showSection('add-exam');
 
