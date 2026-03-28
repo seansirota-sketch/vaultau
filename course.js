@@ -2690,13 +2690,7 @@ async function _callGeminiStream(prompt, bodyEl) {
   if (ql !== null) _aiQuotaLimit = parseInt(ql, 10);
   _updateQuotaBadge();
 
-  // Set up streaming display
-  const wrapper = document.createElement('div');
-  wrapper.className = 'qv-text gemini-result';
-  wrapper.style.cssText = 'direction:rtl;line-height:1.8;';
-  bodyEl.innerHTML = '';
-  bodyEl.appendChild(wrapper);
-
+  // Collect full response in background — spinner stays visible until done
   let fullText = '';
   const reader = res.body.getReader();
   const decoder = new TextDecoder();
@@ -2720,7 +2714,6 @@ async function _callGeminiStream(prompt, bodyEl) {
         if (chunk.error) throw new Error(chunk.error);
         if (chunk.text) {
           fullText += chunk.text;
-          wrapper.textContent = fullText;  // safe text preview while streaming
         }
       } catch (e) {
         if (e.message && !e.message.startsWith('Unexpected')) throw e;
