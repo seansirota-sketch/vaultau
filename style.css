@@ -566,6 +566,7 @@ body {
 /* ── Admin sections ── */
 .adm-section { display: none; }
 .adm-section.active { display: block; animation: fadeIn .18s ease; }
+#sec-add-exam.active { min-width: calc(100vw - var(--sidebar-w) - 5rem); }
 @keyframes fadeIn { from { opacity:0; transform:translateY(4px); } to { opacity:1; transform:translateY(0); } }
 
 /* ── Section header ── */
@@ -839,6 +840,7 @@ mjx-container { direction: ltr; }
   .admin-layout { grid-template-columns: 1fr; }
   .admin-sidebar { height: auto; position: static; }
   .admin-main { padding: 1.25rem; }
+  #sec-add-exam.active { min-width: auto; }
 }
 @media (max-width: 768px) {
   .form-row { grid-template-columns: 1fr; }
