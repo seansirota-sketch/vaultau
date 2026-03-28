@@ -22,14 +22,8 @@
     Referrer-Policy        = "strict-origin-when-cross-origin"
 
 # ── Function timeouts ──
-# parse-exam-background: auto 15min (background function — suffix -background)
-# parse-result: lightweight polling endpoint (default 10s is fine)
-# parse-exam: kept as fallback (26s max on Pro)
 [functions]
   node_bundler = "esbuild"
-
-  [functions.parse-exam]
-    timeout = 26
 
   [functions.parse-result]
     timeout = 10
@@ -38,3 +32,7 @@
 [[edge_functions]]
   path = "/api/generate-question"
   function = "generate-question"
+
+[[edge_functions]]
+  path = "/api/parse-exam"
+  function = "parse-exam"
