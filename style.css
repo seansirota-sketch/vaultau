@@ -884,6 +884,7 @@ mjx-container { direction: ltr; }
 }
 .ev-banner-meta { color: #5a6576; font-size: .93rem; margin: 0; }
 .ev-body {
+  max-width: 800px; margin: 0 auto;
   padding: 1.5rem 1rem 3rem;
   display: flex; flex-direction: column; gap: .9rem;
 }
