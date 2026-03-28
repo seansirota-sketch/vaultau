@@ -2138,12 +2138,14 @@ function renderPreview() {
             <input type="checkbox" ${q.allowAIGen === true ? 'checked' : ''}
               onchange="toggleAIGen(${i}, this.checked)"> ✨ AI
           </label>
+          ${!q.text && q.subs.length ? `<button class="btn btn-sm btn-secondary" onclick="addIntroToPreview(${i})">+ הקדמה</button>` : ''}
           <button class="btn btn-sm btn-secondary" onclick="addSubToPreview(${i})">+ סעיף</button>
           <button class="btn btn-sm btn-danger" onclick="removeQuestion(${i})">🗑️</button>
         </div>
       </div>
-      ${(q.text && q.text.trim())
-        ? `<div style="font-size:.78rem;color:var(--muted);margin:.6rem 1.1rem .2rem;font-weight:600">טקסט פתיחה (אופציונלי):</div>
+      ${(q._showIntro || (q.text && q.text.trim()))
+        ? `<div style="font-size:.78rem;color:var(--muted);margin:.6rem 1.1rem .2rem;font-weight:600;display:flex;align-items:center;gap:.4rem">טקסט פתיחה (אופציונלי):
+             <button class="btn-icon btn-sm" style="background:var(--danger-l);color:var(--danger);font-size:.7rem;padding:0 .3rem;line-height:1.4;border:none;border-radius:4px;cursor:pointer" onclick="removeIntro(${i})" title="הסר הקדמה">✕</button></div>
            <textarea class="pq-textarea" id="qt-${i}" rows="2"
              oninput="parsedQuestions[${i}].text=this.value">${esc(q.text)}</textarea>`
         : `<input type="hidden" id="qt-${i}" value="">`}
@@ -2184,6 +2186,21 @@ function addSubToPreview(qi) {
   parsedQuestions[qi].subs.push({ id: genId(), label: '(' + (heLetters[n] || String(n + 1)) + ')', text: '' });
   renderPreview();
   setTimeout(() => document.getElementById(`pqc-${qi}`)?.scrollIntoView({ behavior: 'smooth', block: 'nearest' }), 50);
+}
+
+function addIntroToPreview(qi) {
+  parsedQuestions[qi]._showIntro = true;
+  renderPreview();
+  setTimeout(() => {
+    const ta = document.getElementById(`qt-${qi}`);
+    if (ta) { ta.focus(); }
+  }, 50);
+}
+
+function removeIntro(qi) {
+  parsedQuestions[qi].text = '';
+  delete parsedQuestions[qi]._showIntro;
+  renderPreview();
 }
 
 function removeSub(qi, si)  { parsedQuestions[qi].subs.splice(si, 1); renderPreview(); }
