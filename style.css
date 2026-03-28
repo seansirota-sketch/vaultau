@@ -171,6 +171,8 @@ body {
 .btn-icon.star:hover { background: var(--accent); color: #fff; }
 .btn-icon.copy-btn { background: var(--blue-xl); color: var(--blue); border-color: var(--blue-l); }
 .btn-icon.copy-btn:hover { background: var(--blue); color: #fff; }
+.btn-icon.btn-remove-intro { background: var(--danger-l); color: var(--danger); font-size: .7rem; padding: 0 .3rem; line-height: 1.4; border: none; }
+.btn-icon.btn-remove-intro:hover { background: var(--danger); color: #fff; }
 
 /* ── LAYOUT ──────────────────────────────────────────────── */
 .container { max-width: 1100px; margin: 0 auto; padding: 2rem 1.5rem; }
