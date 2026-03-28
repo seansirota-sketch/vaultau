@@ -478,6 +478,15 @@ body {
   font-size: .94rem; font-weight: 600; color: var(--text);
   max-width: 200px; line-height: 1.5;
 }
+.ai-spinner-abort {
+  margin-top: .5rem;
+  background: var(--danger); color: #fff;
+  border: none; border-radius: 6px;
+  padding: .4rem 1.2rem; cursor: pointer;
+  font-size: .85rem; font-weight: 600;
+  transition: opacity .15s;
+}
+.ai-spinner-abort:hover { opacity: .85; }
 
 /* ═══════════════════════════════════════════════════════════
    ADMIN LAYOUT

@@ -107,5 +107,15 @@ service cloud.firestore {
         && request.resource.data.uid == request.auth.uid;
       allow read: if isAdmin();
     }
+
+    // Approved parse examples used for few-shot prompt injection.
+    match /parse_examples/{docId} {
+      allow read, write: if isAdmin();
+    }
+
+    // Optional exports for fine-tune/open-model workflows.
+    match /model_training_exports/{docId} {
+      allow read, write: if isAdmin();
+    }
   }
 }

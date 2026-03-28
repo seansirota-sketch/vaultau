@@ -32,107 +32,120 @@ const ICONS = ['📐','📊','⚛️','🧮','🔬','🧬','💻','🌍','🏛�
 function randIcon() { return ICONS[Math.floor(Math.random() * ICONS.length)]; }
 
 /* ══════════════════════════════════════════════════════════════
-   DIRECT CLAUDE API — calls Anthropic directly from browser.
-   No Netlify function, no timeout. Tries Opus → Sonnet → Haiku.
+   CLAUDE API via Edge Function — server-side proxy.
+   No timeout. Tries Opus → Sonnet → Haiku.
    ═══════════════════════════════════════════════════════════ */
-const CLAUDE_API_URL = 'https://api.anthropic.com/v1/messages';
-const CLAUDE_MODELS  = [
-  'claude-opus-4-6',
-  'claude-sonnet-4-6',
-  'claude-haiku-4-5-20251001',
-];
-const CLAUDE_MAX_TOK = 8192;
-let _anthropicKey    = null;
+const PARSE_EXAM_ENDPOINT = '/api/parse-exam';
 let _geminiKey       = null;
+const FEW_SHOT_MAX_EXAMPLES = 3;
+const LOW_CONFIDENCE_THRESHOLD = 70;
+const _fewShotCache = new Map();
+let _lastParseQuality = null;
 
-async function loadAnthropicKey() {
+async function loadApiKeys() {
   try {
     const doc = await db.collection('settings').doc('api_keys').get();
-    if (doc.exists && doc.data().anthropic) {
-      _anthropicKey = doc.data().anthropic;
-      console.log('✅ Anthropic API key loaded');
-    } else {
-      console.warn('⚠️ Anthropic key missing — set settings/api_keys.anthropic in Firestore');
-    }
     if (doc.exists && doc.data().gemini) {
       _geminiKey = doc.data().gemini;
       console.log('✅ Gemini API key loaded');
     }
+    console.log('✅ Anthropic API key is server-side (edge function)');
   } catch (e) { console.warn('Could not load API keys:', e.message); }
 }
 
 /**
- * Call Claude API directly from browser. Tries models in order until one succeeds.
+ * Call Claude via the parse-exam edge function.
+ * Client drives fallback: Opus → Sonnet → Haiku with live spinner.
  * @param {Array} messages — Claude messages array
- * @param {Function} [onAttempt] — optional callback(modelName, attemptIndex)
- * @returns {Promise<{questions, metadata, usage}>}
+ * @returns {Promise<{questions, metadata, usage, model}>}
  */
-async function callClaudeDirect(messages, onAttempt) {
-  if (!_anthropicKey) throw new Error('מפתח Anthropic לא נטען — הגדר settings/api_keys.anthropic ב-Firestore');
+let _parseAbortController = null;
+
+const CLAUDE_MODELS_DISPLAY = [
+  { id: 'claude-opus-4-6',            name: 'Opus' },
+  { id: 'claude-sonnet-4-6',          name: 'Sonnet' },
+  { id: 'claude-haiku-4-5-20251001',  name: 'Haiku' },
+];
+
+function abortParsing() {
+  if (_parseAbortController) {
+    _parseAbortController.abort();
+    _parseAbortController = null;
+    toast('⛔ הניתוח בוטל', 'error');
+    hideSpinner();
+  }
+}
+
+async function callClaudeViaEdge(messages) {
+  _parseAbortController = new AbortController();
+  const signal = _parseAbortController.signal;
+  const idToken = await auth.currentUser?.getIdToken();
+  if (!idToken) throw new Error('לא מחובר — יש להתחבר מחדש');
 
   let lastErr = null;
 
-  for (let i = 0; i < CLAUDE_MODELS.length; i++) {
-    const model = CLAUDE_MODELS[i];
-    if (onAttempt) onAttempt(model, i);
+  for (let i = 0; i < CLAUDE_MODELS_DISPLAY.length; i++) {
+    const { id: modelId, name: modelName } = CLAUDE_MODELS_DISPLAY[i];
+    const attempt = i + 1;
+    const total = CLAUDE_MODELS_DISPLAY.length;
+
+    // Update spinner with current model attempt
+    showSpinner(`🤖 מנתח עם Claude ${modelName} — ניסיון ${attempt}/${total}`, true);
+
+    if (signal.aborted) throw new DOMException('Parsing aborted', 'AbortError');
 
     try {
-      const response = await fetch(CLAUDE_API_URL, {
+      const response = await fetch(PARSE_EXAM_ENDPOINT, {
         method: 'POST',
         headers: {
-          'Content-Type':      'application/json',
-          'x-api-key':         _anthropicKey,
-          'anthropic-version': '2023-06-01',
-          'anthropic-dangerous-direct-browser-access': 'true',
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${idToken}`,
         },
-        body: JSON.stringify({ model, max_tokens: CLAUDE_MAX_TOK, messages }),
+        body: JSON.stringify({ messages, model: modelId }),
+        signal,
       });
 
       if (!response.ok) {
         const errText = await response.text().catch(() => '');
-        let errMsg = `${model}: HTTP ${response.status}`;
-        try { const d = JSON.parse(errText); errMsg = d.error?.message || errMsg; } catch {}
+        let errData = {};
+        try { errData = JSON.parse(errText); } catch {}
+        const errMsg = errData.error || `HTTP ${response.status}`;
 
-        // 529 = overloaded, 529/500/503 = retry with next model
-        if (response.status === 529 || response.status >= 500) {
-          console.warn(`⚠️ ${errMsg} — trying next model...`);
-          lastErr = new Error(errMsg);
+        // If retryable (529/5xx/invalid format), try next model
+        if (errData.retryable && i < CLAUDE_MODELS_DISPLAY.length - 1) {
+          console.warn(`⚠️ ${modelName}: ${errMsg} — trying next model...`);
+          showSpinner(`⚠️ ${modelName} נכשל — עובר למודל הבא...`);
+          await new Promise(r => setTimeout(r, 800)); // brief pause so user sees the message
+          lastErr = errMsg;
           continue;
         }
         throw new Error(errMsg);
       }
 
       const data = await response.json();
-      let jsonStr = (data.content?.find(c => c.type === 'text')?.text || '').trim();
 
-      // Strip markdown fences
-      const fence = jsonStr.match(/```(?:json)?\s*([\s\S]*?)```/);
-      if (fence) jsonStr = fence[1].trim();
-
-      let parsed;
-      try { parsed = JSON.parse(jsonStr); } catch {
-        const m = jsonStr.match(/\{[\s\S]*\}/);
-        if (m) try { parsed = JSON.parse(m[0]); } catch {}
+      if (!data.questions || !Array.isArray(data.questions)) {
+        throw new Error('תשובה לא תקנית מהשרת');
       }
 
-      if (!parsed || !Array.isArray(parsed.questions)) {
-        console.warn(`⚠️ ${model}: invalid JSON — trying next model...`);
-        lastErr = new Error(`${model}: תשובה לא תקנית`);
-        continue;
-      }
-
-      console.log(`✅ ${model}: ${parsed.questions.length} questions parsed`);
-      return { questions: parsed.questions, metadata: parsed.metadata || null, usage: data.usage, model };
+      // Show which model succeeded
+      const usedModel = modelName;
+      showSpinner(`✅ ${usedModel} — ${data.questions.length} שאלות`);
+      console.log(`✅ ${data.model}: ${data.questions.length} questions parsed (via edge function)`);
+      return data;
 
     } catch (err) {
-      console.warn(`⚠️ ${model}: ${err.message}`);
-      lastErr = err;
-      // Network error / timeout → try next model
-      continue;
+      if (err.name === 'AbortError') throw err;
+      if (err.message && i < CLAUDE_MODELS_DISPLAY.length - 1 && !err.message.startsWith('לא מחובר')) {
+        console.warn(`⚠️ ${modelName}: ${err.message}`);
+        lastErr = err.message;
+        continue;
+      }
+      throw err;
     }
   }
 
-  throw lastErr || new Error('כל המודלים נכשלו');
+  throw new Error(lastErr || 'כל המודלים נכשלו');
 }
 
 /* ── Prompt builder for vision/PDF ────────────────────────── */
@@ -177,6 +190,245 @@ function _buildDirectPrompt(filenameHint) {
 
 ════ JSON בלבד — ללא markdown, ללא \`\`\` ════
 {"metadata":{"courseName":"...","lecturers":["..."],"year":${ye},"semester":"${se}","moed":"${me}"},"questions":[{"number":1,"text":"...","isBonus":false,"parts":[{"letter":"א","text":"..."}]}]}`;
+}
+
+function _tokenizeForSimilarity(s) {
+  return String(s || '')
+    .toLowerCase()
+    .replace(/\.[^/.]+$/, '')
+    .replace(/[^\p{L}\p{N}\s]/gu, ' ')
+    .split(/\s+/)
+    .map(t => t.trim())
+    .filter(t => t.length >= 2);
+}
+
+function _overlapScore(a, b) {
+  if (!a.length || !b.length) return 0;
+  const sa = new Set(a);
+  const sb = new Set(b);
+  let common = 0;
+  sa.forEach(x => { if (sb.has(x)) common++; });
+  return common / Math.max(sa.size, sb.size);
+}
+
+function _truncate(s, n = 280) {
+  const str = String(s || '').trim();
+  return str.length > n ? str.slice(0, n - 1) + '…' : str;
+}
+
+function _sampleQuestionsForPrompt(questions, limit = 3) {
+  return (questions || []).slice(0, limit).map((q, i) => ({
+    number: q.number || q.index || i + 1,
+    text: _truncate(q.text || '', 300),
+    isBonus: q.isBonus === true,
+    parts: (q.parts || q.subs || []).slice(0, 3).map((p, pi) => ({
+      letter: p.letter || p.label || String(pi + 1),
+      text: _truncate(p.text || '', 220),
+    }))
+  }));
+}
+
+async function getApprovedFewShotExamples({ courseId = '', titleHint = '', filenameHint = '', limit = FEW_SHOT_MAX_EXAMPLES } = {}) {
+  try {
+    const key = JSON.stringify({ courseId: courseId || '', titleHint: titleHint || '', filenameHint: filenameHint || '', limit });
+    if (_fewShotCache.has(key)) return _fewShotCache.get(key);
+
+    const snap = await db.collection('parse_examples')
+      .where('approved', '==', true)
+      .limit(80)
+      .get();
+
+    const queryTokens = _tokenizeForSimilarity(`${titleHint || ''} ${filenameHint || ''}`);
+    const scored = snap.docs.map(d => ({ id: d.id, ...d.data() })).map(ex => {
+      const exTokens = _tokenizeForSimilarity(`${ex.title || ''} ${ex.filenameHint || ''} ${ex.titlePattern || ''}`);
+      const overlap = _overlapScore(queryTokens, exTokens);
+      const courseBoost = (courseId && ex.courseId === courseId) ? 0.45 : 0;
+      const qualityBoost = typeof ex.parseQualityScore === 'number'
+        ? Math.max(0, Math.min(1, ex.parseQualityScore / 100)) * 0.2
+        : 0;
+      return { ex, score: overlap + courseBoost + qualityBoost };
+    });
+
+    const best = scored
+      .sort((a, b) => b.score - a.score)
+      .slice(0, limit)
+      .filter(x => x.score > 0.05)
+      .map(x => x.ex);
+
+    _fewShotCache.set(key, best);
+    return best;
+  } catch (e) {
+    console.warn('Few-shot retrieval skipped:', e.message);
+    return [];
+  }
+}
+
+function buildFewShotPromptBlock(examples = []) {
+  if (!examples.length) return '';
+  const rows = examples.map((ex, i) => {
+    const payload = {
+      metadata: {
+        courseName: ex.metadata?.courseName || ex.courseName || null,
+        lecturers: ex.metadata?.lecturers || ex.lecturers || [],
+        year: ex.metadata?.year || ex.year || null,
+        semester: ex.metadata?.semester || ex.semester || null,
+        moed: ex.metadata?.moed || ex.moed || null,
+      },
+      questions: _sampleQuestionsForPrompt(ex.questions || [], 3),
+    };
+    return `דוגמה ${i + 1} (מאושרת):\n${JSON.stringify(payload)}`;
+  }).join('\n\n');
+
+  return `\n\n════ דוגמאות מאושרות ללמידת סגנון (Few-shot) ════\n` +
+    `חקה את מבנה הפלט, חלוקת הסעיפים, וסגנון LaTeX כפי שמודגם בדוגמאות.\n` +
+    `אל תעתיק תוכן מילולי לא רלוונטי; שמור על דיוק לטקסט הקלט הנוכחי בלבד.\n\n` +
+    rows + `\n\n`;
+}
+
+function computeParseQuality(result, context = {}) {
+  const questions = result?.questions || [];
+  const metadata  = result?.metadata || {};
+  const flags = [];
+  let score = 100;
+
+  if (!questions.length) {
+    score -= 85;
+    flags.push('לא זוהו שאלות');
+  }
+
+  const avgLen = questions.length
+    ? questions.reduce((s, q) => s + String(q.text || '').trim().length, 0) / questions.length
+    : 0;
+  if (questions.length && avgLen < 24) {
+    score -= 18;
+    flags.push('טקסט שאלות קצר מהרגיל');
+  }
+
+  const emptyQuestions = questions.filter(q => !String(q.text || '').trim() && !(q.subs || []).length).length;
+  if (emptyQuestions > 0) {
+    score -= Math.min(22, emptyQuestions * 8);
+    flags.push(`יש ${emptyQuestions} שאלות ריקות`);
+  }
+
+  const noPartsRatio = questions.length
+    ? (questions.filter(q => !(q.subs || []).length).length / questions.length)
+    : 1;
+  if (questions.length >= 4 && noPartsRatio > 0.9) {
+    score -= 10;
+    flags.push('רוב השאלות ללא סעיפים');
+  }
+
+  if (!metadata.year) { score -= 6; flags.push('שנה חסרה במטאדאטה'); }
+  if (!metadata.semester) { score -= 5; flags.push('סמסטר חסר במטאדאטה'); }
+  if (!metadata.moed) { score -= 5; flags.push('מועד חסר במטאדאטה'); }
+
+  const allText = questions.map(q => String(q.text || '')).join(' ');
+  const dollarCount = (allText.match(/\$/g) || []).length;
+  if (dollarCount % 2 !== 0) {
+    score -= 8;
+    flags.push('ייתכן LaTeX לא מאוזן ($)');
+  }
+
+  const filenameInfo = _parseFilenameHint(context.filenameHint || '');
+  if (filenameInfo.year && metadata.year && Number(filenameInfo.year) !== Number(metadata.year)) {
+    score -= 7;
+    flags.push('שנה לא תואמת לשם הקובץ');
+  }
+
+  score = Math.max(0, Math.min(100, Math.round(score)));
+  const confidence = score >= 85 ? 'high' : score >= LOW_CONFIDENCE_THRESHOLD ? 'medium' : 'low';
+
+  return {
+    score,
+    confidence,
+    flags,
+    needsManualReview: score < LOW_CONFIDENCE_THRESHOLD,
+  };
+}
+
+async function saveParseExample(exam, opts = {}) {
+  if (!exam?.id) return;
+  const approved = opts.approved === true;
+  const quality = opts.quality || null;
+  const payload = {
+    examId: exam.id,
+    approved,
+    source: opts.source || 'single',
+    title: exam.title || '',
+    titlePattern: (exam.title || '').replace(/\d/g, '#'),
+    filenameHint: opts.filenameHint || null,
+    courseId: exam.courseId || null,
+    year: exam.year || null,
+    semester: exam.semester || null,
+    moed: exam.moed || null,
+    lecturers: exam.lecturers || [],
+    metadata: {
+      courseName: opts.courseName || null,
+      lecturers: exam.lecturers || [],
+      year: exam.year || null,
+      semester: exam.semester || null,
+      moed: exam.moed || null,
+    },
+    questions: (exam.questions || []).map((q, i) => ({
+      number: q.index || i + 1,
+      text: q.text || '',
+      isBonus: q.isBonus === true,
+      parts: (q.subs || []).map(s => ({ letter: s.label || '', text: s.text || '' })),
+    })),
+    parsedModel: exam.parsedModel || null,
+    parseQualityScore: quality?.score ?? null,
+    parseConfidence: quality?.confidence ?? null,
+    parseFlags: quality?.flags || [],
+    updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+    updatedBy: adminUser?.email || 'admin',
+  };
+
+  await db.collection('parse_examples').doc(`exam_${exam.id}`).set(payload, { merge: true });
+  _fewShotCache.clear();
+}
+
+/**
+ * Phase 3 helper: export approved examples as JSONL for optional fine-tune/open-model workflows.
+ * This is optional and invoked manually from console: exportApprovedExamplesForFineTune()
+ */
+async function exportApprovedExamplesForFineTune(limit = 300) {
+  const snap = await db.collection('parse_examples')
+    .where('approved', '==', true)
+    .limit(Math.max(1, Math.min(limit, 1000)))
+    .get();
+
+  const lines = snap.docs.map(d => d.data()).map(ex => {
+    const input = {
+      filenameHint: ex.filenameHint || ex.title || '',
+      metadataHint: ex.metadata || {},
+      instruction: 'חלץ מטאדאטה ושאלות בפורמט JSON תקני',
+    };
+    const output = {
+      metadata: ex.metadata || {},
+      questions: ex.questions || [],
+    };
+    return JSON.stringify({ input, output, tags: { courseId: ex.courseId || null, examId: ex.examId || null } });
+  });
+
+  const blob = new Blob([lines.join('\n')], { type: 'application/jsonl;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `parse-examples-approved-${Date.now()}.jsonl`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+
+  await db.collection('model_training_exports').add({
+    createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+    createdBy: adminUser?.email || 'admin',
+    examples: lines.length,
+    format: 'jsonl',
+    note: 'approved parse examples export',
+  });
+
+  toast(`📦 יוצאו ${lines.length} דוגמאות לאימון`, 'success');
 }
 
 /* ── Multi-lecturer widget ─────────────────────────────── */
@@ -346,7 +598,7 @@ document.addEventListener('DOMContentLoaded', () => {
 /* ── INIT ─────────────────────────────────────────────────── */
 async function initAdmin() {
   try {
-    await loadAnthropicKey();
+    await loadApiKeys();
     await populateAllSelects();
     await refreshDashboard();
     await renderManageTable();
@@ -687,32 +939,42 @@ async function startBulkUpload() {
     bulkLog(`מתחיל: ${file.name}`, 'info');
 
     try {
-      // 1. Read PDF as base64 (send directly — no image rendering needed)
-      showSpinner(`📄 ${file.name} — קורא PDF...`);
-      const base64 = await new Promise((res, rej) => {
-        const r = new FileReader();
-        r.onload  = () => res(r.result.split(',')[1]);
-        r.onerror = () => rej(new Error('קריאת קובץ נכשלה'));
-        r.readAsDataURL(file);
+      // 1. Parse with the same PDF pipeline as single upload (Vision-first + fallback)
+      let result = await parsePdfWithSharedPipeline(file, {
+        onRenderStart: () => {
+          showSpinner(`🖼️ ${file.name} — ממיר PDF לתמונות...`);
+        },
+        onVisionStart: (pages) => {
+          showSpinner(`🤖 ${file.name} — Claude Vision מנתח ${pages} עמודים...`);
+        },
+        onFallbackStart: () => {
+          showSpinner(`🤖 ${file.name} — Claude מנתח PDF...`);
+        }
+      }, {
+        courseId,
+        filenameHint: file.name,
+        titleHint: file.name,
       });
-
-      // 2. Parse with Claude (Opus → Sonnet → Haiku)
-      showSpinner(`🤖 ${file.name} — Claude מנתח...`);
-      let result = await processWithClaude('', { isPDF: true, base64, filenameHint: file.name });
       if (!result.questions) result = { questions: result, metadata: null };
 
       const meta      = result.metadata || {};
       const questions = (result.questions || []).filter(q => q.text || q.subs?.length);
+      const known = parseFilenameForBulk(file.name);
+      const title = generateExamTitle(known.year || meta.year, known.semester || meta.semester, known.moed || meta.moed);
+      const quality = computeParseQuality({ questions, metadata: meta }, {
+        filenameHint: file.name,
+        titleHint: title,
+      });
 
       // 3. Normalize lecturer names against manual list + Firestore
       let lecturers = meta.lecturers || [];
       lecturers = await normalizeLecturerNames(lecturers, manualLecturers);
 
       // 4. Build title from filename
-      const known = parseFilenameForBulk(file.name);
-      const title = generateExamTitle(known.year || meta.year, known.semester || meta.semester, known.moed || meta.moed);
-
       bulkLog(`  זוהו ${questions.length} שאלות | כותרת: ${title || '(ללא)'} | מרצים: ${lecturers.join(', ') || '—'} | מודל: ${result.model || '?'}`, 'info');
+      if (quality.needsManualReview) {
+        bulkLog(`  נדרש מעבר ידני — איכות פענוח ${quality.score}/100`, 'warn');
+      }
 
       // 5. Upload PDF to Storage
       showSpinner(`📤 ${file.name} — מעלה PDF...`);
@@ -751,6 +1013,10 @@ async function startBulkUpload() {
         pdfUrl,
         solutionPdfUrl: null,
         parsedModel: result.model || null,
+        parseQualityScore: quality.score,
+        parseConfidence: quality.confidence,
+        parseFlags: quality.flags,
+        needsManualReview: quality.needsManualReview,
         verified: false,
         questions: questions.map(q => ({
           id: q.id || genId(), text: q.text, isBonus: q.isBonus === true,
@@ -762,6 +1028,19 @@ async function startBulkUpload() {
       };
 
       await db.collection('exams').doc(examId).set(exam);
+
+      // Bulk uploads are stored as non-approved examples for future curation.
+      try {
+        await saveParseExample(exam, {
+          approved: false,
+          quality,
+          source: 'bulk',
+          filenameHint: file.name,
+          courseName: meta.courseName || null,
+        });
+      } catch (exErr) {
+        console.warn('Could not save bulk parse example:', exErr.message);
+      }
 
       // Invalidate cache so next file benefits from this lecturer
       _knownLecturers = null;
@@ -1240,20 +1519,67 @@ async function renderPdfToBase64Images(file, maxPages = 15) {
 }
 
 /**
- * Send images to Claude directly (Opus → Sonnet → Haiku).
+ * Shared PDF parsing pipeline used by both single and bulk upload.
+ * Tries Vision first, then falls back to PDF document mode.
  */
-async function processWithVision(images, filenameHint) {
+async function parsePdfWithSharedPipeline(file, hooks = {}, parseOpts = {}) {
+  const { onRenderStart, onVisionStart, onFallbackStart } = hooks;
+
+  if (onRenderStart) onRenderStart();
+
+  let images;
+  try {
+    images = await renderPdfToBase64Images(file, 15);
+  } catch (renderErr) {
+    // pdf.js not available or render failed — fall back to base64 PDF mode
+    console.warn('Vision render failed, falling back to PDF base64 mode:', renderErr.message);
+    images = null;
+  }
+
+  if (images && images.length > 0) {
+    if (onVisionStart) onVisionStart(images.length);
+    return await processWithVision(images, file.name, parseOpts);
+  }
+
+  if (onFallbackStart) onFallbackStart();
+  const base64 = await new Promise((res, rej) => {
+    const r = new FileReader();
+    r.onload  = () => res(r.result.split(',')[1]);
+    r.onerror = () => rej(new Error('קריאת קובץ נכשלה'));
+    r.readAsDataURL(file);
+  });
+
+  const data = await processWithClaude('', {
+    isPDF: true,
+    base64,
+    filenameHint: file.name,
+    titleHint: parseOpts.titleHint || '',
+    courseId: parseOpts.courseId || '',
+  });
+  return typeof data === 'object' && data.questions ? data : { questions: data, metadata: null };
+}
+
+/**
+ * Send images to Claude via edge function (Opus → Sonnet → Haiku fallback server-side).
+ */
+async function processWithVision(images, filenameHint, opts = {}) {
+  const examples = await getApprovedFewShotExamples({
+    courseId: opts.courseId || '',
+    filenameHint: filenameHint || '',
+    titleHint: opts.titleHint || '',
+  });
+  const fewShot = buildFewShotPromptBlock(examples);
   const content = [
-    { type: 'text', text: _buildDirectPrompt(filenameHint || '') },
+    { type: 'text', text: _buildDirectPrompt(filenameHint || '') + fewShot },
   ];
   images.forEach((imgBase64, i) => {
     content.push({ type: 'text', text: `\n=== עמוד ${i + 1} ===` });
     content.push({ type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: imgBase64 } });
   });
 
-  const data = await callClaudeDirect(
-    [{ role: 'user', content }],
-    (model, i) => showSpinner(`🤖 ניסיון ${i+1}/3: ${model}...`)
+  showSpinner('🤖 מתחיל ניתוח...');
+  const data = await callClaudeViaEdge(
+    [{ role: 'user', content }]
   );
   return _normalizeResult(data);
 }
@@ -1263,20 +1589,26 @@ async function processWithVision(images, filenameHint) {
  */
 async function processWithClaude(text, opts = {}) {
   let messages;
+  const examples = await getApprovedFewShotExamples({
+    courseId: opts.courseId || '',
+    filenameHint: opts.filenameHint || '',
+    titleHint: opts.titleHint || '',
+  });
+  const fewShot = buildFewShotPromptBlock(examples);
 
   if (opts.isPDF && opts.base64) {
     messages = [{
       role: 'user',
       content: [
         { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: opts.base64 } },
-        { type: 'text', text: _buildDirectPrompt(opts.filenameHint || opts.titleHint || '') },
+        { type: 'text', text: _buildDirectPrompt(opts.filenameHint || opts.titleHint || '') + fewShot },
       ],
     }];
   } else {
     const hint = opts.titleHint ? `שם/קוד המבחן: "${opts.titleHint}". ` : '';
     messages = [{
       role: 'user',
-      content: `${hint}אתה מנתח מבחן אקדמי. שלוף שאלות וסעיפים והחזר JSON בלבד.
+      content: `${hint}${fewShot}אתה מנתח מבחן אקדמי. שלוף שאלות וסעיפים והחזר JSON בלבד.
 פורמט: {"questions":[{"number":1,"text":"...","isBonus":false,"parts":[{"letter":"א","text":"..."}]}]}
 הוראות: שלוף הכל, LaTeX ב-$...$, שמור עברית מקורית, החזר JSON תקני בלבד.
 
@@ -1285,9 +1617,9 @@ ${text}`,
     }];
   }
 
-  const data = await callClaudeDirect(
-    messages,
-    (model, i) => showSpinner(`🤖 ניסיון ${i+1}/3: ${model}...`)
+  showSpinner('🤖 מתחיל ניתוח...');
+  const data = await callClaudeViaEdge(
+    messages
   );
   return _normalizeResult(data);
 }
@@ -1373,7 +1705,7 @@ function setProgress(pct) {
 }
 
 /* ── AI Spinner overlay helper ──────────────────────────── */
-function showSpinner(msg = '🤖 Claude מנתח...') {
+function showSpinner(msg = '🤖 Claude מנתח...', showAbort = false) {
   let overlay = document.getElementById('ai-spinner-overlay');
   if (!overlay) {
     overlay = document.createElement('div');
@@ -1383,11 +1715,14 @@ function showSpinner(msg = '🤖 Claude מנתח...') {
       <div class="ai-spinner-card">
         <div class="ai-spinner-ring"></div>
         <div class="ai-spinner-msg" id="ai-spinner-msg">${msg}</div>
+        <button class="ai-spinner-abort btn btn-sm" id="ai-spinner-abort" onclick="abortParsing()" style="display:none">⛔ ביטול</button>
       </div>`;
     document.body.appendChild(overlay);
   } else {
     document.getElementById('ai-spinner-msg').textContent = msg;
   }
+  const abortBtn = document.getElementById('ai-spinner-abort');
+  if (abortBtn) abortBtn.style.display = showAbort ? '' : 'none';
   overlay.classList.add('visible');
 }
 
@@ -1475,38 +1810,26 @@ async function handleFileInput(file) {
     let result; // { questions, metadata }
 
     if (isPDF) {
-      /* ── Vision path: render pages → images → Claude Vision ── */
-      setStatus('🖼️ ממיר PDF לתמונות...');
-      setProgress(20);
-
-      let images;
-      try {
-        images = await renderPdfToBase64Images(file, 15);
-      } catch (renderErr) {
-        // pdf.js not available or render failed — fall back to base64 PDF mode
-        console.warn('Vision render failed, falling back to PDF base64 mode:', renderErr.message);
-        images = null;
-      }
-
-      if (images && images.length > 0) {
-        setProgress(45);
-        setStatus(`🤖 Claude Vision מנתח ${images.length} עמודים...`);
-        showSpinner(`🤖 Claude Vision מנתח ${images.length} עמודים...`);
-        result = await processWithVision(images, file.name);
-      } else {
-        // Fallback: send PDF as base64 document
-        setProgress(45);
-        setStatus('🤖 Claude מנתח PDF...');
-        showSpinner('🤖 Claude מנתח PDF...');
-        const base64 = await new Promise((res, rej) => {
-          const r = new FileReader();
-          r.onload  = () => res(r.result.split(',')[1]);
-          r.onerror = () => rej(new Error('קריאת קובץ נכשלה'));
-          r.readAsDataURL(file);
-        });
-        const data = await processWithClaude('', { isPDF: true, base64 });
-        result = typeof data === 'object' && data.questions ? data : { questions: data, metadata: null };
-      }
+      result = await parsePdfWithSharedPipeline(file, {
+        onRenderStart: () => {
+          setStatus('🖼️ ממיר PDF לתמונות...');
+          setProgress(20);
+        },
+        onVisionStart: (pages) => {
+          setProgress(45);
+          setStatus(`🤖 Claude Vision מנתח ${pages} עמודים...`);
+          showSpinner(`🤖 Claude Vision מנתח ${pages} עמודים...`);
+        },
+        onFallbackStart: () => {
+          setProgress(45);
+          setStatus('🤖 Claude מנתח PDF...');
+          showSpinner('🤖 Claude מנתח PDF...');
+        }
+      }, {
+        courseId: document.getElementById('ae-course')?.value || '',
+        filenameHint: file.name,
+        titleHint: document.getElementById('ae-title')?.value?.trim() || '',
+      });
 
     } else {
       /* ── Text / LaTeX file ── */
@@ -1526,6 +1849,16 @@ async function handleFileInput(file) {
 
     parsedQuestions = result.questions || [];
     _parsedModel   = result.model || null;
+    _lastParseQuality = computeParseQuality(result, {
+      filenameHint: file.name,
+      titleHint: document.getElementById('ae-title')?.value?.trim() || '',
+    });
+
+    if (_lastParseQuality.needsManualReview) {
+      const statusMsg = `⚠️ איכות פענוח נמוכה (${_lastParseQuality.score}/100) — מומלץ לעבור ידנית`;
+      setStatus(statusMsg, 'var(--danger)');
+      toast(statusMsg, 'error');
+    }
 
     // Auto-fill metadata into form fields
     if (result.metadata) {
@@ -1542,9 +1875,10 @@ async function handleFileInput(file) {
     }
 
     setProgress(100);
-    setStatus(`✅ זוהו ${parsedQuestions.length} שאלות`, 'var(--success)');
+    const modelTag = _parsedModel ? _parsedModel.replace('claude-','').split('-202')[0] : 'unknown';
+    setStatus(`✅ זוהו ${parsedQuestions.length} שאלות (${modelTag})`, 'var(--success)');
     renderPreview();
-    toast(`✅ AI זיהה ${parsedQuestions.length} שאלות`, 'success');
+    toast(`✅ AI זיהה ${parsedQuestions.length} שאלות (מודל: ${modelTag})`, 'success');
     setTimeout(() => { if (statusEl) statusEl.style.display = 'none'; }, 3500);
 
   } catch (err) {
@@ -1727,13 +2061,25 @@ async function runParser() {
 
   try {
     const titleHint = document.getElementById('ae-title')?.value?.trim() || '';
-    const result = await processWithClaude(raw, { titleHint });
+    const result = await processWithClaude(raw, {
+      titleHint,
+      courseId: document.getElementById('ae-course')?.value || '',
+    });
     const questions = result.questions || result; // backward compat
 
     setProgress(100);
     parsedQuestions = Array.isArray(questions) ? questions : [];
+    _lastParseQuality = computeParseQuality({ questions: parsedQuestions, metadata: result.metadata || null }, {
+      titleHint,
+      filenameHint: titleHint,
+    });
     if (result.metadata) applyExamMetadata(result.metadata);
-    if (statusEl) statusEl.textContent = `✅ זוהו ${parsedQuestions.length} שאלות`;
+    if (statusEl) {
+      const suffix = _lastParseQuality.needsManualReview
+        ? ` | ⚠️ איכות ${_lastParseQuality.score}/100`
+        : '';
+      statusEl.textContent = `✅ זוהו ${parsedQuestions.length} שאלות${suffix}`;
+    }
 
     if (titleHint && !result.metadata) {
       const meta = inferExamMeta(titleHint);
@@ -1864,6 +2210,7 @@ function clearImport() {
   const rt = document.getElementById('raw-text');
   if (rt) rt.value = '';
   parsedQuestions = [];
+  _lastParseQuality = null;
   const c = document.getElementById('preview-container');
   if (c) c.style.display = 'none';
   setProgress(0);
@@ -1922,6 +2269,19 @@ async function submitAddExam() {
 
   const questions = parsedQuestions.filter(q => q.text || q.subs.length);
   if (!questions.length && !confirm('לא זוהו שאלות. לשמור מבחן ריק?')) return;
+
+  const currentQuality = _lastParseQuality || computeParseQuality({
+    questions,
+    metadata: {
+      year: year ? parseInt(year) : null,
+      semester: sem || null,
+      moed: moed || null,
+      lecturers,
+    }
+  }, {
+    titleHint: title,
+    filenameHint: title,
+  });
 
   // ── Confirm before saving ──────────────────────────────
   if (!confirm(`לשמור את המבחן "${title}" עם ${questions.length} שאלות ל-Firebase?`)) return;
@@ -2002,6 +2362,10 @@ async function submitAddExam() {
       pdfUrl:    pdfUrl || null,
       solutionPdfUrl: solutionPdfUrl || null,
       parsedModel: _parsedModel || null,
+      parseQualityScore: currentQuality.score,
+      parseConfidence: currentQuality.confidence,
+      parseFlags: currentQuality.flags,
+      needsManualReview: currentQuality.needsManualReview,
       verified:  false,
       questions: questions.map(q => ({
         id:      q.id || genId(),
@@ -2024,6 +2388,18 @@ async function submitAddExam() {
     }
     // Always set createdAt for new exams; editing preserves it via the exam object
     await db.collection('exams').doc(examId).set(exam);
+
+    // Save a curated example for few-shot prompting; low-confidence stays unapproved.
+    try {
+      await saveParseExample(exam, {
+        approved: !currentQuality.needsManualReview,
+        quality: currentQuality,
+        source: 'single',
+        filenameHint: title,
+      });
+    } catch (exErr) {
+      console.warn('Could not save approved parse example:', exErr.message);
+    }
     // (write complete)
 
     const action = _editingExamId ? 'עודכן' : 'נשמר';
@@ -2048,6 +2424,7 @@ function resetForm() {
   parsedQuestions = [];
   _editingExamId  = null;
   _parsedModel    = null;
+  _lastParseQuality = null;
   clearImport();
   document.getElementById('ae-error')?.classList.remove('show');
   // Hide edit banner
@@ -2313,12 +2690,82 @@ function setManageTab(tab) {
   renderManageTable();
 }
 
+let _approvedExamIds = new Set();
+
+async function _loadApprovedExamIds() {
+  try {
+    const snap = await db.collection('parse_examples')
+      .where('approved', '==', true)
+      .limit(500)
+      .get();
+    _approvedExamIds = new Set(snap.docs.map(d => d.data().examId).filter(Boolean));
+  } catch (e) {
+    console.warn('Could not load approved example IDs:', e.message);
+  }
+}
+
+async function toggleApprovedExample(examId, checked, cb) {
+  try {
+    const docRef = db.collection('parse_examples').doc(`exam_${examId}`);
+    const docSnap = await docRef.get();
+
+    if (checked) {
+      if (docSnap.exists) {
+        await docRef.update({
+          approved: true,
+          updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+          updatedBy: adminUser?.email || 'admin',
+        });
+      } else {
+        // Build example from the exam document
+        const exam = await fetchExam(examId);
+        if (exam) {
+          await saveParseExample(exam, {
+            approved: true,
+            source: 'manual',
+            filenameHint: exam.title || '',
+          });
+        }
+      }
+      _approvedExamIds.add(examId);
+      toast('🧠 דוגמה מאושרת לאימון', 'success');
+    } else {
+      if (docSnap.exists) {
+        await docRef.update({
+          approved: false,
+          updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+          updatedBy: adminUser?.email || 'admin',
+        });
+      }
+      _approvedExamIds.delete(examId);
+      toast('↩️ דוגמה הוסרה מאימון');
+    }
+    _fewShotCache.clear();
+  } catch (e) {
+    toast('שגיאה: ' + e.message, 'error');
+    if (cb) cb.checked = !checked;
+  }
+}
+
+async function exportApprovedExamples() {
+  if (!confirm('לייצא את כל הדוגמאות המאושרות לקובץ JSONL?')) return;
+  try {
+    showSpinner('📦 מייצא דוגמאות...');
+    await exportApprovedExamplesForFineTune();
+    hideSpinner();
+  } catch (e) {
+    hideSpinner();
+    toast('שגיאת ייצוא: ' + e.message, 'error');
+  }
+}
+
 async function renderManageTable() {
   const container = document.getElementById('manage-table');
   if (!container) return;
   container.innerHTML = '<div class="spinner"></div>';
 
   try {
+    await _loadApprovedExamIds();
     const filter  = document.getElementById('manage-filter')?.value || '';
     const courses = await fetchCourses();
     const courseMap = Object.fromEntries(courses.map(c => [c.id, c.name]));
@@ -2376,6 +2823,7 @@ async function renderManageTable() {
       const modelColor = e.parsedModel?.includes('opus') ? '#7c3aed'
                        : e.parsedModel?.includes('sonnet') ? '#2563eb'
                        : e.parsedModel?.includes('haiku') ? '#059669' : '#6b7280';
+      const isApproved = _approvedExamIds.has(e.id);
       return `<tr style="background:${e.verified ? '#d1fae5' : '#fef9c3'}">
         <td><strong>${esc(e.title)}</strong></td>
         <td>${esc(courseMap[e.courseId] || e.courseId)}</td>
@@ -2388,6 +2836,9 @@ async function renderManageTable() {
         <td style="text-align:center">
           <input type="checkbox" ${e.verified ? 'checked' : ''} onchange="toggleVerified('${e.id}',this.checked,this)" title="סמן כנבדק" style="width:18px;height:18px;cursor:pointer">
         </td>
+        <td style="text-align:center">
+          <input type="checkbox" ${isApproved ? 'checked' : ''} onchange="toggleApprovedExample('${e.id}',this.checked,this)" title="דוגמת אימון מאושרת" style="width:18px;height:18px;cursor:pointer;accent-color:#7c3aed">
+        </td>
         <td id="votes-${e.id}" class="votes-cell">
           <button class="btn btn-sm btn-secondary" onclick="loadExamVoteStats('${e.id}','${qIds}',this)">הצג</button>
         </td>
@@ -2399,7 +2850,7 @@ async function renderManageTable() {
     }).join('');
 
     container.innerHTML = `<table class="tbl">
-      <thead><tr><th>כותרת</th><th>קורס</th><th>שנה</th><th>סמסטר</th><th>מועד</th><th>מרצה</th><th>שאלות</th><th>מודל</th><th>נבדק</th><th>קושי</th><th></th></tr></thead>
+      <thead><tr><th>כותרת</th><th>קורס</th><th>שנה</th><th>סמסטר</th><th>מועד</th><th>מרצה</th><th>שאלות</th><th>מודל</th><th>נבדק</th><th title="דוגמת אימון מאושרת">🧠</th><th>קושי</th><th></th></tr></thead>
       <tbody>${rows}</tbody></table>`;
   } catch (e) {
     container.innerHTML = `<p style="color:var(--danger)">שגיאה: ${e.message}</p>`;
