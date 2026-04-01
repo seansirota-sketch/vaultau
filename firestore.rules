@@ -48,9 +48,11 @@ service cloud.firestore {
     }
 
     // FIX 1: block delete & raw set — votes are aggregate counters
+    // Only allow known difficulty keys (easy, medium, hard, unsolved)
     match /questionVotes/{questionId} {
       allow read: if isLoggedIn();
-      allow create, update: if isLoggedIn();
+      allow create, update: if isLoggedIn()
+        && request.resource.data.keys().hasOnly(['easy', 'medium', 'hard', 'unsolved']);
       allow delete: if isAdmin();
     }
 
@@ -116,6 +118,13 @@ service cloud.firestore {
     // Optional exports for fine-tune/open-model workflows.
     match /model_training_exports/{docId} {
       allow read, write: if isAdmin();
+    }
+
+    // ⚠️ CATCH-ALL: deny everything not explicitly matched above.
+    // Any new collection MUST have its own match rule added ABOVE this block,
+    // otherwise reads/writes to it will be silently rejected.
+    match /{document=**} {
+      allow read, write: if false;
     }
   }
 }
