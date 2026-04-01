@@ -44,19 +44,19 @@ function featureEnabled(name, fallback = true) {
 // ── Main handler ────────────────────────────────────────────
 export default async (request, _context) => {
   if (request.method === 'OPTIONS') {
-    return new Response(null, { status: 204, headers: corsHeaders(request) });
+    return new Response(null, { status: 204, headers: corsHeaders() });
   }
   if (request.method !== 'POST') {
-    return new Response('Method Not Allowed', { status: 405, headers: corsHeaders(request) });
+    return new Response('Method Not Allowed', { status: 405, headers: corsHeaders() });
   }
 
-  // ── 1. Authenticate caller ────────────────────────────
+  // ── 1. Authenticate caller ────────────────────────────────
   const authHeader = request.headers.get('Authorization') || '';
   const idToken = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null;
-  if (!idToken) return jsonResponse(401, { error: 'Unauthorized: missing token' }, request);
+  if (!idToken) return jsonResponse(401, { error: 'Unauthorized: missing token' });
 
   const firebaseWebApiKey = Deno.env.get('FIREBASE_WEB_API_KEY');
-  if (!firebaseWebApiKey) return jsonResponse(500, { error: 'Server misconfiguration: missing Firebase key' }, request);
+  if (!firebaseWebApiKey) return jsonResponse(500, { error: 'Server misconfiguration: missing Firebase key' });
 
   let uid;
   try {
@@ -64,12 +64,12 @@ export default async (request, _context) => {
       `https://identitytoolkit.googleapis.com/v1/accounts:lookup?key=${firebaseWebApiKey}`,
       { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ idToken }) }
     );
-    if (!verifyRes.ok) return jsonResponse(401, { error: 'Unauthorized: invalid or expired token' }, request);
+    if (!verifyRes.ok) return jsonResponse(401, { error: 'Unauthorized: invalid or expired token' });
     const verifyData = await verifyRes.json();
-    if (!verifyData?.users?.length) return jsonResponse(401, { error: 'Unauthorized: user not found' }, request);
+    if (!verifyData?.users?.length) return jsonResponse(401, { error: 'Unauthorized: user not found' });
     uid = verifyData.users[0].localId;
   } catch {
-    return jsonResponse(401, { error: 'Unauthorized: token verification failed' }, request);
+    return jsonResponse(401, { error: 'Unauthorized: token verification failed' });
   }
 
   try {
@@ -80,7 +80,7 @@ export default async (request, _context) => {
     // Feature-gated input validation
     if (featureEnabled('FEATURE_VALIDATE_INPUT', true)) {
       const validationError = validateInput(prompt);
-      if (validationError) return jsonResponse(400, { error: validationError }, request);
+      if (validationError) return jsonResponse(400, { error: validationError });
     }
 
     const sanitizedPrompt = sanitizePrompt(prompt);
@@ -97,7 +97,7 @@ export default async (request, _context) => {
       return jsonResponse(429, {
         error: msg,
         quota: { used: quota.used, limit: quota.limit, resetAt: quota.resetAt }
-      }, request);
+      });
     }
 
     // ── 4. Start streaming IMMEDIATELY, then call AI inside ──
@@ -156,7 +156,7 @@ export default async (request, _context) => {
 
     return new Response(readable, {
       status: 200,
-      headers: { ...corsHeaders(request), 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', 'Connection': 'keep-alive',
+      headers: { ...corsHeaders(), 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', 'Connection': 'keep-alive',
         'X-Quota-Remaining': String(quota.remaining - 1),
         'X-Quota-Limit':     String(quota.limit),
       },
@@ -174,7 +174,7 @@ export default async (request, _context) => {
         errorMessage: `[500] ${err.message || 'Server error'}`,
       }).catch(() => {});
     }
-    return jsonResponse(500, { error: err.message || 'Server error' }, request);
+    return jsonResponse(500, { error: err.message || 'Server error' });
   }
 };
 
@@ -532,26 +532,19 @@ async function pipeClaudeStream(claudeRes, writer, encoder) {
 // ── Utilities ───────────────────────────────────────────────
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
-const ALLOWED_ORIGINS = [
-  'https://vaultau.netlify.app',
-  'http://localhost:8888',
-];
-
-function corsHeaders(request) {
-  const origin = request?.headers?.get('origin') || '';
-  const allowedOrigin = ALLOWED_ORIGINS.includes(origin) ? origin : ALLOWED_ORIGINS[0];
+function corsHeaders() {
   return {
-    'Access-Control-Allow-Origin':  allowedOrigin,
+    'Access-Control-Allow-Origin':  '*',
     'Access-Control-Allow-Headers': 'Content-Type, Authorization',
     'Access-Control-Allow-Methods': 'POST, OPTIONS',
     'Access-Control-Expose-Headers': 'X-Quota-Remaining, X-Quota-Limit, X-Api-Used',
   };
 }
 
-function jsonResponse(status, body, request) {
+function jsonResponse(status, body) {
   return new Response(JSON.stringify(body), {
     status,
-    headers: { ...corsHeaders(request), 'Content-Type': 'application/json' },
+    headers: { ...corsHeaders(), 'Content-Type': 'application/json' },
   });
 }
 

@@ -12,38 +12,12 @@
 const sgMail = require('@sendgrid/mail');
 const crypto = require('crypto');
 
-/* ── CORS ── */
-const ALLOWED_ORIGINS = [
-  'https://vaultau.netlify.app',
-  'http://localhost:8888',
-];
-
-function corsHeaders(event) {
-  const origin = (event.headers || {}).origin || '';
-  const allowed = ALLOWED_ORIGINS.includes(origin) ? origin : ALLOWED_ORIGINS[0];
-  return {
-    'Access-Control-Allow-Origin':  allowed,
-    'Access-Control-Allow-Headers': 'Content-Type',
-    'Access-Control-Allow-Methods': 'POST, OPTIONS',
-  };
-}
-
-/* ── Rate limiting (in-memory, resets on cold start) ── */
-const ipRateMap    = new Map();
-const emailRateMap = new Map();
-const RATE_LIMIT     = 3;       // max requests per window
-const RATE_WINDOW_MS = 600000;  // 10 minutes
-
-function isRateLimited(map, key) {
-  const now = Date.now();
-  const entry = map.get(key);
-  if (!entry || now - entry.start > RATE_WINDOW_MS) {
-    map.set(key, { start: now, count: 1 });
-    return false;
-  }
-  entry.count++;
-  return entry.count > RATE_LIMIT;
-}
+/* ── CORS headers ── */
+const CORS = {
+  'Access-Control-Allow-Origin':  '*',
+  'Access-Control-Allow-Headers': 'Content-Type',
+  'Access-Control-Allow-Methods': 'POST, OPTIONS',
+};
 
 const ALLOWED_DOMAIN = 'mail.tau.ac.il';
 const CODE_EXPIRY_MINUTES = 10;
@@ -133,29 +107,17 @@ function generateToken(email, code, expiresAt, secret) {
 /* ── Main handler ── */
 exports.handler = async (event) => {
 
-  const cors = corsHeaders(event);
-
   /* ── Preflight (CORS) ── */
   if (event.httpMethod === 'OPTIONS') {
-    return { statusCode: 204, headers: cors, body: '' };
+    return { statusCode: 204, headers: CORS, body: '' };
   }
 
   /* ── Method guard ── */
   if (event.httpMethod !== 'POST') {
     return {
       statusCode: 405,
-      headers: cors,
+      headers: CORS,
       body: JSON.stringify({ error: 'Method Not Allowed' }),
-    };
-  }
-
-  /* ── Rate limit (by IP) ── */
-  const ip = (event.headers['x-forwarded-for'] || event.headers['client-ip'] || 'unknown').split(',')[0].trim();
-  if (isRateLimited(ipRateMap, ip)) {
-    return {
-      statusCode: 429,
-      headers: { ...cors, 'Retry-After': '600' },
-      body: JSON.stringify({ error: 'יותר מדי בקשות — נסה שוב מאוחר יותר' }),
     };
   }
 
@@ -168,7 +130,7 @@ exports.handler = async (event) => {
     console.error('Missing env vars: SENDGRID_API_KEY, SENDER_EMAIL, or VERIFICATION_SECRET');
     return {
       statusCode: 500,
-      headers: cors,
+      headers: CORS,
       body: JSON.stringify({ error: 'Server misconfiguration — env vars missing' }),
     };
   }
@@ -180,7 +142,7 @@ exports.handler = async (event) => {
   } catch {
     return {
       statusCode: 400,
-      headers: cors,
+      headers: CORS,
       body: JSON.stringify({ error: 'Invalid JSON body' }),
     };
   }
@@ -191,17 +153,8 @@ exports.handler = async (event) => {
   if (!email || !email.endsWith('@' + ALLOWED_DOMAIN)) {
     return {
       statusCode: 400,
-      headers: cors,
+      headers: CORS,
       body: JSON.stringify({ error: `ניתן להירשם רק עם מייל @${ALLOWED_DOMAIN}` }),
-    };
-  }
-
-  /* ── Rate limit (by email) ── */
-  if (isRateLimited(emailRateMap, email)) {
-    return {
-      statusCode: 429,
-      headers: { ...cors, 'Retry-After': '600' },
-      body: JSON.stringify({ error: 'יותר מדי בקשות — נסה שוב מאוחר יותר' }),
     };
   }
 
@@ -229,7 +182,7 @@ exports.handler = async (event) => {
     console.log(`Verification email sent → ${email}`);
     return {
       statusCode: 200,
-      headers: { ...cors, 'Content-Type': 'application/json' },
+      headers: { ...CORS, 'Content-Type': 'application/json' },
       body: JSON.stringify({
         success: true,
         token,
@@ -241,7 +194,7 @@ exports.handler = async (event) => {
     console.error('SendGrid error:', sgError);
     return {
       statusCode: 502,
-      headers: cors,
+      headers: CORS,
       body: JSON.stringify({ error: 'Failed to send verification email', details: sgError }),
     };
   }

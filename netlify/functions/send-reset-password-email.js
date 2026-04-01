@@ -13,21 +13,12 @@
 const sgMail = require('@sendgrid/mail');
 const admin  = require('firebase-admin');
 
-/* ── CORS ── */
-const ALLOWED_ORIGINS = [
-  'https://vaultau.netlify.app',
-  'http://localhost:8888',
-];
-
-function corsHeaders(event) {
-  const origin = (event.headers || {}).origin || '';
-  const allowed = ALLOWED_ORIGINS.includes(origin) ? origin : ALLOWED_ORIGINS[0];
-  return {
-    'Access-Control-Allow-Origin':  allowed,
-    'Access-Control-Allow-Headers': 'Content-Type',
-    'Access-Control-Allow-Methods': 'POST, OPTIONS',
-  };
-}
+/* ── CORS headers ── */
+const CORS = {
+  'Access-Control-Allow-Origin':  '*',
+  'Access-Control-Allow-Headers': 'Content-Type',
+  'Access-Control-Allow-Methods': 'POST, OPTIONS',
+};
 
 /* ── Rate limiting (in-memory, resets on cold start) ── */
 const rateMap = new Map();
@@ -146,18 +137,16 @@ ${resetUrl}
 /* ── Main handler ── */
 exports.handler = async (event) => {
 
-  const cors = corsHeaders(event);
-
   /* ── Preflight (CORS) ── */
   if (event.httpMethod === 'OPTIONS') {
-    return { statusCode: 204, headers: cors, body: '' };
+    return { statusCode: 204, headers: CORS, body: '' };
   }
 
   /* ── Method guard ── */
   if (event.httpMethod !== 'POST') {
     return {
       statusCode: 405,
-      headers: cors,
+      headers: CORS,
       body: JSON.stringify({ error: 'Method Not Allowed' }),
     };
   }
@@ -167,7 +156,7 @@ exports.handler = async (event) => {
   if (isRateLimited(ip)) {
     return {
       statusCode: 429,
-      headers: { ...cors, 'Retry-After': '600' },
+      headers: { ...CORS, 'Retry-After': '600' },
       body: JSON.stringify({ error: 'יותר מדי בקשות — נסה שוב מאוחר יותר' }),
     };
   }
@@ -181,7 +170,7 @@ exports.handler = async (event) => {
     console.error('Missing env vars: SENDGRID_API_KEY or SENDER_EMAIL');
     return {
       statusCode: 500,
-      headers: cors,
+      headers: CORS,
       body: JSON.stringify({ error: 'Server misconfiguration' }),
     };
   }
@@ -191,7 +180,7 @@ exports.handler = async (event) => {
     console.error('Missing env var: FIREBASE_SERVICE_ACCOUNT');
     return {
       statusCode: 500,
-      headers: cors,
+      headers: CORS,
       body: JSON.stringify({ error: 'Server misconfiguration' }),
     };
   }
@@ -203,7 +192,7 @@ exports.handler = async (event) => {
   } catch {
     return {
       statusCode: 400,
-      headers: cors,
+      headers: CORS,
       body: JSON.stringify({ error: 'Invalid JSON body' }),
     };
   }
@@ -213,7 +202,7 @@ exports.handler = async (event) => {
   if (!email) {
     return {
       statusCode: 400,
-      headers: cors,
+      headers: CORS,
       body: JSON.stringify({ error: 'נא להזין כתובת אימייל' }),
     };
   }
@@ -250,7 +239,7 @@ exports.handler = async (event) => {
   // Always return success — don't reveal whether the email exists
   return {
     statusCode: 200,
-    headers: cors,
+    headers: CORS,
     body: JSON.stringify({ success: true }),
   };
 };
