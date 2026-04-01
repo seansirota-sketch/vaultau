@@ -28,6 +28,9 @@ firebase-export-*/
 # VS Code agent customization files (local only)
 .github/agents/
 
+# One-time password upgrade email script (local only)
+seed/send-password-upgrade-emails.js
+
 # OS generated files (Mac/Windows hidden files)
 .DS_Store
 Thumbs.db

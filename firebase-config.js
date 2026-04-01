@@ -86,7 +86,8 @@ const ALLOWED_USER_FIELDS = [
   'displayName', 'starredQuestions', 'difficultyVotes',
   'acceptedTerms', 'acceptedTermsAt', 'surveyDone',
   'completedExams', 'doneExams', 'inProgressExams',
-  'copyCount', 'lastCopyReset', 'createdAt', 'savedCourses', 'aiQuestions'
+  'copyCount', 'lastCopyReset', 'createdAt', 'savedCourses', 'aiQuestions',
+  'passwordUpgraded', // ── PASSWORD_UPGRADE_GATE (remove after all users upgraded) ──
 ];
 
 async function saveUserData(uid, data) {
