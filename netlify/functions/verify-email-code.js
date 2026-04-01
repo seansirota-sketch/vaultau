@@ -9,37 +9,12 @@
 
 const crypto = require('crypto');
 
-/* ── CORS ── */
-const ALLOWED_ORIGINS = [
-  'https://vaultau.netlify.app',
-  'http://localhost:8888',
-];
-
-function corsHeaders(event) {
-  const origin = (event.headers || {}).origin || '';
-  const allowed = ALLOWED_ORIGINS.includes(origin) ? origin : ALLOWED_ORIGINS[0];
-  return {
-    'Access-Control-Allow-Origin':  allowed,
-    'Access-Control-Allow-Headers': 'Content-Type',
-    'Access-Control-Allow-Methods': 'POST, OPTIONS',
-  };
-}
-
-/* ── Rate limiting (in-memory, resets on cold start) ── */
-const rateMap = new Map();
-const RATE_LIMIT     = 5;       // max attempts per window
-const RATE_WINDOW_MS = 600000;  // 10 minutes
-
-function isRateLimited(ip) {
-  const now = Date.now();
-  const entry = rateMap.get(ip);
-  if (!entry || now - entry.start > RATE_WINDOW_MS) {
-    rateMap.set(ip, { start: now, count: 1 });
-    return false;
-  }
-  entry.count++;
-  return entry.count > RATE_LIMIT;
-}
+/* ── CORS headers ── */
+const CORS = {
+  'Access-Control-Allow-Origin':  '*',
+  'Access-Control-Allow-Headers': 'Content-Type',
+  'Access-Control-Allow-Methods': 'POST, OPTIONS',
+};
 
 /* ── Verify HMAC token ── */
 function verifyToken(email, code, expiresAt, token, secret) {
@@ -51,29 +26,17 @@ function verifyToken(email, code, expiresAt, token, secret) {
 /* ── Main handler ── */
 exports.handler = async (event) => {
 
-  const cors = corsHeaders(event);
-
   /* ── Preflight (CORS) ── */
   if (event.httpMethod === 'OPTIONS') {
-    return { statusCode: 204, headers: cors, body: '' };
+    return { statusCode: 204, headers: CORS, body: '' };
   }
 
   /* ── Method guard ── */
   if (event.httpMethod !== 'POST') {
     return {
       statusCode: 405,
-      headers: cors,
+      headers: CORS,
       body: JSON.stringify({ error: 'Method Not Allowed' }),
-    };
-  }
-
-  /* ── Rate limit ── */
-  const ip = (event.headers['x-forwarded-for'] || event.headers['client-ip'] || 'unknown').split(',')[0].trim();
-  if (isRateLimited(ip)) {
-    return {
-      statusCode: 429,
-      headers: { ...cors, 'Retry-After': '600' },
-      body: JSON.stringify({ error: 'יותר מדי ניסיונות — נסה שוב מאוחר יותר' }),
     };
   }
 
@@ -83,7 +46,7 @@ exports.handler = async (event) => {
     console.error('Missing env var: VERIFICATION_SECRET');
     return {
       statusCode: 500,
-      headers: cors,
+      headers: CORS,
       body: JSON.stringify({ error: 'Server misconfiguration' }),
     };
   }
@@ -95,7 +58,7 @@ exports.handler = async (event) => {
   } catch {
     return {
       statusCode: 400,
-      headers: cors,
+      headers: CORS,
       body: JSON.stringify({ error: 'Invalid JSON body' }),
     };
   }
@@ -109,7 +72,7 @@ exports.handler = async (event) => {
   if (!email || !code || !token || !expiresAt) {
     return {
       statusCode: 400,
-      headers: cors,
+      headers: CORS,
       body: JSON.stringify({ error: 'Missing required fields' }),
     };
   }
@@ -118,7 +81,7 @@ exports.handler = async (event) => {
   if (Date.now() > expiresAt) {
     return {
       statusCode: 400,
-      headers: cors,
+      headers: CORS,
       body: JSON.stringify({ error: 'קוד האימות פג תוקף. נא לבקש קוד חדש.', expired: true }),
     };
   }
@@ -129,14 +92,14 @@ exports.handler = async (event) => {
     if (!valid) {
       return {
         statusCode: 400,
-        headers: cors,
+        headers: CORS,
         body: JSON.stringify({ error: 'קוד אימות שגוי. נסה שוב.' }),
       };
     }
   } catch (err) {
     return {
       statusCode: 400,
-      headers: cors,
+      headers: CORS,
       body: JSON.stringify({ error: 'קוד אימות שגוי. נסה שוב.' }),
     };
   }
@@ -144,7 +107,7 @@ exports.handler = async (event) => {
   /* ── Success ── */
   return {
     statusCode: 200,
-    headers: { ...cors, 'Content-Type': 'application/json' },
+    headers: { ...CORS, 'Content-Type': 'application/json' },
     body: JSON.stringify({ success: true, verified: true }),
   };
 };
