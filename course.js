@@ -236,6 +236,7 @@ document.addEventListener('DOMContentLoaded', () => {
               displayName: user.displayName || '',
               createdAt:   firebase.firestore.FieldValue.serverTimestamp(),
               role:        'student',
+              passwordUpgraded: true, // ── PASSWORD_UPGRADE_GATE ── new signups already use strong password policy
             });
           }
         } catch (e) {
@@ -251,6 +252,13 @@ document.addEventListener('DOMContentLoaded', () => {
         renderTermsModal();
         return; // block until accepted
       }
+
+      // ── PASSWORD_UPGRADE_GATE (remove after all users upgraded) ──
+      if (!STATE.userData?.passwordUpgraded) {
+        renderPasswordUpgradeModal();
+        return; // block until password upgraded
+      }
+      // ── /PASSWORD_UPGRADE_GATE ──
 
       // ── 2. Survey check ────────────────────────────────────
       // Run in background — don't block initial render
@@ -294,6 +302,13 @@ document.addEventListener('DOMContentLoaded', () => {
       renderTermsModal();
       return;
     }
+    // ── PASSWORD_UPGRADE_GATE (remove after all users upgraded) ──
+    if (!STATE.userData?.passwordUpgraded) {
+      document.getElementById('app').innerHTML = '';
+      renderPasswordUpgradeModal();
+      return;
+    }
+    // ── /PASSWORD_UPGRADE_GATE ──
     renderNavbar();
     renderPage();
   });
@@ -317,6 +332,43 @@ function showPageLoader(msg = 'טוען...') {
 function hidePageLoader() {
   const el = document.getElementById('page-loader');
   if (el) el.remove();
+}
+
+/* ══════════════════════════════════════════════════════════
+   PASSWORD POLICY
+══════════════════════════════════════════════════════════ */
+
+const _passwordRules = [
+  { test: p => p.length >= 8,        label: 'לפחות 8 תווים' },
+  { test: p => /[A-Z]/.test(p),      label: 'אות גדולה באנגלית (A-Z)' },
+  { test: p => /[a-z]/.test(p),      label: 'אות קטנה באנגלית (a-z)' },
+  { test: p => /[0-9]/.test(p),      label: 'ספרה (0-9)' },
+  { test: p => /[^A-Za-z0-9]/.test(p), label: 'תו מיוחד (!@#$%...)' },
+];
+
+function validatePassword(pass) {
+  return _passwordRules.every(r => r.test(pass));
+}
+
+function _renderPasswordHints(hintsId) {
+  return `<div id="${hintsId}" style="margin-top:6px;font-size:.78rem;line-height:1.7">
+    ${_passwordRules.map((r, i) => `<div id="${hintsId}-${i}" style="color:#ef4444">✗ ${r.label}</div>`).join('')}
+  </div>`;
+}
+
+function _attachPasswordHintsListener(inputId, hintsId) {
+  const inp = document.getElementById(inputId);
+  if (!inp) return;
+  inp.addEventListener('input', () => {
+    const val = inp.value;
+    _passwordRules.forEach((r, i) => {
+      const el = document.getElementById(hintsId + '-' + i);
+      if (!el) return;
+      const ok = r.test(val);
+      el.style.color = ok ? '#16a34a' : '#ef4444';
+      el.textContent = (ok ? '✓ ' : '✗ ') + r.label;
+    });
+  });
 }
 
 /* ══════════════════════════════════════════════════════════
@@ -405,12 +457,13 @@ function renderAuth() {
             <div class="form-group">
               <label>סיסמה</label>
               <div class="pass-wrap">
-                <input id="s-pass" type="password" placeholder="לפחות 6 תווים">
+                <input id="s-pass" type="password" placeholder="לפחות 8 תווים">
                 <button type="button" class="pass-eye" onclick="togglePassVis('s-pass','s-eye')"
                   title="הצג / הסתר סיסמה" id="s-eye" aria-label="הצג סיסמה">
                   ${_eyeIcon(false)}
                 </button>
               </div>
+              ${_renderPasswordHints('s-pass-hints')}
             </div>
             <button id="signup-btn" class="btn btn-primary" style="width:100%;justify-content:center"
               onclick="doSignupStep1()">שלח קוד אימות ←</button>
@@ -453,6 +506,7 @@ function renderAuth() {
   document.getElementById('s-pass')?.addEventListener('keydown', e => {
     if (e.key === 'Enter') doSignupStep1();
   });
+  _attachPasswordHintsListener('s-pass', 's-pass-hints');
   document.getElementById('s-code')?.addEventListener('keydown', e => {
     if (e.key === 'Enter') doSignupStep2();
   });
@@ -553,12 +607,13 @@ function renderResetPassword(oobCode) {
           <div class="form-group">
             <label>סיסמה חדשה</label>
             <div class="pass-wrap">
-              <input id="r-pass" type="password" placeholder="לפחות 6 תווים">
+              <input id="r-pass" type="password" placeholder="לפחות 8 תווים">
               <button type="button" class="pass-eye" onclick="togglePassVis('r-pass','r-eye')"
                 title="הצג / הסתר סיסמה" id="r-eye" aria-label="הצג סיסמה">
                 ${_eyeIcon(false)}
               </button>
             </div>
+            ${_renderPasswordHints('r-pass-hints')}
           </div>
           <div class="form-group">
             <label>אימות סיסמה</label>
@@ -579,6 +634,7 @@ function renderResetPassword(oobCode) {
   document.getElementById('r-pass2')?.addEventListener('keydown', e => {
     if (e.key === 'Enter') doResetPassword(safeCode);
   });
+  _attachPasswordHintsListener('r-pass', 'r-pass-hints');
 }
 
 async function doResetPassword(oobCode) {
@@ -591,8 +647,8 @@ async function doResetPassword(oobCode) {
     authErr('נא למלא את כל השדות');
     return;
   }
-  if (pass.length < 6) {
-    authErr('סיסמה חייבת להכיל לפחות 6 תווים');
+  if (!validatePassword(pass)) {
+    authErr('הסיסמה לא עומדת בדרישות — ראה פירוט מתחת לשדה');
     return;
   }
   if (pass !== pass2) {
@@ -604,9 +660,17 @@ async function doResetPassword(oobCode) {
   if (btn) { btn.disabled = true; btn.textContent = 'שומר...'; }
 
   try {
-    // Verify the code is valid, then set new password
-    await auth.verifyPasswordResetCode(oobCode);
+    // Verify the code is valid (returns the email), then set new password
+    const resetEmail = await auth.verifyPasswordResetCode(oobCode);
     await auth.confirmPasswordReset(oobCode, pass);
+
+    // ── PASSWORD_UPGRADE_GATE (remove after all users upgraded) ──
+    // Auto sign-in + mark password as upgraded
+    try {
+      await auth.signInWithEmailAndPassword(resetEmail, pass);
+      await saveUserData(auth.currentUser.uid, { passwordUpgraded: true });
+    } catch (_) { /* sign-in is optional — reset already succeeded */ }
+    // ── /PASSWORD_UPGRADE_GATE ──
 
     // Show success, hide form
     document.getElementById('reset-form').style.display = 'none';
@@ -678,6 +742,12 @@ async function doLogin() {
   authBusy(true);
   try {
     await auth.signInWithEmailAndPassword(email, pass);
+    // ── PASSWORD_UPGRADE_GATE (remove after all users upgraded) ──
+    // If existing password already meets the new policy, silently mark as upgraded
+    if (validatePassword(pass) && auth.currentUser) {
+      saveUserData(auth.currentUser.uid, { passwordUpgraded: true }).catch(() => {});
+    }
+    // ── /PASSWORD_UPGRADE_GATE ──
     // onAuthStateChanged will handle the authorized flow
   } catch (e) {
     const messages = {
@@ -720,7 +790,7 @@ async function doSignupStep1() {
   if (!email.endsWith('@' + ALLOWED_EMAIL_DOMAIN)) {
     return authErr('ניתן להירשם רק עם מייל @' + ALLOWED_EMAIL_DOMAIN);
   }
-  if (pass.length < 6) return authErr('סיסמה חייבת להכיל לפחות 6 תווים');
+  if (!validatePassword(pass)) return authErr('הסיסמה לא עומדת בדרישות — ראה פירוט מתחת לשדה');
 
   // Store for later
   _verifyState.name = name;
@@ -1085,6 +1155,135 @@ async function acceptTerms() {
     alert('שגיאה בשמירת האישור: ' + e.message + '\nנסה שוב.');
   }
 }
+
+/* ── PASSWORD_UPGRADE_GATE (remove after all users upgraded) ──────── */
+
+function renderPasswordUpgradeModal() {
+  document.getElementById('app').innerHTML = `
+    <div id="pw-upgrade-overlay" style="
+      position:fixed;inset:0;background:rgba(0,0,0,.6);
+      display:flex;align-items:center;justify-content:center;
+      z-index:9999;padding:1rem">
+      <div style="
+        background:#fff;border-radius:16px;max-width:460px;width:100%;
+        padding:2rem 2rem 1.5rem;box-shadow:0 20px 60px rgba(0,0,0,.3);
+        direction:rtl;text-align:right">
+
+        <div style="text-align:center;margin-bottom:1.2rem">
+          <span style="font-size:2.2rem">🔒</span>
+          <h2 style="margin:.5rem 0 .25rem;font-size:1.2rem;color:#1e293b">עדכון סיסמה נדרש</h2>
+          <p style="font-size:.82rem;color:#64748b;line-height:1.6">
+            שדרגנו את מדיניות האבטחה של VaultAU.<br>
+            כדי להמשיך, יש לבחור סיסמה חדשה וחזקה יותר.
+          </p>
+        </div>
+
+        <div id="pw-upgrade-err" class="form-error"></div>
+
+        <div class="form-group">
+          <label>סיסמה נוכחית</label>
+          <div class="pass-wrap">
+            <input id="pw-cur" type="password" placeholder="הסיסמה הנוכחית שלך">
+            <button type="button" class="pass-eye" onclick="togglePassVis('pw-cur','pw-cur-eye')"
+              title="הצג / הסתר סיסמה" id="pw-cur-eye" aria-label="הצג סיסמה">
+              ${_eyeIcon(false)}
+            </button>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label>סיסמה חדשה</label>
+          <div class="pass-wrap">
+            <input id="pw-new" type="password" placeholder="לפחות 8 תווים">
+            <button type="button" class="pass-eye" onclick="togglePassVis('pw-new','pw-new-eye')"
+              title="הצג / הסתר סיסמה" id="pw-new-eye" aria-label="הצג סיסמה">
+              ${_eyeIcon(false)}
+            </button>
+          </div>
+          ${_renderPasswordHints('pw-new-hints')}
+        </div>
+
+        <div class="form-group">
+          <label>אימות סיסמה חדשה</label>
+          <div class="pass-wrap">
+            <input id="pw-confirm" type="password" placeholder="הזן שוב את הסיסמה">
+            <button type="button" class="pass-eye" onclick="togglePassVis('pw-confirm','pw-confirm-eye')"
+              title="הצג / הסתר סיסמה" id="pw-confirm-eye" aria-label="הצג סיסמה">
+              ${_eyeIcon(false)}
+            </button>
+          </div>
+        </div>
+
+        <button id="pw-upgrade-btn" class="btn btn-primary"
+          style="width:100%;justify-content:center;margin-top:.5rem"
+          onclick="doPasswordUpgrade()">עדכן סיסמה ←</button>
+      </div>
+    </div>`;
+
+  _attachPasswordHintsListener('pw-new', 'pw-new-hints');
+  document.getElementById('pw-confirm')?.addEventListener('keydown', e => {
+    if (e.key === 'Enter') doPasswordUpgrade();
+  });
+}
+
+async function doPasswordUpgrade() {
+  const curPass     = document.getElementById('pw-cur').value;
+  const newPass     = document.getElementById('pw-new').value;
+  const confirmPass = document.getElementById('pw-confirm').value;
+  const errEl       = document.getElementById('pw-upgrade-err');
+
+  // Clear previous error
+  if (errEl) { errEl.textContent = ''; errEl.classList.remove('show'); }
+  function _err(msg) {
+    if (errEl) { errEl.textContent = msg; errEl.classList.add('show'); }
+  }
+
+  if (!curPass || !newPass || !confirmPass) {
+    return _err('נא למלא את כל השדות');
+  }
+  if (!validatePassword(newPass)) {
+    return _err('הסיסמה החדשה לא עומדת בדרישות — ראה פירוט מתחת לשדה');
+  }
+  if (newPass !== confirmPass) {
+    return _err('הסיסמאות החדשות לא תואמות');
+  }
+
+  const btn = document.getElementById('pw-upgrade-btn');
+  if (btn) { btn.disabled = true; btn.textContent = 'מעדכן...'; }
+
+  try {
+    const user = auth.currentUser;
+    const credential = firebase.auth.EmailAuthProvider.credential(user.email, curPass);
+    await user.reauthenticateWithCredential(credential);
+    await user.updatePassword(newPass);
+    // Retry up to 2 times to prevent lockout (password changed but flag not saved)
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try { await saveUserData(user.uid, { passwordUpgraded: true }); break; }
+      catch (e) { if (attempt === 2) console.error('passwordUpgraded flag save failed after retries', e); }
+    }
+    STATE.userData = { ...STATE.userData, passwordUpgraded: true };
+
+    // Continue to normal app load
+    renderNavbar();
+    _fetchInitialQuota();
+    _cleanupOrphanedCache();
+    history.replaceState({ page: 'home', courseId: null, examId: null }, '');
+    renderPage();
+    checkAndShowSurvey();
+
+  } catch (e) {
+    const messages = {
+      'auth/wrong-password':           'הסיסמה הנוכחית שגויה',
+      'auth/invalid-credential':       'הסיסמה הנוכחית שגויה',
+      'auth/too-many-requests':        'יותר מדי ניסיונות — נסה שוב מאוחר יותר',
+      'auth/requires-recent-login':    'נדרשת התחברות מחדש — רענן את הדף ונסה שוב',
+    };
+    _err(messages[e.code] || 'שגיאה בעדכון הסיסמה: ' + e.message);
+    if (btn) { btn.disabled = false; btn.textContent = 'עדכן סיסמה ←'; }
+  }
+}
+
+/* ── /PASSWORD_UPGRADE_GATE ──────────────────────────────── */
 
 /* ══════════════════════════════════════════════════════════
    HOME

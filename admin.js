@@ -2518,6 +2518,9 @@ async function renderUserStats() {
       const inProgress = (u.inProgressExams || []).length;
       const copies     = u.copyCount || 0;
       const accepted   = u.acceptedTerms === true;
+      // ── PASSWORD_UPGRADE_GATE (remove after all users upgraded) ──
+      const pwUpgraded = u.passwordUpgraded === true;
+      // ── /PASSWORD_UPGRADE_GATE ──
 
       // Email cell — show email if available, else UID
       const identifier = u.email || u.uid || u._docId || '—';
@@ -2564,6 +2567,13 @@ async function renderUserStats() {
             ? `<span class="badge" style="background:#dcfce7;color:#166534;border:1px solid #86efac">✓ אישר</span>`
             : `<span class="badge" style="background:#fef2f2;color:#991b1b;border:1px solid #fca5a5">✗ טרם</span>`}
         </td>
+        <!-- PASSWORD_UPGRADE_GATE (remove after all users upgraded) -->
+        <td style="text-align:center">
+          ${pwUpgraded
+            ? `<span class="badge" style="background:#dcfce7;color:#166534;border:1px solid #86efac">✓ עודכנה</span>`
+            : `<span class="badge" style="background:#fef2f2;color:#991b1b;border:1px solid #fca5a5">✗ טרם</span>`}
+        </td>
+        <!-- /PASSWORD_UPGRADE_GATE -->
       </tr>`;
     }).join('');
 
@@ -2573,6 +2583,9 @@ async function renderUserStats() {
     const totalInProgress = rows.reduce((s, u) => s + (u.inProgressExams || []).length, 0);
     const totalStarred    = rows.reduce((s, u) => s + (u.starredQuestions || []).length, 0);
     const totalAccepted   = rows.filter(u => u.acceptedTerms === true).length;
+    // ── PASSWORD_UPGRADE_GATE (remove after all users upgraded) ──
+    const totalPwUpgraded  = rows.filter(u => u.passwordUpgraded === true).length;
+    // ── /PASSWORD_UPGRADE_GATE ──
 
     wrap.innerHTML = `
       <!-- Summary stats -->
@@ -2583,6 +2596,9 @@ async function renderUserStats() {
           ['⏳', 'בתהליך סה"כ',    totalInProgress,  '#fefce8','#854d0e','#fde047'],
           ['⭐', 'כוכביות סה"כ',   totalStarred,     '#fff7ed','#9a3412','#fdba74'],
           ['📜', 'אישרו תנאים',    `${totalAccepted}/${rows.length}`, '#f5f3ff','#5b21b6','#c4b5fd'],
+          // PASSWORD_UPGRADE_GATE (remove after all users upgraded)
+          ['🔒', 'עדכנו סיסמה',   `${totalPwUpgraded}/${rows.length}`, '#fef2f2','#991b1b','#fca5a5'],
+          // /PASSWORD_UPGRADE_GATE
         ].map(([icon, lbl, val, bg, fg, border]) => `
           <div style="flex:1;min-width:110px;background:${bg};border:1px solid ${border};
                       border-radius:10px;padding:.65rem .9rem;text-align:center">
@@ -2603,6 +2619,9 @@ async function renderUserStats() {
               <th style="text-align:center" title="מבחנים שסומנו בתהליך">⏳ בתהליך</th>
               <th style="text-align:center" title="שאלות מסומנות בכוכבית">⭐ כוכביות</th>
               <th style="text-align:center">📜 הצהרה</th>
+              <!-- PASSWORD_UPGRADE_GATE (remove after all users upgraded) -->
+              <th style="text-align:center">🔒 סיסמה</th>
+              <!-- /PASSWORD_UPGRADE_GATE -->
             </tr>
           </thead>
           <tbody>${tableRows}</tbody>
