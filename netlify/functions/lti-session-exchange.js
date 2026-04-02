@@ -190,11 +190,21 @@ exports.handler = async (event) => {
   const roles = normalizeRoles(claims.roles);
   const ltiRole = mapLtiRole(roles);
 
-  if (!iss || !sub || !exp || !iat || !jti) {
+  const missingClaims = [];
+  if (!iss) missingClaims.push('iss');
+  if (!sub) missingClaims.push('sub');
+  if (!Number.isFinite(exp) || exp <= 0) missingClaims.push('exp');
+  if (!Number.isFinite(iat) || iat <= 0) missingClaims.push('iat');
+  if (!jti) missingClaims.push('jti');
+
+  if (missingClaims.length) {
     return {
       statusCode: 400,
       headers: CORS,
-      body: JSON.stringify({ error: 'missing_required_claims' }),
+      body: JSON.stringify({
+        error: 'missing_required_claims',
+        missingClaims,
+      }),
     };
   }
 
