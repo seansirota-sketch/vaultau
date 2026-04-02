@@ -193,26 +193,67 @@ async function _loadGeminiKey() {
   return _geminiKey;
 }
 
-/* ── APP STATE ──────────────────────────────────────────────── */
-let STATE = {
-  page:     'home',   // home | course | exam
-  courseId: null,
-  examId:   null,
-  tab:      'exams',  // exams | starred | ai-questions
-  fireUser: null,     // Firebase Auth user
-  userData: null,     // Firestore user doc { starredQuestions: [] }
+/* ── LTI entry bootstrap (feature-gated server-side) ───────── */
+const LTI_HANDOFF_PARAM = 'lti_handoff';
+let _ltiBootstrapResult = { attempted: false, success: false, error: '' };
 
-  // Local caches to avoid re-fetching
-  courses:  null,     // Array<Course>
-  exams:    {},       // { [courseId]: Array<Exam> }
-  examVotes: {},     // { [questionId]: { easy, medium, hard, unsolved } }
-  doneExams: [],     // Array<examId> — exams marked as done by user
-  inProgressExams: [], // Array<examId> — exams marked as in-progress by user
-  savedFilters: {},    // { [courseId]: { fy, fs, fm, fl } } — persists across exam navigation
-};
+async function maybeBootstrapLtiSession() {
+  const params = new URLSearchParams(window.location.search);
+  const handoffToken = params.get(LTI_HANDOFF_PARAM);
+  if (!handoffToken) return { attempted: false, success: false, error: '' };
 
-/* ── BOOTSTRAP ─────────────────────────────────────────────── */
-document.addEventListener('DOMContentLoaded', () => {
+  try {
+    const res = await fetch('/.netlify/functions/lti-session-exchange', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ handoffToken })
+    });
+
+    const payload = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      const error = payload?.error || 'LTI exchange failed';
+      return { attempted: true, success: false, error };
+    }
+    if (!payload?.customToken) {
+      return { attempted: true, success: false, error: 'Missing Firebase custom token from LTI exchange' };
+    }
+
+    await auth.signInWithCustomToken(payload.customToken);
+
+    // Remove one-time token from URL to avoid re-use or accidental sharing.
+    const cleanUrl = new URL(window.location.href);
+    cleanUrl.searchParams.delete(LTI_HANDOFF_PARAM);
+    window.history.replaceState(window.history.state, '', cleanUrl.pathname + cleanUrl.search + cleanUrl.hash);
+
+    return { attempted: true, success: true, error: '' };
+  } catch (err) {
+    console.error('LTI bootstrap failed:', err);
+    return { attempted: true, success: false, error: 'Network error while bootstrapping LTI session' };
+  }
+}
+
+function renderLtiFallback(message) {
+  const safeMessage = esc(message || 'LTI launch could not be completed.');
+  document.getElementById('app').innerHTML = `
+    <div class="auth-wrap">
+      <div class="auth-card" style="max-width:520px">
+        <div class="auth-logo">
+          <span class="icon">⚠️</span>
+          <h1>VaultAU</h1>
+          <p>ההתחברות דרך LTI נכשלה</p>
+        </div>
+        <div class="form-error" style="display:block">${safeMessage}</div>
+        <button class="btn btn-primary" style="width:100%;justify-content:center" onclick="renderAuth()">
+          המשך להתחברות רגילה ←
+        </button>
+      </div>
+    </div>
+  `;
+}
+
+async function initAppBootstrap() {
+  _ltiBootstrapResult = await maybeBootstrapLtiSession();
+
   auth.onAuthStateChanged(async (user) => {
     if (user) {
       // Anonymous users shouldn't reach here anymore, but clean up just in case
@@ -275,11 +316,36 @@ document.addEventListener('DOMContentLoaded', () => {
       const urlParams = new URLSearchParams(window.location.search);
       if (urlParams.get('mode') === 'resetPassword' && urlParams.get('oobCode')) {
         renderResetPassword(urlParams.get('oobCode'));
+      } else if (_ltiBootstrapResult.attempted && !_ltiBootstrapResult.success) {
+        renderLtiFallback(_ltiBootstrapResult.error);
       } else {
         renderAuth();
       }
     }
   });
+}
+
+/* ── APP STATE ──────────────────────────────────────────────── */
+let STATE = {
+  page:     'home',   // home | course | exam
+  courseId: null,
+  examId:   null,
+  tab:      'exams',  // exams | starred | ai-questions
+  fireUser: null,     // Firebase Auth user
+  userData: null,     // Firestore user doc { starredQuestions: [] }
+
+  // Local caches to avoid re-fetching
+  courses:  null,     // Array<Course>
+  exams:    {},       // { [courseId]: Array<Exam> }
+  examVotes: {},     // { [questionId]: { easy, medium, hard, unsolved } }
+  doneExams: [],     // Array<examId> — exams marked as done by user
+  inProgressExams: [], // Array<examId> — exams marked as in-progress by user
+  savedFilters: {},    // { [courseId]: { fy, fs, fm, fl } } — persists across exam navigation
+};
+
+/* ── BOOTSTRAP ─────────────────────────────────────────────── */
+document.addEventListener('DOMContentLoaded', () => {
+  initAppBootstrap();
 
   // Browser Back / Forward
   window.addEventListener('popstate', async (e) => {

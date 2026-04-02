@@ -132,6 +132,11 @@ Access is controlled by a `role` field on each user's Firestore document (`users
 | `SENDGRID_API_KEY` | Yes | SendGrid key for transactional emails (verification, password reset). |
 | `SENDER_EMAIL` | Yes | "From" address for outgoing emails. |
 | `GEMINI_API_KEY` | Optional | Google Gemini key (stored in Firestore `settings/api_keys.gemini`, loaded client-side). |
+| `LTI_ENTRY_ENABLED` | Yes | Feature flag for LTI entry (`true`/`false`). Keep `false` until rollout. |
+| `LTI_ALLOWED_ISSUERS` | Yes | Comma-separated allowlist of trusted Moodle issuers (`iss`). |
+| `LTI_EXPECTED_AUDIENCE` | Yes | Expected handoff token audience (`aud`). |
+| `LTI_HANDOFF_VERIFY_KEY` | Yes | Shared secret used to verify bridge-signed `lti_handoff` JWT (`HS256`). |
+| `LTI_REQUIRE_COURSE_MAP` | Optional | If `true`, blocks launch when `context_id` has no active map in `lti_course_map`. |
 
 ### Local Development (`.env` file in project root)
 
@@ -143,6 +148,11 @@ Access is controlled by a `role` field on each user's Firestore document (`users
 | `NETLIFY_DEV` | Optional | Set to `true` to skip Firebase token verification locally (emulator tokens can't validate against production). **Never set in production.** |
 | `SENDGRID_API_KEY` | Yes | Same as production. |
 | `SENDER_EMAIL` | Yes | Same as production. |
+| `LTI_ENTRY_ENABLED` | Optional | Set to `true` to test LTI entry locally. |
+| `LTI_ALLOWED_ISSUERS` | Optional | Local allowlist for accepted issuer values. |
+| `LTI_EXPECTED_AUDIENCE` | Optional | Local expected audience value. |
+| `LTI_HANDOFF_VERIFY_KEY` | Optional | Local signing key shared with bridge token generator. |
+| `LTI_REQUIRE_COURSE_MAP` | Optional | Enable strict course mapping validation locally. |
 
 > **Note:** The `.env` file is gitignored. Copy `.env` from a team member or create it manually.
 
@@ -158,6 +168,13 @@ The project auto-deploys to Netlify on every push to `main`.
 2. Confirm `NETLIFY_DEV` is **not** set in production env vars (bypasses auth)
 3. Test a single PDF upload → spinner shows model name, parse succeeds
 4. Test an unauthenticated request to `/api/parse-exam` → returns 401
+
+## LTI Rollout Artifacts
+
+- Baseline + rollback checklist: `docs/lti-baseline-checklist.md`
+- Bridge token contract: `docs/lti-bridge-contract.md`
+- Test matrix: `docs/lti-test-matrix.md`
+- Environment variables plan: `docs/lti-env-plan.md`
 
 ---
 
