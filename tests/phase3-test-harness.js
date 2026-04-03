@@ -148,7 +148,7 @@ async function runLaunchTests() {
       name: 'L1.1 – New LTI Learner',
       passed: result.status === 200 && result.body.customToken,
       message: `Status ${result.status}, Duration ${result.duration}ms`,
-      details: result.body.errorMessage || result.body.errorCode || result.body.error || null,
+      details: result.body.failureStep || result.body.errorMessage || result.body.errorCode || result.body.error || null,
     };
     RESULTS.launchTests.push(test);
     logResult('Launch', test);
@@ -169,7 +169,7 @@ async function runLaunchTests() {
       name: 'L1.2 – New LTI Instructor',
       passed: result.status === 200 && result.body.customToken,
       message: `Status ${result.status}, Duration ${result.duration}ms`,
-      details: result.body.errorMessage || result.body.errorCode || result.body.error || null,
+      details: result.body.failureStep || result.body.errorMessage || result.body.errorCode || result.body.error || null,
     };
     RESULTS.launchTests.push(test);
     logResult('Launch', test);
@@ -210,7 +210,7 @@ async function runLaunchTests() {
       name: 'L1.4 – New LTI Admin',
       passed: result.status === 200 && result.body.user?.ltiRole === 'admin',
       message: `Status ${result.status}, Role: ${result.body.user?.ltiRole || 'N/A'}`,
-      details: result.body.errorMessage || result.body.errorCode || result.body.error || null,
+      details: result.body.failureStep || result.body.errorMessage || result.body.errorCode || result.body.error || null,
     };
     RESULTS.launchTests.push(test);
     logResult('Launch', test);

@@ -263,8 +263,10 @@ exports.handler = async (event) => {
   const displayName = String(claims.name || claims.given_name || email || 'LTI User').trim();
 
   let mappedCourse = null;
+  let failureStep = 'start';
   try {
     if (contextId) {
+      failureStep = 'load_course_map';
       const mapDocId = stableLtiUid(iss, contextId);
       const mapRef = firestore.collection('lti_course_map').doc(mapDocId);
       const mapSnap = await mapRef.get();
@@ -274,6 +276,7 @@ exports.handler = async (event) => {
       }
 
       if (!mapSnap.exists && claims.vaultau_course_id) {
+        failureStep = 'create_course_map';
         mappedCourse = {
           platformIssuer: iss,
           contextId,
@@ -303,6 +306,7 @@ exports.handler = async (event) => {
       }
     }
 
+    failureStep = 'firebase_auth_create_or_update';
     await firebaseAdmin.auth().createUser({
       uid,
       email: email || undefined,
@@ -311,6 +315,7 @@ exports.handler = async (event) => {
       disabled: false,
     }).catch(async (err) => {
       if (err.code === 'auth/uid-already-exists') {
+        failureStep = 'firebase_auth_update_existing_uid';
         await firebaseAdmin.auth().updateUser(uid, {
           email: email || undefined,
           displayName,
@@ -321,6 +326,7 @@ exports.handler = async (event) => {
 
       // If this email already belongs to a web user, attach LTI identity to that user.
       if (err.code === 'auth/email-already-exists' && email) {
+        failureStep = 'firebase_auth_link_existing_email';
         const existingUser = await firebaseAdmin.auth().getUserByEmail(email);
         uid = existingUser.uid;
         await firebaseAdmin.auth().updateUser(uid, {
@@ -333,6 +339,7 @@ exports.handler = async (event) => {
       throw err;
     });
 
+    failureStep = 'set_custom_claims';
     await firebaseAdmin.auth().setCustomUserClaims(uid, {
       lti: true,
       ltiIssuer: iss,
@@ -343,6 +350,7 @@ exports.handler = async (event) => {
       ltiClientId: claims.client_id || null,
     });
 
+    failureStep = 'write_users_doc';
     await firestore.collection('users').doc(uid).set({
       uid,
       email,
@@ -369,6 +377,7 @@ exports.handler = async (event) => {
       createdAt: admin.firestore.FieldValue.serverTimestamp(),
     }, { merge: true });
 
+    failureStep = 'write_lti_users_doc';
     await firestore.collection('lti_users').doc(uid).set({
       iss,
       sub,
@@ -384,6 +393,7 @@ exports.handler = async (event) => {
       jti,
     }, { merge: true });
 
+    failureStep = 'write_audit_success';
     await writeAudit(firestore, {
       timestamp: new Date().toISOString(),
       result: 'success',
@@ -395,6 +405,7 @@ exports.handler = async (event) => {
       jti,
     });
 
+    failureStep = 'create_custom_token';
     const customToken = await firebaseAdmin.auth().createCustomToken(uid, {
       lti: true,
       ltiRole,
@@ -438,6 +449,7 @@ exports.handler = async (event) => {
       body: JSON.stringify({
         error: 'lti_exchange_error',
         errorCode: err.code || null,
+        failureStep,
         ...(shouldExposeDebugError() ? { errorMessage: err.message || null } : {}),
       }),
     };
