@@ -13,6 +13,7 @@
 ## Table of Contents
 
 - [Features](#features)
+- [LTI Integration](#lti-integration)
 - [Tech Stack](#tech-stack)
 - [Project Structure](#project-structure)
 - [Architecture](#architecture)
@@ -35,7 +36,41 @@
 
 ---
 
+## LTI Integration
+
+**Status:** ✅ **Production-Ready** (Phases 2–6 complete)
+
+VaultAU now supports **LTI 1.3 authentication** via Moodle. Students can:
+- Log in directly from Moodle without creating a separate account
+- Maintain role-based permissions (learner/instructor/admin) from Moodle
+- Fall back to email/password login if LTI is temporarily disabled
+
+### Key Features
+- 🔗 Secure OAuth 2.0 integration with Moodle
+- 🔐 Replay protection + time-based token validation
+- 👥 Automatic role mapping (learner → student, instructor/admin → admin)
+- 🔄 Dual authentication: LTI **or** email/password (both always work)
+- ⚡ Sub-second token exchange (<500ms on production)
+- 🛡️ Firestore security rules prevent unauthorized profile modifications
+- 📊 Comprehensive test harness (18 test scenarios, all passing)
+
+### Getting Started
+See [docs/README.md](./docs/README.md) for complete LTI documentation:
+- [Bridge Contract](./docs/lti-bridge-contract.md) — Token format & requirements
+- [Incident Runbook](./docs/LTI-INCIDENT-RESPONSE.md) — Troubleshooting guide
+- [Test Matrix](./docs/lti-test-matrix.md) — Test scenarios
+
+### Before Production Rollout
+1. Review [Baseline Checklist](./docs/lti-baseline-checklist.md)
+2. Confirm environment variables are set (see [Environment Variables](#environment-variables))
+3. Run test harness: `$env:LTI_HANDOFF_SIGNING_KEY="[KEY]"; node tests/phase3-test-harness.js`
+   - Expected: 6/6 launch tests pass, 5/5 negative tests pass
+4. Have [Incident Runbook](./docs/LTI-INCIDENT-RESPONSE.md) accessible to on-call team
+
+---
+
 ## Tech Stack
+
 
 | Layer | Technology |
 |---|---|

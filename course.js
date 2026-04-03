@@ -1,4 +1,3 @@
-console.log('✅ course.js LOADED - version with status filter');
 function nl2br(html){if(!html)return '';return html.replace(/\n/g,'<br>');}
 
 /**
