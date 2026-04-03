@@ -176,7 +176,7 @@ async function runLaunchTests() {
     if (test.passed) passed++;
   }
 
-  // Test 1.3: Same token twice (jti replay check would fail in Phase 6)
+  // Test 1.3: Same token twice should be blocked on second redemption (Phase 6).
   {
     const token = generateHandoffToken({
       sub: 'charlie_learner_001',
@@ -185,12 +185,15 @@ async function runLaunchTests() {
     });
     const result1 = await callExchange(token);
     const result2 = await callExchange(token);
-    // Both should succeed in Phase 3 (jti replay prevention not yet implemented)
+    const secondUseBlocked =
+      result2.status === 401 &&
+      (result2.body?.error === 'handoff_token_replayed' || result2.body?.errorCode === 'handoff_token_replayed');
+
     const test = {
-      name: 'L1.3 – Token Reuse (Currently Allowed)',
-      passed: result1.status === 200 && result2.status === 200,
+      name: 'L1.3 – Token Replay Blocked',
+      passed: result1.status === 200 && secondUseBlocked,
       message: `First: ${result1.status}, Second: ${result2.status}`,
-      details: 'Note: jti replay prevention implemented in Phase 6',
+      details: secondUseBlocked ? 'Replay protection active' : (result2.body?.error || result2.body?.errorCode || null),
     };
     RESULTS.launchTests.push(test);
     logResult('Launch', test);
