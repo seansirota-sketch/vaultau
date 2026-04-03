@@ -93,6 +93,19 @@ function stableLtiUid(iss, sub) {
   return `lti_${digest}`;
 }
 
+function stableHandoffJtiId(iss, jti) {
+  return crypto
+    .createHash('sha256')
+    .update(`${iss}|${jti}`)
+    .digest('hex')
+    .slice(0, 48);
+}
+
+function isAlreadyExistsError(err) {
+  if (!err) return false;
+  return err.code === 6 || err.code === 'already-exists' || String(err.message || '').toLowerCase().includes('already exists');
+}
+
 function getAdmin() {
   if (admin.apps.length) return admin;
 
@@ -189,6 +202,7 @@ exports.handler = async (event) => {
   const aud = claims.aud;
   const exp = Number(claims.exp || 0);
   const iat = Number(claims.iat || 0);
+  const nbf = claims.nbf === undefined ? null : Number(claims.nbf);
   const jti = String(claims.jti || '').trim();
   const contextId = String(claims.context_id || '').trim();
   const roles = normalizeRoles(claims.roles);
@@ -229,6 +243,23 @@ exports.handler = async (event) => {
     };
   }
 
+  if (nbf !== null) {
+    if (!Number.isFinite(nbf) || nbf <= 0) {
+      return {
+        statusCode: 400,
+        headers: CORS,
+        body: JSON.stringify({ error: 'handoff_token_nbf_invalid' }),
+      };
+    }
+    if (nbf > currentTs + CLOCK_SKEW_SECONDS) {
+      return {
+        statusCode: 401,
+        headers: CORS,
+        body: JSON.stringify({ error: 'handoff_token_not_yet_valid' }),
+      };
+    }
+  }
+
   const audiences = Array.isArray(aud) ? aud.map(String) : [String(aud || '')];
   if (!audiences.includes(expectedAudience)) {
     return {
@@ -261,6 +292,45 @@ exports.handler = async (event) => {
   let uid = stableLtiUid(iss, sub);
   const email = claims.email ? String(claims.email).toLowerCase().trim() : null;
   const displayName = String(claims.name || claims.given_name || email || 'LTI User').trim();
+
+  // Reserve this handoff token (issuer + jti) for one-time redemption.
+  const jtiDocId = stableHandoffJtiId(iss, jti);
+  try {
+    await firestore.collection('lti_handoff_jtis').doc(jtiDocId).create({
+      issuer: iss,
+      subject: sub,
+      jti,
+      contextId: contextId || null,
+      intendedUid: uid,
+      issuedAt: iat,
+      notBefore: nbf,
+      expiresAt: exp,
+      redeemedAt: new Date().toISOString(),
+    });
+  } catch (err) {
+    if (isAlreadyExistsError(err)) {
+      await writeAudit(firestore, {
+        timestamp: new Date().toISOString(),
+        result: 'failed',
+        errorCode: 'handoff_token_replayed',
+        contextId,
+        roleSummary: ltiRole,
+        issuer: iss,
+        subject: sub,
+        jti,
+      });
+      return {
+        statusCode: 401,
+        headers: CORS,
+        body: JSON.stringify({ error: 'handoff_token_replayed' }),
+      };
+    }
+    return {
+      statusCode: 500,
+      headers: CORS,
+      body: JSON.stringify({ error: 'lti_exchange_error' }),
+    };
+  }
 
   let mappedCourse = null;
   let failureStep = 'start';
