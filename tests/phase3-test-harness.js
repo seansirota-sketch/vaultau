@@ -446,10 +446,11 @@ async function runAllTests() {
   console.log('  SUMMARY');
   console.log('═══════════════════════════════════════════════════════════\n');
 
-  const totalTests = RESULTS.launchTests.length + RESULTS.negativeTests.length + RESULTS.regressionTests.length;
+  const totalTests = RESULTS.launchTests.length + RESULTS.negativeTests.length + RESULTS.regressionTests.length + RESULTS.performanceTests.length;
   const totalPassed = (RESULTS.summary.launchTestsPassed || 0) +
                       (RESULTS.summary.negativeTestsPassed || 0) +
-                      (RESULTS.summary.regressionTestsPassed || 0);
+                      (RESULTS.summary.regressionTestsPassed || 0) +
+                      RESULTS.performanceTests.filter(t => t.passed).length;
 
   console.log(`Total Tests: ${totalPassed}/${totalTests}`);
   console.log(`\nLaunch Tests: ${RESULTS.summary.launchTestsPassed}/${RESULTS.summary.launchTestsTotal}`);
@@ -458,7 +459,17 @@ async function runAllTests() {
   console.log(`Regression Tests: ${RESULTS.summary.regressionTestsPassed}/${RESULTS.summary.regressionTestsTotal}`);
 
   const decision = totalPassed === totalTests ? '✅ GO' : '❌ NO-GO';
-  console.log(`\nDecision: ${decision}\n`);
+  const functionalPassed =
+    (RESULTS.summary.launchTestsPassed || 0) === (RESULTS.summary.launchTestsTotal || 0) &&
+    (RESULTS.summary.negativeTestsPassed || 0) === (RESULTS.summary.negativeTestsTotal || 0) &&
+    (RESULTS.summary.regressionTestsPassed || 0) === (RESULTS.summary.regressionTestsTotal || 0);
+
+  const performancePassed = RESULTS.performanceTests.every(t => t.passed);
+  console.log(`\nDecision: ${decision}`);
+  if (functionalPassed && !performancePassed) {
+    console.log('Note: Functional tests passed, but performance targets failed.');
+  }
+  console.log('');
 
   // Write results to file
   fs.writeFileSync('phase3-results.json', JSON.stringify(RESULTS, null, 2));
