@@ -197,6 +197,13 @@ async function _loadGeminiKey() {
 const LTI_HANDOFF_PARAM = 'lti_handoff';
 let _ltiBootstrapResult = { attempted: false, success: false, error: '' };
 
+function mapLtiErrorMessage(errorCode) {
+  if (errorCode === 'lti_entry_disabled') {
+    return 'אנחנו כרגע לא תומכים בהתחברות דרך המודל - הנושא נמצא בטיפול';
+  }
+  return errorCode || 'LTI exchange failed';
+}
+
 async function maybeBootstrapLtiSession() {
   const params = new URLSearchParams(window.location.search);
   const handoffToken = params.get(LTI_HANDOFF_PARAM);
@@ -211,7 +218,7 @@ async function maybeBootstrapLtiSession() {
 
     const payload = await res.json().catch(() => ({}));
     if (!res.ok) {
-      const error = payload?.error || 'LTI exchange failed';
+      const error = mapLtiErrorMessage(payload?.error);
       return { attempted: true, success: false, error };
     }
     if (!payload?.customToken) {
