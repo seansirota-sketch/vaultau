@@ -203,10 +203,19 @@ function mapLtiErrorMessage(errorCode) {
   return errorCode || 'LTI exchange failed';
 }
 
+function removeLtiHandoffFromUrl() {
+  const cleanUrl = new URL(window.location.href);
+  cleanUrl.searchParams.delete(LTI_HANDOFF_PARAM);
+  window.history.replaceState(window.history.state, '', cleanUrl.pathname + cleanUrl.search + cleanUrl.hash);
+}
+
 async function maybeBootstrapLtiSession() {
   const params = new URLSearchParams(window.location.search);
   const handoffToken = params.get(LTI_HANDOFF_PARAM);
   if (!handoffToken) return { attempted: false, success: false, error: '' };
+
+  // Remove token from address bar immediately after reading it.
+  removeLtiHandoffFromUrl();
 
   try {
     const res = await fetch('/.netlify/functions/lti-session-exchange', {
@@ -226,10 +235,8 @@ async function maybeBootstrapLtiSession() {
 
     await auth.signInWithCustomToken(payload.customToken);
 
-    // Remove one-time token from URL to avoid re-use or accidental sharing.
-    const cleanUrl = new URL(window.location.href);
-    cleanUrl.searchParams.delete(LTI_HANDOFF_PARAM);
-    window.history.replaceState(window.history.state, '', cleanUrl.pathname + cleanUrl.search + cleanUrl.hash);
+    // Safety net in case other code modified history during bootstrap.
+    removeLtiHandoffFromUrl();
 
     return { attempted: true, success: true, error: '' };
   } catch (err) {
