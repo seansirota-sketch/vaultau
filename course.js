@@ -1184,15 +1184,27 @@ async function acceptTerms() {
     if (!uid) throw new Error('לא מחובר');
 
     const now = firebase.firestore.FieldValue.serverTimestamp();
-    // Write directly with role+uid+email so this works as both CREATE (if
-    // the user doc wasn't persisted yet due to signup race) and UPDATE.
-    await db.collection('users').doc(uid).set({
-      acceptedTerms:   true,
+    // Normal path: update only safe fields allowed by Firestore rules.
+    await db.collection('users').doc(uid).update({
+      acceptedTerms: true,
       acceptedTermsAt: now,
-      role:  'student',
-      uid:   uid,
-      email: (STATE.fireUser.email || '').toLowerCase().trim(),
-    }, { merge: true });
+    }).catch(async (err) => {
+      // Rare fallback: if user doc does not exist yet, create a minimal doc
+      // that satisfies the create rule and includes the acceptance fields.
+      if (err?.code === 'not-found') {
+        await db.collection('users').doc(uid).set({
+          uid,
+          email: (STATE.fireUser.email || '').toLowerCase().trim(),
+          displayName: STATE.fireUser.displayName || '',
+          role: 'student',
+          acceptedTerms: true,
+          acceptedTermsAt: now,
+          createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+        });
+        return;
+      }
+      throw err;
+    });
     STATE.userData = { ...STATE.userData, acceptedTerms: true, acceptedTermsAt: new Date() };
 
     // Continue to normal app load
