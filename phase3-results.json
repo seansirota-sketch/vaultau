@@ -1,0 +1,99 @@
+{
+  "launchTests": [
+    {
+      "name": "L1.1 – New LTI Learner",
+      "passed": "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJhdWQiOiJodHRwczovL2lkZW50aXR5dG9vbGtpdC5nb29nbGVhcGlzLmNvbS9nb29nbGUuaWRlbnRpdHkuaWRlbnRpdHl0b29sa2l0LnYxLklkZW50aXR5VG9vbGtpdCIsImlhdCI6MTc3NTIwNTQ4NywiZXhwIjoxNzc1MjA5MDg3LCJpc3MiOiJmaXJlYmFzZS1hZG1pbnNkay1mYnN2Y0BlYXhtYmFuay5pYW0uZ3NlcnZpY2VhY2NvdW50LmNvbSIsInN1YiI6ImZpcmViYXNlLWFkbWluc2RrLWZic3ZjQGVheG1iYW5rLmlhbS5nc2VydmljZWFjY291bnQuY29tIiwidWlkIjoibHRpXzEzNmM5MWY4NmRiZGE2MDc1N2ZlZDY5YWQ3OGNhNjVmIiwiY2xhaW1zIjp7Imx0aSI6dHJ1ZSwibHRpUm9sZSI6InN0dWRlbnQiLCJsdGlJc3N1ZXIiOiJsdGktdG9vbC1icmlkZ2UiLCJsdGlDb250ZXh0SWQiOiJjb3Vyc2VfMDAxIiwibHRpQ291cnNlSWQiOm51bGx9fQ.hYvTJRZB7AY5Ov1uFkKRPNwyCOOUMK1zub51JDaiG48GF8NMPeOUVaQ_iZVebbA3fw8fD6acWR7IFjNEJrYga_LOCO2irTcVuG-dfa0DbOO7mcYKV7N6o5kRlal74Psi1qMYTvwAGE1BEq6w71g2SV9H6kTyYYAfMrP1uSfL38jIqzfgGa4fSbZmnyYSF6oHIbuepHgohcx83nEOknR1kJnkSPEKZliDIdGnlAnzG3nb4mBMDCgFJqietcOdI1JDF_Z91GoOCZfxMez7vHa9zsBPWZ7nh1JipN1JKFY5SkT9p_tei6BP37zMS7CbaaeNcdkLOWZEoPuzkl8vXYZmGA",
+      "message": "Status 200, Duration 2397ms",
+      "details": null
+    },
+    {
+      "name": "L1.2 – New LTI Instructor",
+      "passed": "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJhdWQiOiJodHRwczovL2lkZW50aXR5dG9vbGtpdC5nb29nbGVhcGlzLmNvbS9nb29nbGUuaWRlbnRpdHkuaWRlbnRpdHl0b29sa2l0LnYxLklkZW50aXR5VG9vbGtpdCIsImlhdCI6MTc3NTIwNTQ4OSwiZXhwIjoxNzc1MjA5MDg5LCJpc3MiOiJmaXJlYmFzZS1hZG1pbnNkay1mYnN2Y0BlYXhtYmFuay5pYW0uZ3NlcnZpY2VhY2NvdW50LmNvbSIsInN1YiI6ImZpcmViYXNlLWFkbWluc2RrLWZic3ZjQGVheG1iYW5rLmlhbS5nc2VydmljZWFjY291bnQuY29tIiwidWlkIjoibHRpXzBhMjcyYTAwMGZjOWM3OGI5YWU2YzM1YTdiODc5MzM5IiwiY2xhaW1zIjp7Imx0aSI6dHJ1ZSwibHRpUm9sZSI6Imluc3RydWN0b3IiLCJsdGlJc3N1ZXIiOiJsdGktdG9vbC1icmlkZ2UiLCJsdGlDb250ZXh0SWQiOiJjb3Vyc2VfMDAxIiwibHRpQ291cnNlSWQiOm51bGx9fQ.Urd2QXwIssd7POT6TNXGazqsWuv2g-qhuLau7nTivrtAGrMbZmHw0IPowFhJNN2vvsDhflDWhT_4uoLqTyH3niboEE4M0QR6Nqw-Z_nZmdYRIVcQ5r0VGCMSsQ4FhFOQaDdnXqRwkIIYGyGAVwy6V5YTuJbuzOk-_txPcRxi30FPPjKxFPQ4A4xiXxA_00VL0rRekYNrxKFduPuVSTJ2gDRRnH_4gDP2zOI6PM9DbdQTUabxBLMp-EeDlpOsgb-QCc1hEsDij2Jw_ekj0O2S72ZLdt58N2bd5Z-ckP52vok7hEYArTaju-Ya5myA2rCQjfmXCVEKJ2D8o_MfU8Daqg",
+      "message": "Status 200, Duration 1450ms",
+      "details": null
+    },
+    {
+      "name": "L1.3 – Token Replay Blocked",
+      "passed": true,
+      "message": "First: 200, Second: 401",
+      "details": "Replay protection active"
+    },
+    {
+      "name": "L1.4 – New LTI Admin",
+      "passed": true,
+      "message": "Status 200, Role: admin",
+      "details": null
+    },
+    {
+      "name": "L1.5 – Multiple Courses",
+      "passed": true,
+      "message": "Course 1: 200, Course 2: 200"
+    },
+    {
+      "name": "L1.6 – Minimal Token",
+      "passed": true,
+      "message": "Status 200"
+    }
+  ],
+  "negativeTests": [
+    {
+      "name": "N2.1 – Expired Token",
+      "passed": true,
+      "message": "Status 401, Error: handoff_token_expired"
+    },
+    {
+      "name": "N2.2 – Bad Signature",
+      "passed": true,
+      "message": "Status 401, Error: invalid_handoff_signature"
+    },
+    {
+      "name": "N2.3 – Wrong Audience",
+      "passed": true,
+      "message": "Status 401, Error: handoff_audience_mismatch",
+      "details": null
+    },
+    {
+      "name": "N2.4 – Missing Required Claims",
+      "passed": true,
+      "message": "Status 400, Error: missing_required_claims",
+      "details": "sub"
+    },
+    {
+      "name": "N2.5 – Invalid Request Body",
+      "passed": true,
+      "message": "Status 400"
+    }
+  ],
+  "performanceTests": [
+    {
+      "name": "Exchange Endpoint Latency",
+      "metrics": {
+        "p50": 1171,
+        "p95": 1234,
+        "p99": 1234,
+        "avg": 1160.4
+      },
+      "targets": {
+        "p50": 250,
+        "p95": 500,
+        "p99": 800
+      },
+      "passed": false
+    }
+  ],
+  "regressionTests": [
+    {
+      "name": "R4.1 – Exchange Endpoint Responsive",
+      "passed": true,
+      "message": "Status: 401"
+    }
+  ],
+  "summary": {
+    "launchTestsPassed": 6,
+    "launchTestsTotal": 6,
+    "negativeTestsPassed": 5,
+    "negativeTestsTotal": 5,
+    "regressionTestsPassed": 1,
+    "regressionTestsTotal": 1
+  }
+}
