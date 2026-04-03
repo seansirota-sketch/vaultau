@@ -1,4 +1,3 @@
-console.log('✅ course.js LOADED - version with status filter');
 function nl2br(html){if(!html)return '';return html.replace(/\n/g,'<br>');}
 
 /**
@@ -193,26 +192,74 @@ async function _loadGeminiKey() {
   return _geminiKey;
 }
 
-/* ── APP STATE ──────────────────────────────────────────────── */
-let STATE = {
-  page:     'home',   // home | course | exam
-  courseId: null,
-  examId:   null,
-  tab:      'exams',  // exams | starred | ai-questions
-  fireUser: null,     // Firebase Auth user
-  userData: null,     // Firestore user doc { starredQuestions: [] }
+/* ── LTI entry bootstrap (feature-gated server-side) ───────── */
+const LTI_HANDOFF_PARAM = 'lti_handoff';
+let _ltiBootstrapResult = { attempted: false, success: false, error: '' };
 
-  // Local caches to avoid re-fetching
-  courses:  null,     // Array<Course>
-  exams:    {},       // { [courseId]: Array<Exam> }
-  examVotes: {},     // { [questionId]: { easy, medium, hard, unsolved } }
-  doneExams: [],     // Array<examId> — exams marked as done by user
-  inProgressExams: [], // Array<examId> — exams marked as in-progress by user
-  savedFilters: {},    // { [courseId]: { fy, fs, fm, fl } } — persists across exam navigation
-};
+function mapLtiErrorMessage(errorCode) {
+  if (errorCode === 'lti_entry_disabled') {
+    return 'אנחנו כרגע לא תומכים בהתחברות דרך המודל - הנושא נמצא בטיפול';
+  }
+  return errorCode || 'LTI exchange failed';
+}
 
-/* ── BOOTSTRAP ─────────────────────────────────────────────── */
-document.addEventListener('DOMContentLoaded', () => {
+async function maybeBootstrapLtiSession() {
+  const params = new URLSearchParams(window.location.search);
+  const handoffToken = params.get(LTI_HANDOFF_PARAM);
+  if (!handoffToken) return { attempted: false, success: false, error: '' };
+
+  try {
+    const res = await fetch('/.netlify/functions/lti-session-exchange', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ handoffToken })
+    });
+
+    const payload = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      const error = mapLtiErrorMessage(payload?.error);
+      return { attempted: true, success: false, error };
+    }
+    if (!payload?.customToken) {
+      return { attempted: true, success: false, error: 'Missing Firebase custom token from LTI exchange' };
+    }
+
+    await auth.signInWithCustomToken(payload.customToken);
+
+    // Remove one-time token from URL to avoid re-use or accidental sharing.
+    const cleanUrl = new URL(window.location.href);
+    cleanUrl.searchParams.delete(LTI_HANDOFF_PARAM);
+    window.history.replaceState(window.history.state, '', cleanUrl.pathname + cleanUrl.search + cleanUrl.hash);
+
+    return { attempted: true, success: true, error: '' };
+  } catch (err) {
+    console.error('LTI bootstrap failed:', err);
+    return { attempted: true, success: false, error: 'Network error while bootstrapping LTI session' };
+  }
+}
+
+function renderLtiFallback(message) {
+  const safeMessage = esc(message || 'LTI launch could not be completed.');
+  document.getElementById('app').innerHTML = `
+    <div class="auth-wrap">
+      <div class="auth-card" style="max-width:520px">
+        <div class="auth-logo">
+          <span class="icon">⚠️</span>
+          <h1>VaultAU</h1>
+          <p>ההתחברות דרך LTI נכשלה</p>
+        </div>
+        <div class="form-error" style="display:block">${safeMessage}</div>
+        <button class="btn btn-primary" style="width:100%;justify-content:center" onclick="renderAuth()">
+          המשך להתחברות רגילה ←
+        </button>
+      </div>
+    </div>
+  `;
+}
+
+async function initAppBootstrap() {
+  _ltiBootstrapResult = await maybeBootstrapLtiSession();
+
   auth.onAuthStateChanged(async (user) => {
     if (user) {
       // Anonymous users shouldn't reach here anymore, but clean up just in case
@@ -234,12 +281,35 @@ document.addEventListener('DOMContentLoaded', () => {
               uid:         user.uid,
               email:       email,
               displayName: user.displayName || '',
+              authOrigin:  'web',
+              authMethods: ['web'],
+              lastSignInMethod: 'web',
               createdAt:   firebase.firestore.FieldValue.serverTimestamp(),
               role:        'student',
             });
+          } else {
+            // User doc exists (possibly from LTI), update to track web login
+            const existingData = docSnap.data();
+            const rawAuthMethods = Array.isArray(existingData.authMethods) ? existingData.authMethods : [];
+            const newAuthMethods = rawAuthMethods
+              .flatMap((m) => Array.isArray(m) ? m : [m])
+              .filter((m) => typeof m === 'string');
+            if (!newAuthMethods.includes('web')) {
+              newAuthMethods.push('web');
+            }
+            const newAuthOrigin = newAuthMethods.includes('lti') && newAuthMethods.includes('web') 
+              ? 'both' 
+              : (newAuthMethods.includes('lti') ? 'lti' : 'web');
+            
+            await db.collection('users').doc(user.uid).update({
+              authMethods: newAuthMethods,
+              authOrigin: newAuthOrigin,
+              lastSignInMethod: 'web',
+              lastSignInAt: new Date(),
+            });
           }
         } catch (e) {
-          console.error('Failed to create user document on first login:', e);
+          console.error('Failed to create/update user document on login:', e);
         }
       }
       STATE.userData = await fetchUserData(user.uid, user.email);
@@ -275,11 +345,36 @@ document.addEventListener('DOMContentLoaded', () => {
       const urlParams = new URLSearchParams(window.location.search);
       if (urlParams.get('mode') === 'resetPassword' && urlParams.get('oobCode')) {
         renderResetPassword(urlParams.get('oobCode'));
+      } else if (_ltiBootstrapResult.attempted && !_ltiBootstrapResult.success) {
+        renderLtiFallback(_ltiBootstrapResult.error);
       } else {
         renderAuth();
       }
     }
   });
+}
+
+/* ── APP STATE ──────────────────────────────────────────────── */
+let STATE = {
+  page:     'home',   // home | course | exam
+  courseId: null,
+  examId:   null,
+  tab:      'exams',  // exams | starred | ai-questions
+  fireUser: null,     // Firebase Auth user
+  userData: null,     // Firestore user doc { starredQuestions: [] }
+
+  // Local caches to avoid re-fetching
+  courses:  null,     // Array<Course>
+  exams:    {},       // { [courseId]: Array<Exam> }
+  examVotes: {},     // { [questionId]: { easy, medium, hard, unsolved } }
+  doneExams: [],     // Array<examId> — exams marked as done by user
+  inProgressExams: [], // Array<examId> — exams marked as in-progress by user
+  savedFilters: {},    // { [courseId]: { fy, fs, fm, fl } } — persists across exam navigation
+};
+
+/* ── BOOTSTRAP ─────────────────────────────────────────────── */
+document.addEventListener('DOMContentLoaded', () => {
+  initAppBootstrap();
 
   // Browser Back / Forward
   window.addEventListener('popstate', async (e) => {
@@ -894,6 +989,34 @@ async function doLogout() {
 function renderNavbar() {
   const displayName = STATE.fireUser?.displayName ||
     STATE.fireUser?.email?.split('@')[0] || 'משתמש';
+  
+  // Get role and auth origin from STATE.userData
+  const userDoc = STATE.userData || {};
+  const ltiRole = userDoc.ltiRole || null;
+  const authOrigin = userDoc.authOrigin || 'web';
+  const authMethods = userDoc.authMethods || ['web'];
+  
+  // Build role badge HTML
+  let roleBadge = '';
+  if (ltiRole) {
+    const roleName = ltiRole === 'student' ? 'Learner' : 
+                     ltiRole === 'instructor' ? 'Instructor' : 
+                     ltiRole === 'admin' ? 'Admin' : 'User';
+    const roleColor = ltiRole === 'instructor' || ltiRole === 'admin' 
+      ? 'background:rgba(168,85,247,.15);color:#a855f7'
+      : 'background:rgba(99,102,241,.12);color:#6366f1';
+    roleBadge = `<span style="font-size:.65rem;padding:2px 6px;border-radius:8px;${roleColor};white-space:nowrap;margin-left:8px">${roleName}</span>`;
+  }
+  
+  // Build auth origin badge HTML
+  let authBadge = '';
+  if (authMethods && authMethods.length > 0) {
+    if (authMethods.length === 2 || authOrigin === 'both') {
+      authBadge = `<span style="font-size:.65rem;padding:2px 6px;border-radius:8px;background:rgba(34,197,94,.12);color:#22c55e;white-space:nowrap;margin-left:4px">Dual Auth</span>`;
+    } else if (authOrigin === 'lti') {
+      authBadge = `<span style="font-size:.65rem;padding:2px 6px;border-radius:8px;background:rgba(59,130,246,.12);color:#3b82f6;white-space:nowrap;margin-left:4px">via Moodle</span>`;
+    }
+  }
 
   document.getElementById('app').innerHTML = `
     <nav class="navbar">
@@ -904,7 +1027,11 @@ function renderNavbar() {
         <span id="navbar-quota-badge" style="font-size:.72rem;padding:2px 8px;border-radius:12px;background:rgba(255,255,255,.2);color:#fff;white-space:nowrap;cursor:default" title="מכסת יצירת שאלות יומית"></span>
         <div class="navbar-user">
           <div class="av">${displayName[0].toUpperCase()}</div>
-          <span>${esc(displayName)}</span>
+          <div style="display:flex;align-items:center">
+            <span>${esc(displayName)}</span>
+            ${roleBadge}
+            ${authBadge}
+          </div>
         </div>
         <button class="btn btn-ghost btn-sm" onclick="doLogout()">יציאה</button>
       </div>
@@ -1063,15 +1190,27 @@ async function acceptTerms() {
     if (!uid) throw new Error('לא מחובר');
 
     const now = firebase.firestore.FieldValue.serverTimestamp();
-    // Write directly with role+uid+email so this works as both CREATE (if
-    // the user doc wasn't persisted yet due to signup race) and UPDATE.
-    await db.collection('users').doc(uid).set({
-      acceptedTerms:   true,
+    // Normal path: update only safe fields allowed by Firestore rules.
+    await db.collection('users').doc(uid).update({
+      acceptedTerms: true,
       acceptedTermsAt: now,
-      role:  'student',
-      uid:   uid,
-      email: (STATE.fireUser.email || '').toLowerCase().trim(),
-    }, { merge: true });
+    }).catch(async (err) => {
+      // Rare fallback: if user doc does not exist yet, create a minimal doc
+      // that satisfies the create rule and includes the acceptance fields.
+      if (err?.code === 'not-found') {
+        await db.collection('users').doc(uid).set({
+          uid,
+          email: (STATE.fireUser.email || '').toLowerCase().trim(),
+          displayName: STATE.fireUser.displayName || '',
+          role: 'student',
+          acceptedTerms: true,
+          acceptedTermsAt: now,
+          createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+        });
+        return;
+      }
+      throw err;
+    });
     STATE.userData = { ...STATE.userData, acceptedTerms: true, acceptedTermsAt: new Date() };
 
     // Continue to normal app load

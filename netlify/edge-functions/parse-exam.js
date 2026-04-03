@@ -23,6 +23,29 @@ const CLAUDE_MODELS  = [
 const CLAUDE_MAX_TOKENS = 8192;
 
 const FIREBASE_PROJECT = 'eaxmbank';
+const ROLE_ALLOWED = new Set(['instructor', 'admin']);
+
+function normalizeRole(role) {
+  const value = String(role || '').toLowerCase();
+  if (value === 'administrator') return 'admin';
+  if (value === 'teacher' || value === 'staff') return 'instructor';
+  return value;
+}
+
+function roleFromCustomAttributes(customAttributes) {
+  if (!customAttributes) return null;
+  try {
+    const parsed = JSON.parse(customAttributes);
+    return normalizeRole(parsed?.ltiRole || parsed?.lti_role || parsed?.role || null);
+  } catch {
+    return null;
+  }
+}
+
+function roleFromFirestoreDoc(userDoc) {
+  const fields = userDoc?.fields || {};
+  return normalizeRole(fields?.ltiRole?.stringValue || fields?.role?.stringValue || null);
+}
 
 // ── Main handler ────────────────────────────────────────────
 export default async (request, _context) => {
@@ -75,20 +98,47 @@ export default async (request, _context) => {
       const verifyData = await verifyRes.json();
       if (!verifyData?.users?.length) return jsonResponse(401, { error: 'Unauthorized: user not found' }, request);
 
-      // Verify caller has admin role in Firestore
       const uid = verifyData.users[0].localId;
-      try {
-        const userDocRes = await fetch(
-          `https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT}/databases/(default)/documents/users/${uid}`,
-          { headers: { 'Authorization': `Bearer ${idToken}` } }
-        );
-        if (!userDocRes.ok) return jsonResponse(403, { error: 'Forbidden: unable to verify role' }, request);
-        const userDoc = await userDocRes.json();
-        if (userDoc?.fields?.role?.stringValue !== 'admin') {
-          return jsonResponse(403, { error: 'Forbidden: admin access required' }, request);
+      const claimRole = roleFromCustomAttributes(verifyData.users[0].customAttributes);
+
+      if (claimRole && !ROLE_ALLOWED.has(claimRole)) {
+        console.warn(JSON.stringify({
+          event: 'authz_denied',
+          endpoint: 'parse-exam',
+          uid,
+          role: claimRole,
+          reason: 'custom_claim_role_not_allowed',
+        }));
+        return jsonResponse(403, { error: 'Forbidden: instructor or admin role required' }, request);
+      }
+
+      if (claimRole && ROLE_ALLOWED.has(claimRole)) {
+        // Authorized via trusted token claims; skip Firestore role lookup.
+        console.log(`parse-exam: authz allow uid=${uid} role=${claimRole} source=claims`);
+      } else {
+        // Fallback role resolution from Firestore user profile (legacy accounts).
+        try {
+          const userDocRes = await fetch(
+            `https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT}/databases/(default)/documents/users/${uid}`,
+            { headers: { 'Authorization': `Bearer ${idToken}` } }
+          );
+          if (!userDocRes.ok) return jsonResponse(403, { error: 'Forbidden: unable to verify role' }, request);
+          const userDoc = await userDocRes.json();
+          const dbRole = roleFromFirestoreDoc(userDoc);
+          if (!ROLE_ALLOWED.has(dbRole)) {
+            console.warn(JSON.stringify({
+              event: 'authz_denied',
+              endpoint: 'parse-exam',
+              uid,
+              role: dbRole || 'unknown',
+              reason: 'firestore_role_not_allowed',
+            }));
+            return jsonResponse(403, { error: 'Forbidden: instructor or admin role required' }, request);
+          }
+          console.log(`parse-exam: authz allow uid=${uid} role=${dbRole} source=firestore`);
+        } catch (_roleErr) {
+          return jsonResponse(403, { error: 'Forbidden: role check failed' }, request);
         }
-      } catch (_roleErr) {
-        return jsonResponse(403, { error: 'Forbidden: role check failed' }, request);
       }
     } catch (_e) {
       return jsonResponse(401, { error: 'Unauthorized: token verification failed' }, request);
