@@ -23,6 +23,7 @@ const GEMINI_URL     = `https://generativelanguage.googleapis.com/v1beta/models/
 const CLAUDE_MODEL   = 'claude-sonnet-4-20250514';
 const FIREBASE_PROJECT = 'eaxmbank';
 const FIRESTORE_BASE   = `https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT}/databases/(default)/documents`;
+const ROLE_ALLOWED     = new Set(['instructor', 'admin']);
 
 const MAX_PROMPT_LENGTH   = 8000;   // characters
 const MAX_RETRIES         = 1;
@@ -39,6 +40,41 @@ function featureEnabled(name, fallback = true) {
   const val = Deno.env.get(name);
   if (val === undefined || val === null) return fallback;
   return val === 'true' || val === '1';
+}
+
+function normalizeRole(role) {
+  const value = String(role || '').toLowerCase();
+  if (value === 'administrator') return 'admin';
+  if (value === 'teacher' || value === 'staff') return 'instructor';
+  return value;
+}
+
+function roleFromCustomAttributes(customAttributes) {
+  if (!customAttributes) return null;
+  try {
+    const parsed = JSON.parse(customAttributes);
+    return normalizeRole(parsed?.ltiRole || parsed?.lti_role || parsed?.role || null);
+  } catch {
+    return null;
+  }
+}
+
+function roleFromFirestoreDoc(userDoc) {
+  const fields = userDoc?.fields || {};
+  return normalizeRole(fields?.ltiRole?.stringValue || fields?.role?.stringValue || null);
+}
+
+async function resolveCallerRole(uid, idToken, verifyDataUser) {
+  const claimRole = roleFromCustomAttributes(verifyDataUser?.customAttributes);
+  if (claimRole) return { role: claimRole, source: 'claims' };
+
+  const userDocRes = await fetch(
+    `${FIRESTORE_BASE}/users/${uid}`,
+    { headers: { 'Authorization': `Bearer ${idToken}` } }
+  );
+  if (!userDocRes.ok) return { role: null, source: 'firestore_error' };
+  const userDoc = await userDocRes.json();
+  return { role: roleFromFirestoreDoc(userDoc), source: 'firestore' };
 }
 
 // ── Main handler ────────────────────────────────────────────
@@ -59,6 +95,7 @@ export default async (request, _context) => {
   if (!firebaseWebApiKey) return jsonResponse(500, { error: 'Server misconfiguration: missing Firebase key' });
 
   let uid;
+  let verifyDataUser;
   try {
     const verifyRes = await fetch(
       `https://identitytoolkit.googleapis.com/v1/accounts:lookup?key=${firebaseWebApiKey}`,
@@ -67,12 +104,41 @@ export default async (request, _context) => {
     if (!verifyRes.ok) return jsonResponse(401, { error: 'Unauthorized: invalid or expired token' });
     const verifyData = await verifyRes.json();
     if (!verifyData?.users?.length) return jsonResponse(401, { error: 'Unauthorized: user not found' });
-    uid = verifyData.users[0].localId;
+    verifyDataUser = verifyData.users[0];
+    uid = verifyDataUser.localId;
   } catch {
     return jsonResponse(401, { error: 'Unauthorized: token verification failed' });
   }
 
   try {
+    // ── 1.5. Enforce role-based access (Phase 4) ─────────────
+    const { role, source } = await resolveCallerRole(uid, idToken, verifyDataUser);
+    if (!ROLE_ALLOWED.has(role)) {
+      console.warn(JSON.stringify({
+        event: 'authz_denied',
+        endpoint: 'generate-question',
+        uid,
+        role: role || 'unknown',
+        roleSource: source,
+        reason: 'role_not_allowed',
+      }));
+
+      // Log denied attempts to usage telemetry for operations visibility.
+      await logUsage(uid, idToken, {
+        api: 'none',
+        latencyMs: 0,
+        cached: false,
+        promptLength: 0,
+        responseLength: 0,
+        inputTokens: 0,
+        outputTokens: 0,
+        status: 'denied',
+        errorMessage: `Forbidden role: ${role || 'unknown'}`,
+      }).catch(() => {});
+
+      return jsonResponse(403, { error: 'Forbidden: instructor or admin role required' });
+    }
+
     // ── 2. Parse & validate input ───────────────────────────
     const body = await request.json();
     const { prompt } = body;
