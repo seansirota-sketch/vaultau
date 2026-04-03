@@ -331,8 +331,24 @@ exports.handler = async (event) => {
       uid,
       email,
       displayName,
-      role: 'student',
+      
+      // Auth Origin Tracking
+      authOrigin: 'lti',
+      authMethods: admin.firestore.FieldValue.arrayUnion(['lti']),
+      
+      // LTI-specific fields
+      ltiRole,
+      ltiIssuer: iss,
+      ltiSub: sub,
+      ltiStableUid: stableLtiUid(iss, sub),
       ltiLinked: true,
+      
+      // Timestamps
+      lastSignInAt: new Date(),
+      lastSignInMethod: 'lti',
+      currentCourseId: contextId || null,
+      currentCourseContext: claims.context_label || null,
+      
       updatedAt: new Date().toISOString(),
       createdAt: admin.firestore.FieldValue.serverTimestamp(),
     }, { merge: true });

@@ -275,12 +275,32 @@ async function initAppBootstrap() {
               uid:         user.uid,
               email:       email,
               displayName: user.displayName || '',
+              authOrigin:  'web',
+              authMethods: ['web'],
+              lastSignInMethod: 'web',
               createdAt:   firebase.firestore.FieldValue.serverTimestamp(),
               role:        'student',
             });
+          } else {
+            // User doc exists (possibly from LTI), update to track web login
+            const existingData = docSnap.data();
+            const newAuthMethods = existingData.authMethods || [];
+            if (!newAuthMethods.includes('web')) {
+              newAuthMethods.push('web');
+            }
+            const newAuthOrigin = newAuthMethods.includes('lti') && newAuthMethods.includes('web') 
+              ? 'both' 
+              : (newAuthMethods.includes('lti') ? 'lti' : 'web');
+            
+            await db.collection('users').doc(user.uid).update({
+              authMethods: newAuthMethods,
+              authOrigin: newAuthOrigin,
+              lastSignInMethod: 'web',
+              lastSignInAt: new Date(),
+            });
           }
         } catch (e) {
-          console.error('Failed to create user document on first login:', e);
+          console.error('Failed to create/update user document on login:', e);
         }
       }
       STATE.userData = await fetchUserData(user.uid, user.email);
@@ -960,6 +980,34 @@ async function doLogout() {
 function renderNavbar() {
   const displayName = STATE.fireUser?.displayName ||
     STATE.fireUser?.email?.split('@')[0] || 'משתמש';
+  
+  // Get role and auth origin from STATE.userData
+  const userDoc = STATE.userData || {};
+  const ltiRole = userDoc.ltiRole || null;
+  const authOrigin = userDoc.authOrigin || 'web';
+  const authMethods = userDoc.authMethods || ['web'];
+  
+  // Build role badge HTML
+  let roleBadge = '';
+  if (ltiRole) {
+    const roleName = ltiRole === 'student' ? 'Learner' : 
+                     ltiRole === 'instructor' ? 'Instructor' : 
+                     ltiRole === 'admin' ? 'Admin' : 'User';
+    const roleColor = ltiRole === 'instructor' || ltiRole === 'admin' 
+      ? 'background:rgba(168,85,247,.15);color:#a855f7'
+      : 'background:rgba(99,102,241,.12);color:#6366f1';
+    roleBadge = `<span style="font-size:.65rem;padding:2px 6px;border-radius:8px;${roleColor};white-space:nowrap;margin-left:8px">${roleName}</span>`;
+  }
+  
+  // Build auth origin badge HTML
+  let authBadge = '';
+  if (authMethods && authMethods.length > 0) {
+    if (authMethods.length === 2 || authOrigin === 'both') {
+      authBadge = `<span style="font-size:.65rem;padding:2px 6px;border-radius:8px;background:rgba(34,197,94,.12);color:#22c55e;white-space:nowrap;margin-left:4px">Dual Auth</span>`;
+    } else if (authOrigin === 'lti') {
+      authBadge = `<span style="font-size:.65rem;padding:2px 6px;border-radius:8px;background:rgba(59,130,246,.12);color:#3b82f6;white-space:nowrap;margin-left:4px">via Moodle</span>`;
+    }
+  }
 
   document.getElementById('app').innerHTML = `
     <nav class="navbar">
@@ -970,7 +1018,11 @@ function renderNavbar() {
         <span id="navbar-quota-badge" style="font-size:.72rem;padding:2px 8px;border-radius:12px;background:rgba(255,255,255,.2);color:#fff;white-space:nowrap;cursor:default" title="מכסת יצירת שאלות יומית"></span>
         <div class="navbar-user">
           <div class="av">${displayName[0].toUpperCase()}</div>
-          <span>${esc(displayName)}</span>
+          <div style="display:flex;align-items:center">
+            <span>${esc(displayName)}</span>
+            ${roleBadge}
+            ${authBadge}
+          </div>
         </div>
         <button class="btn btn-ghost btn-sm" onclick="doLogout()">יציאה</button>
       </div>
