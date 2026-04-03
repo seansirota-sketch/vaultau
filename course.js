@@ -196,6 +196,17 @@ async function _loadGeminiKey() {
 const LTI_HANDOFF_PARAM = 'lti_handoff';
 let _ltiBootstrapResult = { attempted: false, success: false, error: '' };
 
+function consumeLtiHandoffFromUrl() {
+  const currentUrl = new URL(window.location.href);
+  const handoffToken = currentUrl.searchParams.get(LTI_HANDOFF_PARAM);
+  if (!handoffToken) return '';
+
+  // Strip one-time token from the address bar immediately to avoid leaking it.
+  currentUrl.searchParams.delete(LTI_HANDOFF_PARAM);
+  window.history.replaceState(window.history.state, '', currentUrl.pathname + currentUrl.search + currentUrl.hash);
+  return handoffToken;
+}
+
 function mapLtiErrorMessage(errorCode) {
   if (errorCode === 'lti_entry_disabled') {
     return 'אנחנו כרגע לא תומכים בהתחברות דרך המודל - הנושא נמצא בטיפול';
@@ -204,8 +215,7 @@ function mapLtiErrorMessage(errorCode) {
 }
 
 async function maybeBootstrapLtiSession() {
-  const params = new URLSearchParams(window.location.search);
-  const handoffToken = params.get(LTI_HANDOFF_PARAM);
+  const handoffToken = consumeLtiHandoffFromUrl();
   if (!handoffToken) return { attempted: false, success: false, error: '' };
 
   try {
@@ -225,11 +235,6 @@ async function maybeBootstrapLtiSession() {
     }
 
     await auth.signInWithCustomToken(payload.customToken);
-
-    // Remove one-time token from URL to avoid re-use or accidental sharing.
-    const cleanUrl = new URL(window.location.href);
-    cleanUrl.searchParams.delete(LTI_HANDOFF_PARAM);
-    window.history.replaceState(window.history.state, '', cleanUrl.pathname + cleanUrl.search + cleanUrl.hash);
 
     return { attempted: true, success: true, error: '' };
   } catch (err) {
