@@ -284,7 +284,10 @@ async function initAppBootstrap() {
           } else {
             // User doc exists (possibly from LTI), update to track web login
             const existingData = docSnap.data();
-            const newAuthMethods = existingData.authMethods || [];
+            const rawAuthMethods = Array.isArray(existingData.authMethods) ? existingData.authMethods : [];
+            const newAuthMethods = rawAuthMethods
+              .flatMap((m) => Array.isArray(m) ? m : [m])
+              .filter((m) => typeof m === 'string');
             if (!newAuthMethods.includes('web')) {
               newAuthMethods.push('web');
             }

@@ -118,6 +118,10 @@ function parseBody(event) {
   }
 }
 
+function shouldExposeDebugError() {
+  return parseBool(process.env.LTI_DEBUG_ERRORS, false);
+}
+
 async function writeAudit(db, payload) {
   try {
     await db.collection('lti_launch_audit').add(payload);
@@ -254,7 +258,7 @@ exports.handler = async (event) => {
   }
 
   const firestore = firebaseAdmin.firestore();
-  const uid = stableLtiUid(iss, sub);
+  let uid = stableLtiUid(iss, sub);
   const email = claims.email ? String(claims.email).toLowerCase().trim() : null;
   const displayName = String(claims.name || claims.given_name || email || 'LTI User').trim();
 
@@ -314,6 +318,18 @@ exports.handler = async (event) => {
         });
         return;
       }
+
+      // If this email already belongs to a web user, attach LTI identity to that user.
+      if (err.code === 'auth/email-already-exists' && email) {
+        const existingUser = await firebaseAdmin.auth().getUserByEmail(email);
+        uid = existingUser.uid;
+        await firebaseAdmin.auth().updateUser(uid, {
+          displayName,
+          emailVerified: !!email,
+        });
+        return;
+      }
+
       throw err;
     });
 
@@ -334,7 +350,7 @@ exports.handler = async (event) => {
       
       // Auth Origin Tracking
       authOrigin: 'lti',
-      authMethods: admin.firestore.FieldValue.arrayUnion(['lti']),
+      authMethods: admin.firestore.FieldValue.arrayUnion('lti'),
       
       // LTI-specific fields
       ltiRole,
@@ -418,8 +434,12 @@ exports.handler = async (event) => {
 
     return {
       statusCode: 500,
-      headers: CORS,
-      body: JSON.stringify({ error: 'lti_exchange_error' }),
+      headers: { ...CORS, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        error: 'lti_exchange_error',
+        errorCode: err.code || null,
+        ...(shouldExposeDebugError() ? { errorMessage: err.message || null } : {}),
+      }),
     };
   }
 };
