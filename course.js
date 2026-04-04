@@ -309,8 +309,8 @@ async function doLtiFirstTimePasswordSetup() {
     await auth.currentUser.updatePassword(pass);
 
     // Continue to normal app flow
-    if (!STATE.userData?.acceptedTerms) {
-      renderTermsModal();
+    if (needsConsentGate(STATE.userData)) {
+      renderConsentModal();
       return;
     }
     checkAndShowSurvey();
@@ -328,6 +328,10 @@ async function doLtiFirstTimePasswordSetup() {
     errEl.classList.add('show');
     if (btn) { btn.disabled = false; btn.textContent = 'שמור סיסמה והמשך ←'; }
   }
+}
+
+function needsConsentGate(userData) {
+  return !userData?.acceptedTerms || userData?.analyticsConsent === undefined;
 }
 
 function renderLtiFallback(message) {
@@ -419,7 +423,7 @@ async function initAppBootstrap() {
       // ── 1. Consent check ───────────────────────────────────
       // Show if: new user (no terms) OR legacy user (terms accepted but
       // analyticsConsent not yet recorded — undefined means never shown modal)
-      if (!STATE.userData?.acceptedTerms || STATE.userData?.analyticsConsent === undefined) {
+      if (needsConsentGate(STATE.userData)) {
         renderConsentModal();
         return; // block until consent is submitted
       }
@@ -485,10 +489,10 @@ document.addEventListener('DOMContentLoaded', () => {
     STATE.page          = hs.page     || 'home';
     STATE.courseId      = hs.courseId || null;
     STATE.examId        = hs.examId   || null;
-    // Guard: if terms not accepted, block navigation and re-show modal
-    if (!STATE.userData?.acceptedTerms) {
+    // Guard: if consent is missing, block navigation and re-show modal
+    if (needsConsentGate(STATE.userData)) {
       document.getElementById('app').innerHTML = '';
-      renderTermsModal();
+      renderConsentModal();
       return;
     }
     renderNavbar();
@@ -1281,10 +1285,10 @@ function renderNavbar() {
 /* ── ROUTING ─────────────────────────────────────────────────── */
 function requireTermsAccepted() {
   // Central gate — called before ANY page render.
-  // If the user hasn't accepted terms yet, wipe the app and show the modal.
+  // If consent is missing, wipe the app and show the consent modal.
   // Returns true if access is allowed, false if blocked.
   if (!STATE.fireUser) return false;          // not logged in — auth handles this
-  if (STATE.userData?.acceptedTerms && STATE.userData?.analyticsConsent !== undefined) return true;
+  if (!needsConsentGate(STATE.userData)) return true;
   // Either terms not accepted or research consent not yet recorded
   document.getElementById('app').innerHTML = '';
   renderConsentModal();
