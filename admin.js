@@ -3264,6 +3264,70 @@ async function saveEditCourse() {
 }
 
 /* ══════════════════════════════════════════════════════════
+   LEGAL — Terms of Use Management
+══════════════════════════════════════════════════════════ */
+
+async function renderLegalSection() {
+  const el = document.getElementById('legal-current');
+  if (!el) return;
+  el.innerHTML = '<span style="color:var(--muted)">טוען...</span>';
+  try {
+    const doc  = await db.collection('settings').doc('global').get();
+    const data = doc.exists ? doc.data() : {};
+    const url  = data.termsUrl;
+    const updatedAt = data.termsUpdatedAt?.toDate?.();
+    if (url) {
+      const dateStr = updatedAt ? updatedAt.toLocaleDateString('he-IL') : 'לא ידוע';
+      el.innerHTML = `
+        <div style="display:flex;align-items:center;gap:1rem;flex-wrap:wrap">
+          <span>📄 <strong>terms-of-use.pdf</strong></span>
+          <span style="color:var(--muted);font-size:.82rem">עודכן: ${dateStr}</span>
+          <a href="${url}" target="_blank" rel="noopener noreferrer"
+             class="btn btn-secondary btn-sm">👁️ צפה בקובץ</a>
+        </div>`;
+    } else {
+      el.innerHTML = '<span style="color:var(--muted)">לא הועלה קובץ תנאי שימוש עדיין.</span>';
+    }
+  } catch (e) {
+    el.innerHTML = `<span style="color:var(--danger)">שגיאה: ${e.message}</span>`;
+  }
+}
+
+async function uploadTermsFile() {
+  const input    = document.getElementById('legal-file-input');
+  const statusEl = document.getElementById('legal-upload-status');
+  const file     = input?.files?.[0];
+  if (!file) { toast('נא לבחור קובץ PDF', 'error'); return; }
+  if (file.type !== 'application/pdf') { toast('יש להעלות קובץ PDF בלבד', 'error'); return; }
+  if (file.size > 10 * 1024 * 1024)   { toast('גודל הקובץ חייב להיות עד 10MB', 'error'); return; }
+
+  const uploadBtn = document.querySelector('#sec-legal .btn-primary');
+  if (uploadBtn) { uploadBtn.disabled = true; uploadBtn.textContent = 'מעלה...'; }
+  if (statusEl)  statusEl.textContent = '';
+
+  try {
+    const storageRef  = firebase.storage().ref('legal/terms-of-use.pdf');
+    const snapshot    = await storageRef.put(file);
+    const downloadUrl = await snapshot.ref.getDownloadURL();
+
+    await db.collection('settings').doc('global').set({
+      termsUrl:       downloadUrl,
+      termsUpdatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+    }, { merge: true });
+
+    toast('✅ קובץ תנאי השימוש עודכן בהצלחה', 'success');
+    input.value = '';
+    await renderLegalSection();
+  } catch (e) {
+    console.error('uploadTermsFile error:', e);
+    toast('שגיאה בהעלאה: ' + e.message, 'error');
+    if (statusEl) statusEl.textContent = 'שגיאה: ' + e.message;
+  } finally {
+    if (uploadBtn) { uploadBtn.disabled = false; uploadBtn.textContent = '⬆️ העלאה'; }
+  }
+}
+
+/* ══════════════════════════════════════════════════════════
    DIFFICULTY VOTE STATS  (admin)
 ══════════════════════════════════════════════════════════ */
 

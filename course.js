@@ -316,10 +316,12 @@ async function initAppBootstrap() {
       STATE.doneExams       = STATE.userData?.doneExams       || [];
       STATE.inProgressExams = STATE.userData?.inProgressExams || [];
 
-      // ── 1. Terms check ─────────────────────────────────────
-      if (!STATE.userData?.acceptedTerms) {
-        renderTermsModal();
-        return; // block until accepted
+      // ── 1. Consent check ───────────────────────────────────
+      // Show if: new user (no terms) OR legacy user (terms accepted but
+      // analyticsConsent not yet recorded — undefined means never shown modal)
+      if (!STATE.userData?.acceptedTerms || STATE.userData?.analyticsConsent === undefined) {
+        renderConsentModal();
+        return; // block until consent is submitted
       }
 
       // ── 2. Survey check ────────────────────────────────────
@@ -1047,10 +1049,10 @@ function requireTermsAccepted() {
   // If the user hasn't accepted terms yet, wipe the app and show the modal.
   // Returns true if access is allowed, false if blocked.
   if (!STATE.fireUser) return false;          // not logged in — auth handles this
-  if (STATE.userData?.acceptedTerms) return true; // already accepted — allow through
-  // Not accepted yet — replace entire app with the terms screen
-  document.getElementById('app').innerHTML = '';  // clear navbar first so no content leaks
-  renderTermsModal();
+  if (STATE.userData?.acceptedTerms && STATE.userData?.analyticsConsent !== undefined) return true;
+  // Either terms not accepted or research consent not yet recorded
+  document.getElementById('app').innerHTML = '';
+  renderConsentModal();
   return false;
 }
 
@@ -1107,82 +1109,85 @@ async function goExam(cId, eId) {
 }
 
 /* ══════════════════════════════════════════════════════════
-   TERMS MODAL  (pilot — shown once per user)
+   CONSENT MODAL  (two-tier: Terms required + Research opt-in)
 ══════════════════════════════════════════════════════════ */
 
-function renderTermsModal() {
+async function renderConsentModal() {
+  // Render modal immediately — terms link starts as plain bold text placeholder
   document.getElementById('app').innerHTML = `
-    <div id="terms-overlay" style="
+    <div id="consent-overlay" style="
       position:fixed;inset:0;background:rgba(0,0,0,.6);
       display:flex;align-items:center;justify-content:center;
       z-index:9999;padding:1rem">
-      <div style="
-        background:#fff;border-radius:16px;max-width:500px;width:100%;
-        padding:2rem 2rem 1.5rem;box-shadow:0 20px 60px rgba(0,0,0,.3);
-        direction:rtl;text-align:right">
+      <div class="consent-card">
 
-        <div style="text-align:center;margin-bottom:1.2rem">
-          <span style="font-size:2.2rem">📜</span>
-          <h2 style="margin:.5rem 0 .25rem;font-size:1.2rem;color:#1e293b">הצהרת סטודנט</h2>
-          <p style="font-size:.82rem;color:#64748b">יש לקרוא ולאשר לפני שימוש במערכת</p>
+        <div style="text-align:center;margin-bottom:1.4rem">
+          <span style="font-size:2.2rem">🛡️</span>
+          <h2 style="margin:.5rem 0 .2rem;font-size:1.2rem;color:#1e293b">פרטיות ותנאי שימוש</h2>
+          <p style="font-size:.82rem;color:#64748b;margin:0">אנא קרא/י ואשר/י לפני הכניסה למערכת</p>
         </div>
 
-        <div style="
-          background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;
-          padding:1rem 1.2rem;font-size:.88rem;line-height:1.8;color:#334155;
-          margin-bottom:1.2rem">
-          <p style="margin:0 0 .8rem">
-            בעת הכניסה לפלטפורמה, אני מצהיר/ה ומאשר/ת את התנאים הבאים:
-          </p>
-          <ul style="margin:0;padding-right:1.2rem;list-style:disc">
-            <li style="margin-bottom:.5rem"><strong>סטטוס אקדמי:</strong> אני סטודנט/ית מן המניין באוניברסיטת תל אביב.</li>
-            <li style="margin-bottom:.5rem"><strong>שימוש אישי:</strong> התכנים במאגר (מבחנים, פתרונות וסיכומים) מיועדים ללמידה אישית בלבד.</li>
-            <li style="margin-bottom:.5rem"><strong>זכויות יוצרים:</strong> ידוע לי כי החומרים מוגנים בזכויות יוצרים. אני מתחייב/ת שלא להפיץ, לפרסם, לשתף או למסחר אותם בשום פלטפורמה חיצונית או רשת חברתית.</li>
-            <li><strong>יושרה אקדמית:</strong> השימוש בחומרים ייעשה בהתאם לתקנון האוניברסיטה.</li>
-          </ul>
-        </div>
-
-        <!-- Checkbox confirmation -->
-        <label class="terms-check-label" id="terms-check-label">
-          <input type="checkbox" id="terms-check" onchange="onTermsCheckChange()">
-          <span class="terms-check-text">
-            קראתי, הבנתי ואני מסכים/ה לתנאים המפורטים לעיל
+        <label class="consent-check-label" id="consent-terms-label">
+          <input type="checkbox" id="cb-terms" onchange="onConsentChange()">
+          <span class="consent-check-text">
+            אני מסכים/ה ל<span id="consent-terms-link" style="font-weight:600">תנאי השימוש</span><span style="color:#dc2626;font-weight:700;margin-right:.15rem">*</span>
           </span>
         </label>
+        <div id="consent-terms-error" style="display:none;color:#dc2626;font-size:.78rem;margin-top:-.2rem;margin-bottom:.4rem;padding-right:.4rem">⚠️ חייב לאשר תנאי שימוש לפני הכניסה</div>
 
-        <button id="terms-accept-btn" class="btn btn-primary"
-          style="width:100%;justify-content:center;font-size:.95rem;padding:.75rem;margin-top:1rem"
-          disabled
-          onclick="acceptTerms()">
-          אני מאשר/ת ומתחייב/ת ✓
+        <div style="border-top:1px dashed #e2e8f0;margin:.75rem 0"></div>
+
+        <label class="consent-check-label" id="consent-research-label">
+          <input type="checkbox" id="cb-research" onchange="onConsentChange()">
+          <span class="consent-check-text">
+            אני מאשר/ת שיתוף של נתוני שימוש אנונימיים לטובת מחקר אקדמי ושיפור המערכת 🚀
+          </span>
+        </label>
+       
+        <button id="consent-submit-btn" class="btn btn-primary"
+          style="width:100%;justify-content:center;font-size:.95rem;padding:.75rem;margin-top:1.4rem"
+          onclick="submitConsent()">
+          המשך ✓
         </button>
 
-        <p style="text-align:center;font-size:.75rem;color:#94a3b8;margin-top:.9rem">
-          הצהרה זו נשמרת ואינה תופיע שוב
-        </p>
       </div>
     </div>`;
+
+  // Fetch termsUrl in background — upgrade plain-text link to clickable anchor
+  try {
+    const doc = await db.collection('settings').doc('global').get();
+    const termsUrl = doc.exists ? (doc.data()?.termsUrl || null) : null;
+    if (termsUrl) {
+      const el = document.getElementById('consent-terms-link');
+      if (el) el.outerHTML = `<a id="consent-terms-link" href="${termsUrl}" target="_blank" rel="noopener noreferrer" onclick="event.stopPropagation()" style="color:#3b82f6;text-decoration:underline;font-weight:600">תנאי השימוש</a>`;
+    }
+  } catch (_) { /* link stays as plain bold text — graceful fallback */ }
 }
 
-function onTermsCheckChange() {
-  const cb  = document.getElementById('terms-check');
-  const btn = document.getElementById('terms-accept-btn');
-  const lbl = document.getElementById('terms-check-label');
-  if (!cb || !btn) return;
-  btn.disabled = !cb.checked;
-  if (lbl) lbl.classList.toggle('terms-check-label--checked', cb.checked);
+function onConsentChange() {
+  const cbTerms = document.getElementById('cb-terms');
+  if (!cbTerms) return;
+  // Hide error message once user checks the box
+  if (cbTerms.checked) {
+    const errEl = document.getElementById('consent-terms-error');
+    if (errEl) errEl.style.display = 'none';
+    document.getElementById('consent-terms-label')?.classList.remove('consent-check-label--error');
+  }
 }
 
-async function acceptTerms() {
-  // Double-check the checkbox — never trust only the button's disabled state
-  const cb  = document.getElementById('terms-check');
-  if (!cb?.checked) {
-    document.getElementById('terms-check-label')?.classList.add('terms-check-label--error');
-    setTimeout(() => document.getElementById('terms-check-label')?.classList.remove('terms-check-label--error'), 1200);
+async function submitConsent() {
+  const cbTerms    = document.getElementById('cb-terms');
+  const cbResearch = document.getElementById('cb-research');
+  const termsOk    = cbTerms?.checked;
+  if (!termsOk) {
+    document.getElementById('consent-terms-label')?.classList.add('consent-check-label--error');
+    const errEl = document.getElementById('consent-terms-error');
+    if (errEl) errEl.style.display = 'block';
+    document.getElementById('consent-terms-label')?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
     return;
   }
 
-  const btn = document.getElementById('terms-accept-btn');
+  const btn = document.getElementById('consent-submit-btn');
   if (btn) { btn.disabled = true; btn.textContent = '💾 שומר...'; }
 
   try {
@@ -1190,37 +1195,48 @@ async function acceptTerms() {
     if (!uid) throw new Error('לא מחובר');
 
     const now = firebase.firestore.FieldValue.serverTimestamp();
-    // Normal path: update only safe fields allowed by Firestore rules.
-    await db.collection('users').doc(uid).update({
-      acceptedTerms: true,
-      acceptedTermsAt: now,
-    }).catch(async (err) => {
-      // Rare fallback: if user doc does not exist yet, create a minimal doc
-      // that satisfies the create rule and includes the acceptance fields.
+    const updates = {
+      analyticsConsent: cbResearch?.checked === true,
+      consentDate:      now,
+    };
+    // Only write acceptedTerms/acceptedTermsAt if not already set (legacy users)
+    if (!STATE.userData?.acceptedTerms) {
+      updates.acceptedTerms   = true;
+      updates.acceptedTermsAt = now;
+    }
+
+    await db.collection('users').doc(uid).set(updates, { merge: true }).catch(async (err) => {
       if (err?.code === 'not-found') {
         await db.collection('users').doc(uid).set({
           uid,
-          email: (STATE.fireUser.email || '').toLowerCase().trim(),
-          displayName: STATE.fireUser.displayName || '',
-          role: 'student',
-          acceptedTerms: true,
-          acceptedTermsAt: now,
-          createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+          email:            (STATE.fireUser.email || '').toLowerCase().trim(),
+          displayName:      STATE.fireUser.displayName || '',
+          role:             'student',
+          acceptedTerms:    true,
+          acceptedTermsAt:  now,
+          analyticsConsent: cbResearch?.checked === true,
+          consentDate:      now,
+          createdAt:        now,
         });
         return;
       }
       throw err;
     });
-    STATE.userData = { ...STATE.userData, acceptedTerms: true, acceptedTermsAt: new Date() };
 
-    // Continue to normal app load
+    STATE.userData = {
+      ...STATE.userData,
+      acceptedTerms:    true,
+      analyticsConsent: cbResearch?.checked === true,
+      consentDate:      new Date(),
+    };
+
     renderNavbar();
     history.replaceState({ page: 'home', courseId: null, examId: null }, '');
     renderPage();
 
   } catch (e) {
-    console.error('acceptTerms error:', e);
-    if (btn) { btn.disabled = false; btn.textContent = 'אני מאשר/ת ומתחייב/ת ✓'; }
+    console.error('submitConsent error:', e);
+    if (btn) { btn.disabled = false; btn.textContent = 'המשך ✓'; }
     alert('שגיאה בשמירת האישור: ' + e.message + '\nנסה שוב.');
   }
 }

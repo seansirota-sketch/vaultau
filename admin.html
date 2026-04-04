@@ -172,6 +172,10 @@
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2a4 4 0 0 1 4 4c0 1.95-2 3-2 8h-4c0-5-2-6.05-2-8a4 4 0 0 1 4-4z"/><line x1="10" y1="17" x2="14" y2="17"/><line x1="10" y1="20" x2="14" y2="20"/><line x1="11" y1="23" x2="13" y2="23"/></svg>
           ניטור AI
         </a>
+        <a id="nav-legal" onclick="showSection('legal'); renderLegalSection()">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+          תנאי שימוש
+        </a>
         <div class="nav-divider"></div>
           <a href="index.html">
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
@@ -678,6 +682,26 @@
             <div class="ac-title">👥 משתמשים מובילים (היום)</div>
             <div id="ai-top-users" style="padding:1rem"></div>
           </div>
+        </div>
+      </div>
+
+      <!-- ── LEGAL ────────────────────────────────────────────── -->
+      <div class="adm-section" id="sec-legal">
+        <div class="sec-header">
+          <h2 class="sec-title">📄 תנאי שימוש</h2>
+          <button class="btn btn-secondary btn-sm" onclick="renderLegalSection()">&#x1F504; רענן</button>
+        </div>
+        <div class="ac">
+          <div class="ac-title">קובץ תנאי שימוש פעיל</div>
+          <div id="legal-current" style="padding:1rem;color:var(--muted)">טוען...</div>
+        </div>
+        <div class="ac">
+          <div class="ac-title">העלאת קובץ חדש (PDF בלבד)</div>
+          <div style="display:flex;align-items:center;gap:1rem;padding:.5rem 0;flex-wrap:wrap">
+            <input type="file" id="legal-file-input" accept=".pdf" style="flex:1;min-width:0">
+            <button class="btn btn-primary" onclick="uploadTermsFile()">⬆️ העלאה</button>
+          </div>
+          <p id="legal-upload-status" style="font-size:.82rem;color:var(--muted);margin:.5rem 0 0"></p>
         </div>
       </div>
 
