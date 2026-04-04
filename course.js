@@ -243,6 +243,98 @@ async function maybeBootstrapLtiSession() {
   }
 }
 
+function renderLtiFirstTimePasswordSetup() {
+  const displayName = esc(STATE.fireUser?.displayName || STATE.userData?.displayName || '');
+  document.getElementById('app').innerHTML = `
+    <div class="auth-wrap">
+      <div class="auth-card">
+        <div class="auth-logo">
+          <span class="icon">🔑</span>
+          <h1>VaultAU</h1>
+          <p>ברוך הבא${displayName ? ', ' + displayName : ''}!</p>
+        </div>
+        <p style="color:var(--fg);font-size:.95rem;text-align:center;line-height:1.6;margin-bottom:1.5rem">
+          הגדר סיסמה כדי שתוכל להיכנס לאתר גם ישירות,<br>ללא Moodle.
+        </p>
+        <div id="lti-first-err" class="form-error"></div>
+        <div class="form-group">
+          <label>סיסמה</label>
+          <div class="pass-wrap">
+            <input id="lti-first-pass" type="password" placeholder="לפחות 6 תווים">
+            <button type="button" class="pass-eye" onclick="togglePassVis('lti-first-pass','lti-first-eye')"
+              id="lti-first-eye" aria-label="הצג סיסמה">${_eyeIcon(false)}</button>
+          </div>
+        </div>
+        <div class="form-group">
+          <label>אימות סיסמה</label>
+          <div class="pass-wrap">
+            <input id="lti-first-pass2" type="password" placeholder="הזן שוב את הסיסמה">
+            <button type="button" class="pass-eye" onclick="togglePassVis('lti-first-pass2','lti-first-eye2')"
+              id="lti-first-eye2" aria-label="הצג סיסמה">${_eyeIcon(false)}</button>
+          </div>
+        </div>
+        <button id="lti-first-btn" class="btn btn-primary" style="width:100%;justify-content:center"
+          onclick="doLtiFirstTimePasswordSetup()">שמור סיסמה והמשך ←</button>
+      </div>
+    </div>
+  `;
+  document.getElementById('lti-first-pass2')?.addEventListener('keydown', e => {
+    if (e.key === 'Enter') doLtiFirstTimePasswordSetup();
+  });
+  document.getElementById('lti-first-pass')?.focus();
+}
+
+async function doLtiFirstTimePasswordSetup() {
+  const pass  = document.getElementById('lti-first-pass').value;
+  const pass2 = document.getElementById('lti-first-pass2').value;
+  const errEl = document.getElementById('lti-first-err');
+  errEl.classList.remove('show');
+  errEl.textContent = '';
+
+  if (!pass || !pass2) {
+    errEl.textContent = 'נא למלא את כל השדות';
+    errEl.classList.add('show');
+    return;
+  }
+  if (pass.length < 6) {
+    errEl.textContent = 'סיסמה חייבת להכיל לפחות 6 תווים';
+    errEl.classList.add('show');
+    return;
+  }
+  if (pass !== pass2) {
+    errEl.textContent = 'הסיסמאות לא תואמות';
+    errEl.classList.add('show');
+    return;
+  }
+
+  const btn = document.getElementById('lti-first-btn');
+  if (btn) { btn.disabled = true; btn.textContent = 'שומר...'; }
+
+  try {
+    await auth.currentUser.updatePassword(pass);
+
+    // Continue to normal app flow
+    if (!STATE.userData?.acceptedTerms) {
+      renderTermsModal();
+      return;
+    }
+    checkAndShowSurvey();
+    renderNavbar();
+    _fetchInitialQuota();
+    _cleanupOrphanedCache();
+    history.replaceState({ page: 'home', courseId: null, examId: null }, '');
+    renderPage();
+  } catch (e) {
+    const messages = {
+      'auth/weak-password':        'הסיסמה חלשה מדי — נסה סיסמה חזקה יותר',
+      'auth/requires-recent-login': 'תוקף הסשן פג — נסה שוב מ-Moodle',
+    };
+    errEl.textContent = messages[e.code] || ('שגיאה: ' + e.message);
+    errEl.classList.add('show');
+    if (btn) { btn.disabled = false; btn.textContent = 'שמור סיסמה והמשך ←'; }
+  }
+}
+
 function renderLtiFallback(message) {
   const safeMessage = esc(message || 'LTI launch could not be completed.');
   document.getElementById('app').innerHTML = `
@@ -320,6 +412,14 @@ async function initAppBootstrap() {
       STATE.userData = await fetchUserData(user.uid, user.email);
       STATE.doneExams       = STATE.userData?.doneExams       || [];
       STATE.inProgressExams = STATE.userData?.inProgressExams || [];
+
+      // ── 0. First-time LTI password setup ───────────────────
+      // Show password setup if: user arrived via LTI this session AND has no password yet
+      const hasPasswordProvider = user.providerData.some(p => p.providerId === 'password');
+      if (_ltiBootstrapResult.attempted && _ltiBootstrapResult.success && !hasPasswordProvider) {
+        renderLtiFirstTimePasswordSetup();
+        return;
+      }
 
       // ── 1. Terms check ─────────────────────────────────────
       if (!STATE.userData?.acceptedTerms) {
