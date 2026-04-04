@@ -61,8 +61,8 @@ service cloud.firestore {
       allow create: if isLoggedIn()
         && request.resource.data.uid == request.auth.uid
         && request.resource.data.timestamp == request.time
-        && request.resource.data.type is string
-        && request.resource.data.type.size() < 100
+        && request.resource.data.event is string
+        && request.resource.data.event.size() < 100
         && request.resource.data.payload is map
         && request.resource.data.payload.size() <= 10
         && request.resource.data.expiresAt is timestamp;
@@ -86,10 +86,10 @@ service cloud.firestore {
       allow delete: if isAdmin();
     }
 
-    // CHANGED: read opened to isLoggedIn() so kill switch and survey checks work
-    // for non-admin users. Write remains admin-only.
+    // Allow non-admin users to read only public runtime settings in global doc.
+    // Keep sensitive docs (for example api_keys) admin-only.
     match /settings/{docId} {
-      allow read: if isLoggedIn();
+      allow read: if isAdmin() || (isLoggedIn() && docId == 'global');
       allow write: if isAdmin();
     }
 
