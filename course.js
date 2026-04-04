@@ -732,6 +732,143 @@ function authErr(msg) {
   e.classList.add('show');
 }
 
+/* ── LTI Password Setup Modal ──────────────────────────── */
+function renderLtiPasswordSetupModal() {
+  const container = document.getElementById('app');
+  if (!container) return;
+  
+  const modalHtml = `
+    <div class="auth-wrap">
+      <div class="auth-card">
+        <div class="auth-logo">
+          <span class="icon">🔗</span>
+          <h1>VaultAU</h1>
+          <p>קישור חשבון Moodle לאתר</p>
+        </div>
+        <div id="lti-auth-err" class="form-error"></div>
+        <div id="lti-setup-form">
+          <p style="color:var(--fg);font-size:.95rem;margin-bottom:1.5rem;text-align:center;line-height:1.5">
+            נמצא חשבון Moodle עם הכתובת <strong>${esc(_ltiLinkingState.email)}</strong>.<br>
+            הגדר סיסמה כדי להתחבר דרך האתר.
+          </p>
+          <div class="form-group">
+            <label>סיסמה חדשה</label>
+            <div class="pass-wrap">
+              <input id="lti-pass" type="password" placeholder="לפחות 6 תווים">
+              <button type="button" class="pass-eye" onclick="togglePassVis('lti-pass','lti-eye')"
+                title="הצג / הסתר סיסמה" id="lti-eye" aria-label="הצג סיסמה">
+                ${_eyeIcon(false)}
+              </button>
+            </div>
+          </div>
+          <div class="form-group">
+            <label>אימות סיסמה</label>
+            <div class="pass-wrap">
+              <input id="lti-pass2" type="password" placeholder="הזן שוב את הסיסמה">
+              <button type="button" class="pass-eye" onclick="togglePassVis('lti-pass2','lti-eye2')"
+                title="הצג / הסתר סיסמה" id="lti-eye2" aria-label="הצג סיסמה">
+                ${_eyeIcon(false)}
+              </button>
+            </div>
+          </div>
+          <button id="lti-setup-btn" class="btn btn-primary" style="width:100%;justify-content:center">קישור חשבון ←</button>
+          <button id="lti-cancel-btn" class="btn" style="width:100%;justify-content:center;margin-top:.5rem">ביטול</button>
+        </div>
+      </div>
+    </div>
+  `;
+  
+  container.innerHTML = modalHtml;
+  document.getElementById('lti-setup-btn')?.addEventListener('click', () => doLtiPasswordSetup());
+  document.getElementById('lti-cancel-btn')?.addEventListener('click', () => {
+    window.location.reload();
+  });
+  document.getElementById('lti-pass2')?.addEventListener('keydown', e => {
+    if (e.key === 'Enter') doLtiPasswordSetup();
+  });
+}
+
+async function doLtiPasswordSetup() {
+  const pass  = document.getElementById('lti-pass').value;
+  const pass2 = document.getElementById('lti-pass2').value;
+  const errEl = document.getElementById('lti-auth-err');
+  errEl.classList.remove('show');
+  errEl.textContent = '';
+
+  if (!pass || !pass2) {
+    errEl.textContent = 'נא למלא את כל השדות';
+    errEl.classList.add('show');
+    return;
+  }
+  if (pass.length < 6) {
+    errEl.textContent = 'סיסמה חייבת להכיל לפחות 6 תווים';
+    errEl.classList.add('show');
+    return;
+  }
+  if (pass !== pass2) {
+    errEl.textContent = 'הסיסמאות לא תואמות';
+    errEl.classList.add('show');
+    return;
+  }
+
+  const btn = document.getElementById('lti-setup-btn');
+  if (btn) { btn.disabled = true; btn.textContent = 'קושר...'; }
+  authBusy(true);
+
+  try {
+    // Create a new Firebase auth account with email+password
+    const cred = await auth.createUserWithEmailAndPassword(
+      _ltiLinkingState.email,
+      pass
+    );
+    const newUid = cred.user.uid;
+
+    // ── Update the Firestore user doc to link both auth methods ──
+    const ltiUid = _ltiLinkingState.ltiUid;
+    
+    // Fetch existing doc data
+    const existingDocSnap = await db.collection('users').doc(ltiUid).get();
+    if (existingDocSnap.exists) {
+      const existingData = existingDocSnap.data();
+      const rawAuthMethods = Array.isArray(existingData.authMethods) ? existingData.authMethods : [];
+      const newAuthMethods = rawAuthMethods
+        .flatMap((m) => Array.isArray(m) ? m : [m])
+        .filter((m) => typeof m === 'string');
+      if (!newAuthMethods.includes('web')) {
+        newAuthMethods.push('web');
+      }
+      const newAuthOrigin = newAuthMethods.length > 1 ? 'both' : 'lti';
+
+      // Update the doc with new auth tracking
+      await db.collection('users').doc(ltiUid).update({
+        authMethods: newAuthMethods,
+        authOrigin: newAuthOrigin,
+        lastSignInMethod: 'web',
+        lastSignInAt: new Date(),
+      });
+    }
+
+    // Clear state
+    _ltiLinkingState.email = null;
+    _ltiLinkingState.pass = null;
+    _ltiLinkingState.ltiUid = null;
+
+    // User is authenticated via onAuthStateChanged
+    authBusy(false);
+
+  } catch (e) {
+    const messages = {
+      'auth/email-already-in-use': 'אימייל כבר קיים בחשבון אחר',
+      'auth/invalid-email':        'פורמט אימייל לא תקין',
+      'auth/weak-password':        'הסיסמה חלשה מדי',
+    };
+    errEl.textContent = messages[e.code] || ('שגיאה בקישור החשבון: ' + e.message);
+    errEl.classList.add('show');
+    if (btn) { btn.disabled = false; btn.textContent = 'קישור חשבון ←'; }
+    authBusy(false);
+  }
+}
+
 /* ── Eye SVG helper ─────────────────────────────────────── */
 function _eyeIcon(visible) {
   return visible
@@ -780,6 +917,29 @@ async function doLogin() {
     await auth.signInWithEmailAndPassword(email, pass);
     // onAuthStateChanged will handle the authorized flow
   } catch (e) {
+    // Check if this is an email-not-found scenario and a Moodle account exists
+    if (['auth/user-not-found', 'auth/invalid-login-credentials', 'auth/invalid-credential'].includes(e.code)) {
+      try {
+        // Query for existing user doc by email (could be from Moodle)
+        const usersSnap = await db.collection('users').where('email', '==', email).limit(1).get();
+        if (!usersSnap.empty) {
+          const ltiUserDoc = usersSnap.docs[0];
+          const ltiUserData = ltiUserDoc.data();
+          // If user has LTI auth, offer to set password for web access
+          if (Array.isArray(ltiUserData.authMethods) && ltiUserData.authMethods.includes('lti')) {
+            authBusy(false);
+            _ltiLinkingState.email = email;
+            _ltiLinkingState.pass = pass;
+            _ltiLinkingState.ltiUid = ltiUserDoc.id;
+            renderLtiPasswordSetupModal();
+            return;
+          }
+        }
+      } catch (queryErr) {
+        console.warn('Failed to check for existing email:', queryErr);
+      }
+    }
+
     const messages = {
       // auth/user-not-found is no longer emitted by newer Firebase SDK versions.
       // Kept here for emulator / legacy SDK compatibility only.
@@ -806,6 +966,13 @@ const _verifyState = {
   name: null,
   pass: null,
   resendCooldown: false,
+};
+
+/* ── LTI account linking state ──────────────────────────── */
+const _ltiLinkingState = {
+  email: null,
+  pass: null,
+  ltiUid: null,
 };
 
 const ALLOWED_EMAIL_DOMAIN = 'mail.tau.ac.il';
