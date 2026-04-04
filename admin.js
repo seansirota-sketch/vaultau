@@ -67,6 +67,11 @@ const CLAUDE_MODELS_DISPLAY = [
   { id: 'claude-haiku-4-5-20251001',  name: 'Haiku' },
 ];
 
+const VISION_RENDER_PRESETS = {
+  single: { maxPages: 12, scale: 1.6, jpegQuality: 0.82 },
+  bulk: { maxPages: 8, scale: 1.25, jpegQuality: 0.70 },
+};
+
 function abortParsing() {
   if (_parseAbortController) {
     _parseAbortController.abort();
@@ -954,6 +959,7 @@ async function startBulkUpload() {
         courseId,
         filenameHint: file.name,
         titleHint: file.name,
+        source: 'bulk',
       });
       if (!result.questions) result = { questions: result, metadata: null };
 
@@ -1492,7 +1498,11 @@ function _lecturerMatchScore(detected, known) {
  * Render PDF pages to base64 JPEG images using pdf.js canvas.
  * This replicates app.py's image-based Vision approach in the browser.
  */
-async function renderPdfToBase64Images(file, maxPages = 15) {
+async function renderPdfToBase64Images(file, options = {}) {
+  const maxPages = Number.isFinite(options.maxPages) ? options.maxPages : VISION_RENDER_PRESETS.single.maxPages;
+  const scale = Number.isFinite(options.scale) ? options.scale : VISION_RENDER_PRESETS.single.scale;
+  const jpegQuality = Number.isFinite(options.jpegQuality) ? options.jpegQuality : VISION_RENDER_PRESETS.single.jpegQuality;
+
   if (!pdfjsLib) initPdfJs();
   if (!pdfjsLib) throw new Error('pdf.js לא נטען');
 
@@ -1504,7 +1514,6 @@ async function renderPdfToBase64Images(file, maxPages = 15) {
   for (let i = 1; i <= total; i++) {
     showSpinner(`🖼️ מעבד עמוד ${i}/${total}...`);
     const page    = await pdf.getPage(i);
-    const scale   = 2.0;                  // ~200 DPI equivalent
     const viewport = page.getViewport({ scale });
     const canvas  = document.createElement('canvas');
     canvas.width  = viewport.width;
@@ -1512,7 +1521,7 @@ async function renderPdfToBase64Images(file, maxPages = 15) {
     const ctx = canvas.getContext('2d');
     await page.render({ canvasContext: ctx, viewport }).promise;
     // toDataURL gives "data:image/jpeg;base64,..."
-    const dataUrl = canvas.toDataURL('image/jpeg', 0.90);
+    const dataUrl = canvas.toDataURL('image/jpeg', jpegQuality);
     images.push(dataUrl.split(',')[1]);   // strip the prefix, keep base64 only
   }
   return images;
@@ -1524,12 +1533,13 @@ async function renderPdfToBase64Images(file, maxPages = 15) {
  */
 async function parsePdfWithSharedPipeline(file, hooks = {}, parseOpts = {}) {
   const { onRenderStart, onVisionStart, onFallbackStart } = hooks;
+  const preset = parseOpts.source === 'bulk' ? VISION_RENDER_PRESETS.bulk : VISION_RENDER_PRESETS.single;
 
   if (onRenderStart) onRenderStart();
 
   let images;
   try {
-    images = await renderPdfToBase64Images(file, 15);
+    images = await renderPdfToBase64Images(file, preset);
   } catch (renderErr) {
     // pdf.js not available or render failed — fall back to base64 PDF mode
     console.warn('Vision render failed, falling back to PDF base64 mode:', renderErr.message);

@@ -20,7 +20,8 @@ const CLAUDE_MODELS  = [
   'claude-sonnet-4-6',
   'claude-haiku-4-5-20251001',
 ];
-const CLAUDE_MAX_TOKENS = 8192;
+const CLAUDE_MAX_TOKENS_DEFAULT = Number(Deno.env.get('CLAUDE_MAX_TOKENS') || 4096);
+const CLAUDE_FETCH_TIMEOUT_MS = Number(Deno.env.get('CLAUDE_FETCH_TIMEOUT_MS') || 55000);
 
 const FIREBASE_PROJECT = 'eaxmbank';
 const ROLE_ALLOWED = new Set(['instructor', 'admin']);
@@ -45,6 +46,14 @@ function roleFromCustomAttributes(customAttributes) {
 function roleFromFirestoreDoc(userDoc) {
   const fields = userDoc?.fields || {};
   return normalizeRole(fields?.ltiRole?.stringValue || fields?.role?.stringValue || null);
+}
+
+function maxTokensForModel(model) {
+  // Keep slower models tighter to reduce timeout risk on long parses.
+  if (model.includes('opus') || model.includes('sonnet')) {
+    return Math.min(CLAUDE_MAX_TOKENS_DEFAULT, 4096);
+  }
+  return CLAUDE_MAX_TOKENS_DEFAULT;
 }
 
 // ── Main handler ────────────────────────────────────────────
@@ -175,22 +184,31 @@ export default async (request, _context) => {
     try {
       const requestBody = JSON.stringify({
         model,
-        max_tokens: CLAUDE_MAX_TOKENS,
+        max_tokens: maxTokensForModel(model),
         messages,
       });
 
       const bodySizeMB = (requestBody.length / 1_048_576).toFixed(2);
       console.log(`parse-exam: trying ${model} (${bodySizeMB}MB, attempt ${i + 1}/${modelsToTry.length})`);
 
-      const response = await fetch(claudeApiUrl, {
-        method: 'POST',
-        headers: {
-          'Content-Type':      'application/json',
-          'x-api-key':         apiKey,
-          'anthropic-version': '2023-06-01',
-        },
-        body: requestBody,
-      });
+      const timeoutController = new AbortController();
+      const timeoutId = setTimeout(() => timeoutController.abort('upstream_timeout'), CLAUDE_FETCH_TIMEOUT_MS);
+
+      let response;
+      try {
+        response = await fetch(claudeApiUrl, {
+          method: 'POST',
+          headers: {
+            'Content-Type':      'application/json',
+            'x-api-key':         apiKey,
+            'anthropic-version': '2023-06-01',
+          },
+          body: requestBody,
+          signal: timeoutController.signal,
+        });
+      } finally {
+        clearTimeout(timeoutId);
+      }
 
       if (!response.ok) {
         const errText = await response.text().catch(() => '');
@@ -244,6 +262,14 @@ export default async (request, _context) => {
       }, request);
 
     } catch (err) {
+      if (err?.name === 'AbortError') {
+        const timeoutError = `${model}: upstream_timeout`;
+        lastErr = timeoutError;
+        if (requestedModel) {
+          return jsonResponse(504, { error: timeoutError, retryable: true }, request);
+        }
+        continue;
+      }
       console.warn(`⚠️ ${model}: ${err.message}`);
       lastErr = err.message;
       if (requestedModel) {
