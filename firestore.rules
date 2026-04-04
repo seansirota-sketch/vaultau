@@ -25,30 +25,53 @@ service cloud.firestore {
       allow read: if isAdmin() || (isLoggedIn() && request.auth.uid == userId);
 
       // Students can update only safe fields on their own document.
-      // The critical fields role, uid, and email are BLOCKED from self-writes.
+      // role, uid, email, and analyticsConsent are BLOCKED from self-admin-writes.
       allow update: if isLoggedIn()
         && request.auth.uid == userId
         && !request.resource.data.diff(resource.data).affectedKeys()
             .hasAny(['role', 'uid', 'email']);
 
-      // Admins can update any user document (they need to manage roles)
-      allow update: if isAdmin();
+      // Admins can update any user document EXCEPT analyticsConsent (IRB protection —
+      // only the user themselves can grant or revoke research consent).
+      allow update: if isAdmin()
+        && !request.resource.data.diff(resource.data).affectedKeys()
+            .hasAny(['analyticsConsent']);
 
       // New user document creation — force role to 'student' so nobody
-      // can create their doc with role:'admin' on first login
+      // can create their doc with role:'admin' on first login.
       allow create: if isLoggedIn()
         && request.auth.uid == userId
         && request.resource.data.role == 'student';
 
-      // AI task results written by background function (Admin SDK)
-      // Users can only read their own tasks
+      // AI task results written by background function (Admin SDK).
       match /ai_tasks/{taskId} {
         allow read: if isLoggedIn() && request.auth.uid == userId;
       }
+
+      // Research grade submissions — student full CRUD on own, admin read-only.
+      match /user_grades/{gradeId} {
+        allow read, create, update, delete: if isLoggedIn() && request.auth.uid == userId;
+        allow read: if isAdmin();
+      }
     }
 
-    // FIX 1: block delete & raw set — votes are aggregate counters
-    // Only allow known difficulty keys (easy, medium, hard, unsolved)
+    // Analytics events — append-only with strict server-side validation.
+    // uid ownership enforced, server timestamp required, payload bounded.
+    match /analytics_events/{eventId} {
+      allow create: if isLoggedIn()
+        && request.resource.data.uid == request.auth.uid
+        && request.resource.data.timestamp == request.time
+        && request.resource.data.type is string
+        && request.resource.data.type.size() < 100
+        && request.resource.data.payload is map
+        && request.resource.data.payload.size() <= 10
+        && request.resource.data.expiresAt is timestamp;
+      allow read, list: if isAdmin();
+      allow delete: if isAdmin();
+    }
+
+    // block delete & raw set — votes are aggregate counters.
+    // Only allow known difficulty keys (easy, medium, hard, unsolved).
     match /questionVotes/{questionId} {
       allow read: if isLoggedIn();
       allow create, update: if isLoggedIn()
@@ -56,30 +79,32 @@ service cloud.firestore {
       allow delete: if isAdmin();
     }
 
-    // FIX 2: block delete — prevent cache wiping; create/update needed client-side
+    // block delete — prevent cache wiping; create/update needed client-side.
     match /ai_questions_cache/{docId} {
       allow read: if isLoggedIn();
       allow create, update: if isLoggedIn();
       allow delete: if isAdmin();
     }
 
+    // Allow non-admin users to read only public runtime settings in global doc.
+    // Keep sensitive docs (for example api_keys) admin-only.
     match /settings/{docId} {
-      allow read: if isAdmin();
+      allow read: if isAdmin() || (isLoggedIn() && docId == 'global');
       allow write: if isAdmin();
     }
 
-    // FIX 4: enforce userId matches authenticated user to prevent forged reports
+    // enforce userId matches authenticated user to prevent forged reports.
     match /reports/{reportId} {
       allow create: if isLoggedIn() && request.resource.data.userId == request.auth.uid;
       allow read, list, update, delete: if isAdmin();
     }
-    
-    // Per-user AI generation quota (daily/weekly counters)
+
+    // Per-user AI generation quota (daily/weekly counters).
     match /user_quotas/{userId} {
       allow read: if isLoggedIn() && request.auth.uid == userId;
       allow create: if isLoggedIn() && request.auth.uid == userId;
-      // FIX 3: day-rollover must reset requests_today to exactly 1
-      // to prevent quota bypass by repeatedly changing date_key with counter=0
+      // day-rollover must reset requests_today to exactly 1
+      // to prevent quota bypass by repeatedly changing date_key with counter=0.
       allow update: if isLoggedIn() && request.auth.uid == userId
         && (
           (request.resource.data.date_key == resource.data.date_key
@@ -90,17 +115,15 @@ service cloud.firestore {
         );
     }
 
-    // AI generation usage logs (analytics / cost tracking)
+    // AI generation usage logs (analytics / cost tracking).
     match /generate_usage/{docId} {
       allow create: if isLoggedIn()
         && request.resource.data.uid == request.auth.uid;
       allow read: if isAdmin();
     }
 
-    // FIX 5: Question quality ratings (thumbs up/down)
+    // Question quality ratings (thumbs up/down).
     // uid ownership enforced on both create and update.
-    // NOTE: one-rating-per-question cannot be fully enforced by rules alone;
-    // full enforcement requires /question_ratings/{userId}/{questionId} subcollection.
     match /question_ratings/{docId} {
       allow create: if isLoggedIn()
         && request.resource.data.uid == request.auth.uid;
@@ -110,7 +133,7 @@ service cloud.firestore {
       allow read: if isAdmin();
     }
 
-    // Approved parse examples used for few-shot prompt injection.
+    // Approved parse examples used for few-shot prompting.
     match /parse_examples/{docId} {
       allow read, write: if isAdmin();
     }
@@ -120,7 +143,7 @@ service cloud.firestore {
       allow read, write: if isAdmin();
     }
 
-    // LTI identity links and launch diagnostics are operational/security records.
+    // LTI identity links and launch diagnostics.
     match /lti_users/{docId} {
       allow read, write: if isAdmin();
     }

@@ -1486,3 +1486,58 @@ mjx-container { direction: ltr; }
 .ai-q-card .ai-q-actions {
   display: flex; gap: .5rem; justify-content: flex-end; margin-top: .75rem;
 }
+
+/* ── Consent Modal ────────────────────────────────────────────── */
+.consent-card {
+  background: #fff;
+  border-radius: 16px;
+  max-width: 500px;
+  width: 100%;
+  padding: 2rem 2rem 1.5rem;
+  box-shadow: 0 20px 60px rgba(0,0,0,.3);
+  direction: rtl;
+  text-align: right;
+}
+.consent-check-label {
+  display: flex;
+  align-items: flex-start;
+  gap: .7rem;
+  padding: .75rem 1rem;
+  border-radius: 10px;
+  border: 1.5px solid #e2e8f0;
+  cursor: pointer;
+  transition: border-color .15s, background .15s;
+  margin-bottom: .5rem;
+  user-select: none;
+}
+.consent-check-label input[type="checkbox"] {
+  margin-top: .2rem;
+  flex-shrink: 0;
+  width: 1.1rem;
+  height: 1.1rem;
+  accent-color: var(--primary, #6c63ff);
+  cursor: pointer;
+}
+.consent-check-label input[type="checkbox"]:disabled {
+  cursor: default;
+  opacity: .7;
+}
+.consent-check-label--checked {
+  border-color: var(--primary, #6c63ff);
+  background: #f5f3ff;
+}
+.consent-check-label--error {
+  border-color: #dc2626;
+  background: #fef2f2;
+  animation: consent-shake .3s ease;
+}
+.consent-check-text {
+  font-size: .88rem;
+  line-height: 1.6;
+  color: #334155;
+}
+@keyframes consent-shake {
+  0%, 100% { transform: translateX(0); }
+  25%       { transform: translateX(-5px); }
+  75%       { transform: translateX(5px); }
+}

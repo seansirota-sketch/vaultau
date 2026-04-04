@@ -86,7 +86,8 @@ const ALLOWED_USER_FIELDS = [
   'displayName', 'starredQuestions', 'difficultyVotes',
   'acceptedTerms', 'acceptedTermsAt', 'surveyDone',
   'completedExams', 'doneExams', 'inProgressExams',
-  'copyCount', 'lastCopyReset', 'createdAt', 'savedCourses', 'aiQuestions'
+  'copyCount', 'lastCopyReset', 'createdAt', 'savedCourses', 'aiQuestions',
+  'analyticsConsent', 'consentDate', 'faculty', 'studyYear'
 ];
 
 async function saveUserData(uid, data) {
@@ -99,5 +100,14 @@ async function saveUserData(uid, data) {
 
 function genId() {
   if (typeof crypto !== 'undefined' && crypto.randomUUID) return crypto.randomUUID();
+  // UUID v4 polyfill via crypto.getRandomValues (high entropy fallback)
+  if (typeof crypto !== 'undefined' && crypto.getRandomValues) {
+    const b = crypto.getRandomValues(new Uint8Array(16));
+    b[6] = (b[6] & 0x0f) | 0x40; // version 4
+    b[8] = (b[8] & 0x3f) | 0x80; // variant RFC 4122
+    return [...b].map((v, i) =>
+      ([4, 6, 8, 10].includes(i) ? '-' : '') + v.toString(16).padStart(2, '0')
+    ).join('');
+  }
   return Math.random().toString(36).substr(2, 9) + Date.now().toString(36);
 }
