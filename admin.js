@@ -3020,9 +3020,12 @@ function cancelEdit() {
 ══════════════════════════════════════════════════════════ */
 
 async function adminAddCourse() {
-  const name = document.getElementById('c-name').value.trim();
-  const code = document.getElementById('c-code').value.trim();
+  const name    = document.getElementById('c-name').value.trim();
+  const code    = document.getElementById('c-code').value.trim();
+  const creditsRaw = document.getElementById('c-credits').value.trim();
+  const credits = parseFloat(creditsRaw);
   if (!name || !code) { toast('נא למלא שם וקוד', 'error'); return; }
+  if (creditsRaw === '' || isNaN(credits) || credits < 0) { toast('נא למלא נקודות זכות תקינות', 'error'); return; }
 
   try {
     const id = genId();
@@ -3030,12 +3033,14 @@ async function adminAddCourse() {
       id,
       name,
       code,
+      creditPoints: credits,
       icon: randIcon(),
       status: 'draft',  // Default to draft - admin must publish manually
       createdAt: firebase.firestore.FieldValue.serverTimestamp(),
     });
     document.getElementById('c-name').value = '';
     document.getElementById('c-code').value = '';
+    document.getElementById('c-credits').value = '';
     toast('✅ קורס נוסף (בסטטוס טיוטה)', 'success');
     await renderCoursesList();
     await populateAllSelects();
@@ -3094,7 +3099,7 @@ async function renderCoursesList() {
           </button>
         </div>
       </td>
-      <td><button class="btn btn-secondary btn-sm" onclick="openEditCourse('${c.id}','${esc(c.name)}','${esc(c.code)}','${esc(c.icon || '')}')">✏️ עריכה</button></td>
+      <td><button class="btn btn-secondary btn-sm" onclick="openEditCourse('${c.id}','${esc(c.name)}','${esc(c.code)}','${esc(c.icon || '')}',${c.creditPoints ?? 0})">✏️ עריכה</button></td>
     </tr>`;
     }).join('');
 
@@ -3146,7 +3151,7 @@ const COURSE_ICONS = ['📐','📊','⚛️','🧮','🔬','🧬','💻','🌍',
                       '🎓','🔭','📈','🧪','🔢','📜','🗓️','🖥️','🎯','⚙️',
                       '🔑','🌐','📡','🧲','🔐','🗂️','📋','📌','🏗️','🔍'];
 
-function openEditCourse(id, name, code, icon) {
+function openEditCourse(id, name, code, icon, creditPoints = 0) {
   // Remove existing modal if any
   const existing = document.getElementById('edit-course-modal');
   if (existing) existing.remove();
@@ -3188,6 +3193,12 @@ function openEditCourse(id, name, code, icon) {
       </div>
 
       <div class="form-group">
+        <label style="font-weight:600">נקודות זכות</label>
+        <input id="edit-course-credits" type="number" min="0" max="20" step="0.5"
+               value="${creditPoints}" placeholder="3" dir="ltr">
+      </div>
+
+      <div class="form-group">
         <label style="font-weight:600">אייקון</label>
         <div id="edit-course-icon-selected"
              style="font-size:2rem;margin:.35rem 0 .75rem;min-height:2.5rem">${esc(icon) || '🎓'}</div>
@@ -3219,12 +3230,15 @@ function selectCourseIcon(btn, icon) {
 }
 
 async function saveEditCourse() {
-  const id   = document.getElementById('edit-course-id').value;
-  const name = document.getElementById('edit-course-name').value.trim();
-  const code = document.getElementById('edit-course-code').value.trim();
-  const icon = document.getElementById('edit-course-icon').value;
+  const id           = document.getElementById('edit-course-id').value;
+  const name         = document.getElementById('edit-course-name').value.trim();
+  const code         = document.getElementById('edit-course-code').value.trim();
+  const icon         = document.getElementById('edit-course-icon').value;
+  const creditsRaw  = document.getElementById('edit-course-credits').value.trim();
+  const creditPoints = parseFloat(creditsRaw);
 
   if (!name || !code) { toast('נא למלא שם וקוד', 'error'); return; }
+  if (creditsRaw === '' || isNaN(creditPoints) || creditPoints < 0) { toast('נא למלא נקודות זכות תקינות', 'error'); return; }
 
   const saveBtn = document.querySelector('#edit-course-modal .btn-primary');
   if (saveBtn) { saveBtn.disabled = true; saveBtn.textContent = 'שומר...'; }
@@ -3234,6 +3248,7 @@ async function saveEditCourse() {
       name,
       code,
       icon,
+      creditPoints,
       updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
       updatedBy: adminUser?.email || 'unknown',
     });
