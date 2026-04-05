@@ -386,11 +386,26 @@ exports.handler = async (event) => {
     }).catch(async (err) => {
       if (err.code === 'auth/uid-already-exists') {
         failureStep = 'firebase_auth_update_existing_uid';
-        await firebaseAdmin.auth().updateUser(uid, {
-          email: email || undefined,
-          displayName,
-          emailVerified: !!email,
-        });
+        try {
+          await firebaseAdmin.auth().updateUser(uid, {
+            email: email || undefined,
+            displayName,
+            emailVerified: !!email,
+          });
+        } catch (updateErr) {
+          // Existing UID may belong to a different email while requested email is already owned by another account.
+          if (updateErr.code === 'auth/email-already-exists' && email) {
+            failureStep = 'firebase_auth_link_existing_email_from_uid';
+            const existingUser = await firebaseAdmin.auth().getUserByEmail(email);
+            uid = existingUser.uid;
+            await firebaseAdmin.auth().updateUser(uid, {
+              displayName,
+              emailVerified: !!email,
+            });
+            return;
+          }
+          throw updateErr;
+        }
         return;
       }
 
