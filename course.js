@@ -230,7 +230,7 @@ async function maybeBootstrapLtiSession() {
     }
 
     await auth.signInWithCustomToken(payload.customToken);
-    _ga('login', { method: 'lti' });
+    _gaLogin('lti');
     if (payload.isNewUser) _ga('sign_up', { method: 'lti' });
 
     return { attempted: true, success: true, error: '' };
@@ -559,6 +559,18 @@ function _ga(eventName, params = {}) {
 }
 function _cc()  { return STATE.courseCode || STATE.courseId || ''; }
 function _eid() { return STATE.examLabel  || STATE.examId  || ''; }
+
+// Fires _ga('login') at most once per 4 hours across sessions.
+const _GA_LOGIN_KEY = 'ga_login_ts';
+const _GA_LOGIN_TTL = 4 * 60 * 60 * 1000; // 4 hours in ms
+function _gaLogin(method) {
+  try {
+    const last = parseInt(localStorage.getItem(_GA_LOGIN_KEY) || '0', 10);
+    if (Date.now() - last < _GA_LOGIN_TTL) return;
+    localStorage.setItem(_GA_LOGIN_KEY, Date.now());
+  } catch { /* localStorage blocked (private mode etc.) — fire anyway */ }
+  _ga('login', { method });
+}
 
 /* ── BOOTSTRAP ─────────────────────────────────────────────── */
 document.addEventListener('DOMContentLoaded', () => {
@@ -1098,7 +1110,7 @@ async function doLogin() {
   authBusy(true);
   try {
     await auth.signInWithEmailAndPassword(email, pass);
-    _ga('login', { method: 'email' });
+    _gaLogin('email');
     // onAuthStateChanged will handle the authorized flow
   } catch (e) {
     // Check if this is an email-not-found scenario and a Moodle account exists
