@@ -2690,17 +2690,8 @@ function _fmtPayload(payload) {
 }
 
 async function openActivityLogModal(uid, email) {
-<<<<<<< HEAD
   const existing = document.getElementById('activity-log-modal');
   if (existing) existing.remove();
-
-=======
-  // Remove any existing modal
-  const existing = document.getElementById('activity-log-modal');
-  if (existing) existing.remove();
-
-  // Create overlay
->>>>>>> c12c519 ( admin user table — consent badge, AI questions count, activity log modal)
   const overlay = document.createElement('div');
   overlay.id = 'activity-log-modal';
   overlay.className = 'admin-modal-overlay';
@@ -2721,10 +2712,6 @@ async function openActivityLogModal(uid, email) {
       </div>
     </div>`;
 
-<<<<<<< HEAD
-=======
-  // Close on backdrop click
->>>>>>> c12c519 ( admin user table — consent badge, AI questions count, activity log modal)
   overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
   document.body.appendChild(overlay);
 
