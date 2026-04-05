@@ -495,6 +495,11 @@ const _lastLogTime        = {};
 let   _filterDebounceTimer = null;
 
 function _getOrCreateSession() {
+  // GDPR/CCPA: never write a tracking identifier to the device without consent.
+  if (!STATE.isAnalyticsOn || !STATE.userData?.analyticsConsent) {
+    localStorage.removeItem('vaultau_session'); // purge any previously stored session
+    return null;
+  }
   try {
     const uid = STATE.fireUser?.uid;
     if (!uid) return null;
@@ -1330,21 +1335,69 @@ function renderNavbar() {
 
   document.getElementById('app').innerHTML = `
     <nav class="navbar">
-      <span class="navbar-brand" onclick="goHome()">
-        <span class="ni">📚</span> VaultAU
-      </span>
       <div class="navbar-actions">
-        <span id="navbar-quota-badge" style="font-size:.72rem;padding:2px 8px;border-radius:12px;background:rgba(255,255,255,.2);color:#fff;white-space:nowrap;cursor:default" title="מכסת יצירת שאלות יומית"></span>
+        <button class="btn btn-ghost btn-sm nav-menu-btn" id="nav-menu-btn"
+          onclick="_openNavMenu()" aria-label="תפריט">
+          <svg width="18" height="14" viewBox="0 0 18 14" fill="none">
+            <rect y="0" width="18" height="2" rx="1" fill="currentColor"/>
+            <rect y="6" width="18" height="2" rx="1" fill="currentColor"/>
+            <rect y="12" width="18" height="2" rx="1" fill="currentColor"/>
+          </svg>
+        </button>
         <div class="navbar-user">
           <div class="av">${displayName[0].toUpperCase()}</div>
           <span>${esc(displayName)}</span>
         </div>
-        <button class="btn btn-ghost btn-sm" onclick="doLogout()">יציאה</button>
+        <span id="navbar-quota-badge" style="font-size:.72rem;padding:2px 8px;border-radius:12px;background:rgba(255,255,255,.2);color:#fff;white-space:nowrap;cursor:default" title="מכסת יצירת שאלות יומית"></span>
       </div>
+      <span class="navbar-brand" onclick="goHome()">
+        <span class="ni">📚</span> VaultAU
+      </span>
     </nav>
     <div id="page"></div>
     <div class="toast-wrap" id="toast-wrap"></div>
     <div class="copy-tip" id="copy-tip">הועתק!</div>`;
+}
+
+/* ── NAV MENU ────────────────────────────────────────────── */
+let _navMenuClickOutside = null;
+
+function _openNavMenu() {
+  if (document.getElementById('nav-dropdown')) { _closeNavMenu(); return; }
+  const dropdown = document.createElement('div');
+  dropdown.id        = 'nav-dropdown';
+  dropdown.className = 'nav-dropdown';
+  dropdown.innerHTML = `
+    <button class="nav-dropdown-item" onclick="goPrivacy()">
+      <span>פרטיות</span>
+    </button>
+    <div class="nav-dropdown-divider"></div>
+    <button class="nav-dropdown-item danger" onclick="doLogout()">
+      <span>יציאה</span>
+    </button>`;
+
+  // Anchor dropdown directly below the hamburger button
+  const btn = document.getElementById('nav-menu-btn');
+  btn.style.position = 'relative';
+  btn.appendChild(dropdown);
+  _navMenuClickOutside = (e) => {
+    const btn = document.getElementById('nav-menu-btn');
+    if (!btn?.contains(e.target)) _closeNavMenu();
+  };
+  setTimeout(() => document.addEventListener('mousedown', _navMenuClickOutside), 0);
+}
+
+function _closeNavMenu() {
+  const btn = document.getElementById('nav-menu-btn');
+  const dropdown = btn?.querySelector('#nav-dropdown');
+  if (dropdown) {
+    dropdown.style.animation = 'nav-dropdown-out .14s ease-in forwards';
+    setTimeout(() => dropdown.remove(), 130);
+  }
+  if (_navMenuClickOutside) {
+    document.removeEventListener('mousedown', _navMenuClickOutside);
+    _navMenuClickOutside = null;
+  }
 }
 
 /* ── ROUTING ─────────────────────────────────────────────────── */
@@ -1375,9 +1428,10 @@ function requireSurveyDone() {
 function renderPage() {
   if (!requireTermsAccepted()) return;
   if (!requireSurveyDone())   return;
-  if (STATE.page === 'home')        renderHome();
-  else if (STATE.page === 'course') renderCourse();
-  else if (STATE.page === 'exam')   renderExam();
+  if (STATE.page === 'home')          renderHome();
+  else if (STATE.page === 'course')   renderCourse();
+  else if (STATE.page === 'exam')     renderExam();
+  else if (STATE.page === 'privacy')  renderPrivacy();
 }
 
 async function goHome() {
@@ -1410,6 +1464,13 @@ async function goExam(cId, eId) {
   STATE.examId   = eId;
   history.pushState({ page: 'exam', courseId: cId, examId: eId }, '');
   await renderExam();
+}
+
+function goPrivacy() {
+  _closeNavMenu();
+  STATE.page = 'privacy';
+  history.pushState({ page: 'privacy', courseId: null, examId: null }, '');
+  renderPrivacy();
 }
 
 /* ══════════════════════════════════════════════════════════
@@ -1543,6 +1604,142 @@ async function submitConsent() {
     console.error('submitConsent error:', e);
     if (btn) { btn.disabled = false; btn.textContent = 'המשך ✓'; }
     alert('שגיאה בשמירת האישור: ' + e.message + '\nנסה שוב.');
+  }
+}
+
+/* ══════════════════════════════════════════════════════════
+   PRIVACY PAGE
+══════════════════════════════════════════════════════════ */
+
+function renderPrivacy() {
+  const page = document.getElementById('page');
+  const currentConsent = STATE.userData?.analyticsConsent === true;
+  page.innerHTML = `
+    <div class="container" style="max-width:600px">
+      <div class="breadcrumb">
+        <a onclick="goHome()" style="cursor:pointer">🏠 ראשי</a>
+        <span>›</span><span>פרטיות</span>
+      </div>
+      <div class="page-header">
+        <h1 class="page-title">🔒 פרטיות ומחקר</h1>
+      </div>
+
+      <div class="privacy-section">
+        <h2>תנאי שימוש ומדיניות פרטיות</h2>
+        <p>המערכת מאחסנת את המידע שלך בצורה מאובטחת. לצפייה במסמך תנאי השימוש המלא:</p>
+        <a id="privacy-terms-link" href="#" target="_blank" rel="noopener noreferrer"
+           class="btn btn-secondary" style="display:inline-flex">
+          📄 תנאי שימוש מלאים ←
+        </a>
+      </div>
+
+      <div class="privacy-section">
+        <h2>השתתפות במחקר</h2>
+        <p>נתוני השימוש האנונימיים משמשים לצורך מחקר אקדמי ושיפור המערכת.</p>
+        <p>ניתן לשנות הסכמה זו בכל עת.</p>
+        <label class="consent-check-label">
+          <input type="checkbox" id="privacy-consent-cb" ${currentConsent ? 'checked' : ''}
+                 onchange="onPrivacyConsentChange()">
+          <span class="consent-check-text">
+            אני מסכים/ה שנתוני השימוש שלי ישמשו למחקר אקדמי אנונימי
+          </span>
+        </label>
+      </div>
+
+      <div id="privacy-confirm-block"></div>
+
+      <button id="privacy-save-btn" class="btn btn-primary"
+              onclick="savePrivacyConsent()" disabled>
+        שמור שינויים
+      </button>
+    </div>`;
+
+  db.collection('settings').doc('global').get().then(doc => {
+    const url = doc.exists ? doc.data()?.termsUrl : null;
+    const el  = document.getElementById('privacy-terms-link');
+    if (el && url) el.href = url;
+  }).catch(() => {});
+}
+
+function onPrivacyConsentChange() {
+  const cb = document.getElementById('privacy-consent-cb');
+  const currentConsent = STATE.userData?.analyticsConsent === true;
+  const confirmBlock = document.getElementById('privacy-confirm-block');
+  const saveBtn = document.getElementById('privacy-save-btn');
+
+  if (currentConsent && !cb.checked) {
+    // Opting OUT — show confirm immediately, keep save disabled until confirmed
+    saveBtn.disabled = true;
+    _showPrivacyConfirm();
+  } else if (!currentConsent && cb.checked) {
+    // Opting IN — no confirm needed, enable save
+    confirmBlock.innerHTML = '';
+    saveBtn.disabled = false;
+  } else {
+    // Back to original state
+    confirmBlock.innerHTML = '';
+    saveBtn.disabled = true;
+  }
+}
+
+let _privacyConfirmResolve = null;
+
+function _showPrivacyConfirm() {
+  return new Promise(resolve => {
+    _privacyConfirmResolve = resolve;
+    document.getElementById('privacy-confirm-block').innerHTML = `
+      <div style="background:#fef2f2;border:1px solid #fca5a5;border-radius:8px;
+                  padding:1rem;margin-bottom:1rem">
+        <p style="color:#7f1d1d;font-size:.88rem;margin:0 0 .75rem;font-weight:600">
+          האם אתה בטוח? ביטול ההסכמה יפסיק את איסוף הנתונים מעכשיו.
+        </p>
+        <div style="display:flex;gap:.5rem;flex-wrap:wrap">
+          <button class="btn btn-sm" style="background:#dc2626;color:#fff;border-color:#dc2626"
+            onclick="_resolvePrivacyConfirm(true)">בטוח</button>
+          <button class="btn btn-sm" onclick="_resolvePrivacyConfirm(false)">ביטול</button>
+        </div>
+      </div>`;
+  });
+}
+
+function _resolvePrivacyConfirm(confirmed) {
+  document.getElementById('privacy-confirm-block').innerHTML = '';
+  const cb  = document.getElementById('privacy-consent-cb');
+  const btn = document.getElementById('privacy-save-btn');
+  if (confirmed) {
+    // User confirmed opt-out — keep unchecked, enable save
+    if (btn) btn.disabled = false;
+  } else {
+    // User cancelled — restore checkbox, keep save disabled
+    if (cb)  cb.checked   = true;
+    if (btn) btn.disabled = true;
+  }
+  if (_privacyConfirmResolve) {
+    _privacyConfirmResolve(confirmed);
+    _privacyConfirmResolve = null;
+  }
+}
+
+async function savePrivacyConsent() {
+  const cb         = document.getElementById('privacy-consent-cb');
+  const newConsent = cb.checked;
+  const oldConsent = STATE.userData?.analyticsConsent === true;
+  if (newConsent === oldConsent) return;
+
+  const btn = document.getElementById('privacy-save-btn');
+  if (btn) { btn.disabled = true; btn.textContent = 'שומר...'; }
+
+  try {
+    const uid = STATE.fireUser?.uid;
+    if (!uid) throw new Error('לא מחובר');
+    await db.collection('users').doc(uid).set({ analyticsConsent: newConsent }, { merge: true });
+    STATE.userData = { ...STATE.userData, analyticsConsent: newConsent };
+    _getOrCreateSession();
+    toast(newConsent ? '✅ ההסכמה נשמרה' : '✅ ההסכמה בוטלה — הנתונים לא יאספו יותר');
+    goHome();
+  } catch (e) {
+    toast('שגיאה בשמירה — נסה שוב', 'error');
+    if (btn) { btn.disabled = false; btn.textContent = 'שמור שינויים'; }
   }
 }
 
