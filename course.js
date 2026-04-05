@@ -495,6 +495,11 @@ const _lastLogTime        = {};
 let   _filterDebounceTimer = null;
 
 function _getOrCreateSession() {
+  // GDPR/CCPA: never write a tracking identifier to the device without consent.
+  if (!STATE.isAnalyticsOn || !STATE.userData?.analyticsConsent) {
+    localStorage.removeItem('vaultau_session'); // purge any previously stored session
+    return null;
+  }
   try {
     const uid = STATE.fireUser?.uid;
     if (!uid) return null;
