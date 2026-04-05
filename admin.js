@@ -2518,6 +2518,11 @@ async function renderUserStats() {
       const inProgress = (u.inProgressExams || []).length;
       const copies     = u.copyCount || 0;
       const accepted   = u.acceptedTerms === true;
+      const aiCount    = (u.aiQuestions || []).length;
+      // analyticsConsent: true = consented, false = opted out, undefined = never shown
+      const consent    = u.analyticsConsent;
+      const canViewLog = consent === true;
+      const uid        = u.uid || u._docId || '';
 
       // Email cell — show email if available, else UID
       const identifier = u.email || u.uid || u._docId || '—';
@@ -2530,9 +2535,17 @@ async function renderUserStats() {
            </span>`
         : `<span style="font-weight:500">${esc(identifier)}</span>`;
 
-      // Activity bar — visual summary
-      const totalActivity = copies + done * 3 + inProgress * 2 + starred;
-      const activityColor = totalActivity > 20 ? '#16a34a' : totalActivity > 5 ? '#d97706' : '#94a3b8';
+      // 3-state consent badge
+      const consentBadge = consent === true
+        ? `<span class="consent-badge consent-badge-yes">✓ מאושר</span>`
+        : consent === false
+          ? `<span class="consent-badge consent-badge-no">✗ לא</span>`
+          : `<span class="consent-badge consent-badge-pending">⏳ טרם</span>`;
+
+      // Activity log button — disabled if no consent
+      const logBtn = canViewLog
+        ? `<button class="btn btn-sm" onclick="openActivityLogModal('${esc(uid)}','${esc(u.email || '')}')" style="padding:.2rem .5rem;font-size:.8rem">📋</button>`
+        : `<button class="btn btn-sm" disabled title="המשתמש לא הסכים למעקב" style="padding:.2rem .5rem;font-size:.8rem;opacity:.35;cursor:not-allowed">📋</button>`;
 
       return `<tr style="transition:background .15s" onmouseover="this.style.background='#f8fafc'" onmouseout="this.style.background=''">
         <td style="font-size:.82rem;min-width:200px">
@@ -2564,6 +2577,13 @@ async function renderUserStats() {
             ? `<span class="badge" style="background:#dcfce7;color:#166534;border:1px solid #86efac">✓ אישר</span>`
             : `<span class="badge" style="background:#fef2f2;color:#991b1b;border:1px solid #fca5a5">✗ טרם</span>`}
         </td>
+        <td style="text-align:center">${consentBadge}</td>
+        <td style="text-align:center">
+          ${aiCount > 0
+            ? `<span class="badge" style="background:#f5f3ff;color:#5b21b6;border:1px solid #c4b5fd;font-weight:600">🤖 ${aiCount}</span>`
+            : `<span style="color:var(--light);font-size:.8rem">0</span>`}
+        </td>
+        <td style="text-align:center">${logBtn}</td>
       </tr>`;
     }).join('');
 
@@ -2573,6 +2593,7 @@ async function renderUserStats() {
     const totalInProgress = rows.reduce((s, u) => s + (u.inProgressExams || []).length, 0);
     const totalStarred    = rows.reduce((s, u) => s + (u.starredQuestions || []).length, 0);
     const totalAccepted   = rows.filter(u => u.acceptedTerms === true).length;
+    const totalConsented  = rows.filter(u => u.analyticsConsent === true).length;
 
     wrap.innerHTML = `
       <!-- Summary stats -->
@@ -2583,6 +2604,7 @@ async function renderUserStats() {
           ['⏳', 'בתהליך סה"כ',    totalInProgress,  '#fefce8','#854d0e','#fde047'],
           ['⭐', 'כוכביות סה"כ',   totalStarred,     '#fff7ed','#9a3412','#fdba74'],
           ['📜', 'אישרו תנאים',    `${totalAccepted}/${rows.length}`, '#f5f3ff','#5b21b6','#c4b5fd'],
+          ['🔬', 'הסכמה למעקב',   `${totalConsented}/${rows.length}`, '#ecfdf5','#065f46','#6ee7b7'],
         ].map(([icon, lbl, val, bg, fg, border]) => `
           <div style="flex:1;min-width:110px;background:${bg};border:1px solid ${border};
                       border-radius:10px;padding:.65rem .9rem;text-align:center">
@@ -2603,6 +2625,9 @@ async function renderUserStats() {
               <th style="text-align:center" title="מבחנים שסומנו בתהליך">⏳ בתהליך</th>
               <th style="text-align:center" title="שאלות מסומנות בכוכבית">⭐ כוכביות</th>
               <th style="text-align:center">📜 הצהרה</th>
+              <th style="text-align:center" title="הסכמה לשימוש בנתוני שימוש למחקר">🔬 הסכמה למעקב</th>
+              <th style="text-align:center" title="שאלות AI שנשמרו על ידי המשתמש">🤖 שאלות AI</th>
+              <th style="text-align:center" title="יומן פעילות">📋 יומן</th>
             </tr>
           </thead>
           <tbody>${tableRows}</tbody>
@@ -2622,6 +2647,111 @@ async function renderUserStats() {
   } catch (e) {
     wrap.innerHTML = `<div class="form-error show">שגיאה בטעינת משתמשים: ${esc(e.message)}</div>`;
     console.error('renderUserStats error:', e);
+  }
+}
+
+/* ══════════════════════════════════════════════════════════
+   ACTIVITY LOG MODAL
+══════════════════════════════════════════════════════════ */
+
+const EVENT_LABELS = {
+  'session_start':         'התחלת סשן',
+  'course_open':           'פתיחת קורס',
+  'exam_open':             'פתיחת מבחן',
+  'exam_filtered':         'סינון מבחנים',
+  'pdf_download':          'הורדת PDF',
+  'exam_status_changed':   'שינוי סטטוס מבחן',
+  'star_toggled':          'סימון כוכבית',
+  'difficulty_voted':      'הצבעת קושי',
+  'question_copied':       'העתקת שאלה',
+  'ai_question_generated': 'יצירת שאלת AI',
+  'ai_question_saved':     'שמירת שאלת AI',
+  'ai_question_copied':    'העתקת שאלת AI',
+  'ai_question_rated':     'דירוג שאלת AI',
+};
+
+function _fmtPayload(payload) {
+  if (!payload || typeof payload !== 'object') return '';
+  const parts = [];
+  if (payload.courseCode) parts.push(`קורס: ${esc(payload.courseCode)}`);
+  if (payload.examId)     parts.push(`מבחן: ${esc(payload.examId)}`);
+  if (payload.status)     parts.push(`סטטוס: ${esc(payload.status)}`);
+  if (payload.level)      parts.push(`רמה: ${esc(payload.level)}`);
+  if (payload.starred !== undefined) parts.push(payload.starred ? 'סומן' : 'הוסר');
+  if (payload.fromCache !== undefined) parts.push(payload.fromCache ? 'מהמטמון' : 'מהמודל');
+  if (payload.rating !== undefined) parts.push(`דירוג: ${payload.rating}`);
+  return parts.join(' · ');
+}
+
+async function openActivityLogModal(uid, email) {
+  // Remove any existing modal
+  const existing = document.getElementById('activity-log-modal');
+  if (existing) existing.remove();
+
+  // Create overlay
+  const overlay = document.createElement('div');
+  overlay.id = 'activity-log-modal';
+  overlay.className = 'admin-modal-overlay';
+  overlay.innerHTML = `
+    <div class="admin-modal" role="dialog" aria-modal="true">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem">
+        <div>
+          <h3 style="margin:0;font-size:1rem;font-weight:700">📋 יומן פעילות</h3>
+          <p style="margin:.2rem 0 0;font-size:.78rem;color:var(--muted)">${esc(email || uid)}</p>
+        </div>
+        <button onclick="document.getElementById('activity-log-modal').remove()"
+          style="background:none;border:none;font-size:1.3rem;cursor:pointer;color:var(--muted);line-height:1"
+          aria-label="סגור">×</button>
+      </div>
+      <div id="activity-log-body" style="text-align:center;padding:1.5rem">
+        <div class="spinner" style="margin:0 auto"></div>
+        <p style="color:var(--muted);font-size:.83rem;margin-top:.6rem">טוען אירועים...</p>
+      </div>
+    </div>`;
+
+  // Close on backdrop click
+  overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
+  document.body.appendChild(overlay);
+
+  const body = document.getElementById('activity-log-body');
+  try {
+    const snap = await db.collection('analytics_events')
+      .where('uid', '==', uid)
+      .orderBy('timestamp', 'desc')
+      .limit(20)
+      .get();
+
+    if (snap.empty) {
+      body.innerHTML = `<p style="color:var(--muted);font-size:.85rem;text-align:center">אין אירועים רשומים עבור משתמש זה</p>`;
+      return;
+    }
+
+    const rows = snap.docs.map(doc => {
+      const d = doc.data();
+      const label   = EVENT_LABELS[d.event] || esc(d.event);
+      const ts      = d.timestamp?.toDate
+        ? d.timestamp.toDate().toLocaleString('he-IL', { dateStyle: 'short', timeStyle: 'short' })
+        : '—';
+      const details = _fmtPayload(d.payload);
+      return `<div class="activity-row">
+        <div style="display:flex;justify-content:space-between;align-items:baseline;gap:.5rem">
+          <span style="font-weight:600;font-size:.85rem">${label}</span>
+          <span style="font-size:.72rem;color:var(--muted);white-space:nowrap">${ts}</span>
+        </div>
+        ${details ? `<div style="font-size:.76rem;color:var(--muted);margin-top:.15rem">${details}</div>` : ''}
+      </div>`;
+    }).join('');
+
+    body.innerHTML = `
+      <div style="max-height:420px;overflow-y:auto;display:flex;flex-direction:column;gap:.35rem">
+        ${rows}
+      </div>
+      <p style="font-size:.72rem;color:var(--light);text-align:center;margin-top:.75rem">
+        מוצגים ${snap.docs.length} אירועים אחרונים
+      </p>`;
+  } catch (e) {
+    body.innerHTML = `<div class="form-error show">שגיאה בטעינת יומן: ${esc(e.message)}</div>`;
+    console.error('openActivityLogModal error:', e);
   }
 }
 
