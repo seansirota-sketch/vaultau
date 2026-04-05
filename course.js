@@ -412,6 +412,11 @@ async function initAppBootstrap() {
       STATE.doneExams       = STATE.userData?.doneExams       || [];
       STATE.inProgressExams = STATE.userData?.inProgressExams || [];
 
+      // ── Analytics kill switch ──────────────────────────────
+      try {
+        const globalSnap = await db.collection('settings').doc('global').get();
+        STATE.isAnalyticsOn = globalSnap.data()?.isAnalyticsOn ?? true;
+      } catch (_e) { STATE.isAnalyticsOn = true; }
       // ── 0. First-time LTI password setup ───────────────────
       // Show password setup if: user arrived via LTI this session AND has no password yet
       const hasPasswordProvider = user.providerData.some(p => p.providerId === 'password');
@@ -431,6 +436,7 @@ async function initAppBootstrap() {
       // ── 2. Survey check ────────────────────────────────────
       // Run in background — don't block initial render
       checkAndShowSurvey();
+      _getOrCreateSession();
 
       // ── 3. Normal load ─────────────────────────────────────
       renderNavbar();
@@ -476,7 +482,66 @@ let STATE = {
   doneExams: [],     // Array<examId> — exams marked as done by user
   inProgressExams: [], // Array<examId> — exams marked as in-progress by user
   savedFilters: {},    // { [courseId]: { fy, fs, fm, fl } } — persists across exam navigation
+  isAnalyticsOn: true,  // kill switch loaded from settings/global.isAnalyticsOn
+  courseCode:    '',    // official university course code (course.code) — set on course/exam load
+  examLabel:     '',    // courseCode_year_sem_moed — set on exam load, cleared on course load
+  examQuestions:  [],   // question array snapshot for _questionRef() — set after const questions in renderExam
 };
+
+/* ── ANALYTICS ─────────────────────────────────────────────── */
+const SESSION_TIMEOUT_MS  = 4 * 60 * 60 * 1000;  // 4 hours
+const LOG_THROTTLE_MS     = 1_000;           // 1 s minimum between same event type
+const _lastLogTime        = {};
+let   _filterDebounceTimer = null;
+
+function _getOrCreateSession() {
+  try {
+    const uid = STATE.fireUser?.uid;
+    if (!uid) return null;
+    const stored = JSON.parse(localStorage.getItem('vaultau_session') || 'null');
+    const now = Date.now();
+    // Reuse session only if same user, not timed out
+    if (stored?.id && stored?.uid === uid && stored?.lastActivity && (now - stored.lastActivity) < SESSION_TIMEOUT_MS) {
+      localStorage.setItem('vaultau_session', JSON.stringify({ ...stored, lastActivity: now }));
+      return stored.id;
+    }
+    const sessionId = genId();
+    localStorage.setItem('vaultau_session', JSON.stringify({ id: sessionId, uid, createdAt: now, lastActivity: now }));
+    if (STATE.isAnalyticsOn && STATE.userData?.analyticsConsent) {
+      db.collection('analytics_events').add({
+        uid,
+        sessionId,
+        event:     'session_start',
+        payload:   {},
+        timestamp: firebase.firestore.FieldValue.serverTimestamp(),
+        expiresAt: firebase.firestore.Timestamp.fromMillis(now + 60 * 24 * 60 * 60 * 1000),
+      }).catch(e => console.warn('session_start log failed:', e));
+    }
+    return sessionId;
+  } catch (e) {
+    console.warn('_getOrCreateSession error:', e);
+    return null;
+  }
+}
+
+function _logEvent(name, payload = {}) {
+  if (!STATE.isAnalyticsOn) return;
+  if (!STATE.userData?.analyticsConsent) return;
+  const now = Date.now();
+  if ((now - (_lastLogTime[name] || 0)) < LOG_THROTTLE_MS) return;
+  _lastLogTime[name] = now;
+  const uid = STATE.fireUser?.uid;
+  if (!uid) return;
+  const sessionId = _getOrCreateSession();
+  db.collection('analytics_events').add({
+    uid,
+    sessionId,
+    event:     name,
+    payload,
+    timestamp: firebase.firestore.FieldValue.serverTimestamp(),
+    expiresAt: firebase.firestore.Timestamp.fromMillis(now + 60 * 24 * 60 * 60 * 1000),
+  }).catch(e => console.warn(`_logEvent(${name}) failed:`, e));
+}
 
 /* ── BOOTSTRAP ─────────────────────────────────────────────── */
 document.addEventListener('DOMContentLoaded', () => {
@@ -1469,6 +1534,7 @@ async function submitConsent() {
       consentDate:      new Date(),
     };
 
+    _getOrCreateSession();
     renderNavbar();
     history.replaceState({ page: 'home', courseId: null, examId: null }, '');
     renderPage();
@@ -1790,6 +1856,8 @@ function closeContactModal() {
 async function renderCourse() {
   const page = document.getElementById('page');
   page.innerHTML = `<div class="container"><div class="spinner" style="margin-top:3rem"></div></div>`;
+  STATE.examLabel = ''; // clear exam context when navigating to course page
+  STATE.examQuestions = [];
 
   try {
     // Check if user is admin
@@ -1813,6 +1881,8 @@ async function renderCourse() {
       console.log('renderCourse - access denied, admin-only course');
       return goHome();
     }
+    STATE.courseCode = course.code || '';
+    _logEvent('course_open', { courseCode: course.code || '' });
 
     // Fetch exams (with cache)
     // Always re-fetch exams so pdfUrl and other updates are reflected immediately
@@ -1896,19 +1966,19 @@ function renderExamsTab(course, exams, years, sems, moeds, lecturers) {
     <div class="filters-bar">
       <div class="form-group">
         <label>שנה</label>
-        <select id="f-y" onchange="applyFilters()"><option value="">הכל</option>${opts(years)}</select>
+        <select id="f-y" onchange="applyFilters(true)"><option value="">הכל</option>${opts(years)}</select>
       </div>
       <div class="form-group">
         <label>סמסטר</label>
-        <select id="f-s" onchange="applyFilters()"><option value="">הכל</option>${opts(sems)}</select>
+        <select id="f-s" onchange="applyFilters(true)"><option value="">הכל</option>${opts(sems)}</select>
       </div>
       <div class="form-group">
         <label>מועד</label>
-        <select id="f-m" onchange="applyFilters()"><option value="">הכל</option>${opts(moeds)}</select>
+        <select id="f-m" onchange="applyFilters(true)"><option value="">הכל</option>${opts(moeds)}</select>
       </div>
       ${lecturers.length ? `<div class="form-group">
         <label>מרצה</label>
-        <select id="f-l" onchange="applyFilters()"><option value="">הכל</option>${opts(lecturers)}</select>
+        <select id="f-l" onchange="applyFilters(true)"><option value="">הכל</option>${opts(lecturers)}</select>
       </div>` : ''}
       <button class="btn btn-secondary btn-sm" onclick="resetFilters()">🔄 אפס</button>
     </div>
@@ -1925,7 +1995,7 @@ function renderExamsTab(course, exams, years, sems, moeds, lecturers) {
   applyFilters();
 }
 
-function applyFilters() {
+function applyFilters(fromUser = false) {
   const exams = STATE.exams[STATE.courseId] || [];
   const fy = document.getElementById('f-y')?.value || '';
   const fs = document.getElementById('f-s')?.value || '';
@@ -1957,6 +2027,23 @@ function applyFilters() {
     return ta.localeCompare(tb, undefined, { numeric: false }); // suffix A-Z
   });
 
+  // Analytics — exam_filtered (debounced 20s, only on real user interaction)
+  if (fromUser) {
+    clearTimeout(_filterDebounceTimer);
+    _filterDebounceTimer = setTimeout(() => {
+      _logEvent('exam_filtered', {
+        courseCode:  STATE.courseCode || STATE.courseId || '',
+        filters: {
+          year:      fy || null,
+          semester:  fs || null,
+          moed:      fm || null,
+          lecturer:  fl || null,
+        },
+        resultCount: filtered.length,
+      });
+    }, 20_000);
+  }
+
   const el = document.getElementById('exam-list');
   if (!el) return;
 
@@ -1986,9 +2073,9 @@ function applyFilters() {
         </div>
       </div>
       ${e.solutionPdfUrl ? `<a class="sol-download-btn" href="${safeUrl(e.solutionPdfUrl)}" target="_blank" rel="noopener"
-        onclick="event.stopPropagation()" title="הורד פתרון">SOL</a>` : ''}
+        data-exam-id="${e.id}" data-exam-year="${e.year||''}" data-exam-sem="${e.semester||''}" data-exam-moed="${e.moed||''}" onclick="event.stopPropagation()" title="הורד פתרון">SOL</a>` : ''}
       ${e.pdfUrl ? `<a class="pdf-download-btn" href="${safeUrl(e.pdfUrl)}" target="_blank" rel="noopener"
-        onclick="event.stopPropagation()" title="הורד טופס מבחן">
+        data-exam-id="${e.id}" data-exam-year="${e.year||''}" data-exam-sem="${e.semester||''}" data-exam-moed="${e.moed||''}" onclick="event.stopPropagation()" title="הורד טופס מבחן">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
           <path d="M12 3v13M5 16l7 7 7-7"/><line x1="3" y1="22" x2="21" y2="22"/>
         </svg>
@@ -2006,6 +2093,23 @@ function applyFilters() {
       <span class="exam-arrow">←</span>
     </div>`;
   }).join('');
+
+  // Analytics — pdf_download event delegation
+  el.querySelectorAll('[data-exam-id]').forEach(a => {
+    a.addEventListener('click', function () {
+      const _he = s => ({ 'א':'A','ב':'B','ג':'C','ד':'D' }[s] || (s||'').toString().toUpperCase());
+      const cc   = STATE.courseCode || STATE.courseId || '';
+      const year = this.dataset.examYear  || '';
+      const sem  = _he(this.dataset.examSem  || '');
+      const moed = _he(this.dataset.examMoed || '');
+      const examLabel = [cc, year, sem, moed].filter(Boolean).join('_');
+      _logEvent('pdf_download', {
+        examId:     examLabel || this.dataset.examId,
+        courseCode: STATE.courseCode || STATE.courseId || '',
+        type:       this.classList.contains('sol-download-btn') ? 'solution' : 'exam',
+      });
+    });
+  });
 }
 
 function resetFilters() {
@@ -2059,6 +2163,7 @@ async function toggleDone(examId) {
       inProgressExams: STATE.inProgressExams,
       completedExams:  completed,
     });
+    _logEvent('exam_status_changed', { examId: _examRef(examId), status: adding ? 'done' : 'undone', courseCode: STATE.courseCode || STATE.courseId });
   } catch (e) {
     console.error('Failed to save doneExams:', e);
     toast('שגיאה בשמירת הסימון', 'error');
@@ -2098,6 +2203,7 @@ async function toggleInProgress(examId) {
 
   try {
     await saveUserData(uid, { doneExams: STATE.doneExams, inProgressExams: ip });
+    _logEvent('exam_status_changed', { examId: _examRef(examId), status: adding ? 'in_progress' : 'removed', courseCode: STATE.courseCode || STATE.courseId });
   } catch (e) {
     console.error('Failed to save inProgressExams:', e);
     toast('שגיאה בשמירת הסימון', 'error');
@@ -2217,9 +2323,11 @@ async function renderExam() {
       console.log('renderExam - access denied, admin-only course');
       return goHome();
     }
+    STATE.courseCode = course.code || '';
 
     const exam = await fetchExam(STATE.examId);
     if (!exam) return goCourse(STATE.courseId);
+    STATE.examLabel = [STATE.courseCode, exam.year, _heToLat(exam.semester), _heToLat(exam.moed)].filter(Boolean).join('_');
 
     // GA — exam view start
     if (typeof gtag === 'function') {
@@ -2229,6 +2337,7 @@ async function renderExam() {
         exam_title: exam.title || STATE.examId,
       });
     }
+    _logEvent('exam_open', { examId: STATE.examLabel || STATE.examId, courseCode: STATE.courseCode || STATE.courseId });
 
     // Fetch userData only if not cached; fetch votes in parallel
     const [_, votes] = await Promise.all([
@@ -2238,6 +2347,7 @@ async function renderExam() {
     STATE.examVotes = votes;
     const starred   = STATE.userData?.starredQuestions || [];
     const questions = exam.questions || [];
+    STATE.examQuestions = questions;
     const userVotes = STATE.userData?.difficultyVotes || {};
 
     const metaParts = [
@@ -2404,6 +2514,7 @@ async function toggleStar(id) {
   // Persist to Firestore (non-blocking)
   try {
     await saveUserData(uid, { starredQuestions: starred });
+    _logEvent('star_toggled', { questionId: _questionRef(id), starred: adding, courseCode: STATE.courseCode || STATE.courseId, examId: STATE.examLabel || STATE.examId || '' });
   } catch (e) {
     console.error('Failed to save starred:', e);
     toast('שגיאה בשמירת סימון', 'error');
@@ -2479,6 +2590,7 @@ async function voteDifficulty(qid, level) {
       exam_id: STATE.examId || 'unknown',
     });
   }
+  _logEvent('difficulty_voted', { questionId: _questionRef(qid), level, courseCode: STATE.courseCode || STATE.courseId, examId: STATE.examLabel || STATE.examId || '' });
 
   // Re-render just the diff buttons inside the existing dw- container
   const container = document.getElementById('dw-' + qid);
@@ -2519,13 +2631,36 @@ function htmlToLatex(html) {
 
 const COPY_MAP = new Map();
 
+const _heToLat = s => ({'א':'A','ב':'B','ג':'C','ד':'D'}[s] || (s||'').toString().toUpperCase());
+
+function _examRef(examId) {
+  const e = (STATE.exams[STATE.courseId] || []).find(x => x.id === examId);
+  if (!e) return STATE.examLabel || examId;
+  return [STATE.courseCode, e.year, _heToLat(e.semester), _heToLat(e.moed)].filter(Boolean).join('_');
+}
+
+function _questionRef(qid) {
+  if (!qid) return '';
+  // strip DOM copy-map prefix (copy-q- or copy-s-) to get the real question/sub id
+  const rawId = qid.replace(/^copy-[qs]-/, '');
+  const qs = STATE.examQuestions || [];
+  for (let i = 0; i < qs.length; i++) {
+    if (qs[i].id === rawId) return 'Q' + (i + 1);
+    const subs = qs[i].subs || qs[i].parts || [];
+    for (let j = 0; j < subs.length; j++) {
+      if (subs[j].id === rawId) return 'Q' + (i + 1) + String.fromCharCode(97 + j);
+    }
+  }
+  return rawId; // fallback
+}
+
 function copyById(id, event) {
   const text  = COPY_MAP.get(id) || '';
   const latex = htmlToLatex(text);
-  _doCopy(latex, event);
+  _doCopy(latex, event, id);
 }
 
-function _doCopy(text, event) {
+function _doCopy(text, event, qid = '') {
   navigator.clipboard.writeText(text).then(() => {
     const tip = document.getElementById('copy-tip');
     if (tip) {
@@ -2543,6 +2678,7 @@ function _doCopy(text, event) {
         exam_id:   STATE.examId   || '',
       });
     }
+    _logEvent('question_copied', { questionId: _questionRef(qid), courseCode: STATE.courseCode || STATE.courseId, examId: STATE.examLabel || STATE.examId || '' });
     // Firestore — increment copy counter for this user
     const uid = STATE.fireUser?.uid;
     if (uid) {
@@ -2897,6 +3033,7 @@ async function _loadFromCacheOrGenerate(cacheKey, sourceText) {
           _renderGeminiResult(bodyEl, text);
           if (footer) footer.style.display = 'flex';
           _showRateButtons();
+          _logEvent('ai_question_generated', { courseCode: STATE.courseCode || STATE.courseId, examId: STATE.examLabel || STATE.examId || '', questionId: _questionRef(overlay?.dataset?.qOrSubId), fromCache: true });
           return;
         }
       }
@@ -2995,6 +3132,7 @@ async function _callGeminiAPI(sourceText) {
     _renderGeminiResult(bodyEl, text);
     if (footer) footer.style.display = 'flex';
     _showRateButtons();
+    _logEvent('ai_question_generated', { courseCode: STATE.courseCode || STATE.courseId, examId: STATE.examLabel || STATE.examId || '', questionId: _questionRef(overlay?.dataset?.qOrSubId), fromCache: false });
 
     // Decrement local quota counter and persist to Firestore
     if (_isLocalDev && _aiQuotaRemaining !== null && _aiQuotaRemaining > 0) {
@@ -3282,6 +3420,7 @@ async function _geminiSave() {
     if (!STATE.userData.aiQuestions) STATE.userData.aiQuestions = [];
     STATE.userData.aiQuestions.push(entry);
     toast('✅ השאלה נשמרה!', 'info');
+    _logEvent('ai_question_saved', { courseCode: STATE.courseCode || STATE.courseId, examId: STATE.examLabel || STATE.examId || '', questionId: _questionRef(overlay?.dataset?.qOrSubId || '') });
     // Brief visual feedback on button, keep modal open
     if (saveBtn) {
       saveBtn.textContent = '✅ נשמר!';
@@ -3417,6 +3556,7 @@ function _copyGeneratedQuestion() {
   if (!text) { toast('אין שאלה להעתקה', 'error'); return; }
   navigator.clipboard.writeText(text).then(() => {
     toast('📋 השאלה הועתקה!', 'info');
+    _logEvent('ai_question_copied', { courseCode: STATE.courseCode || STATE.courseId, examId: STATE.examLabel || STATE.examId || '', questionId: _questionRef(overlay.dataset.qOrSubId || '') });
   }).catch(() => {
     toast('שגיאה בהעתקה', 'error');
   });
@@ -3457,6 +3597,7 @@ async function _rateQuestion(rating) {
       createdAt: firebase.firestore.FieldValue.serverTimestamp(),
     });
     toast(rating === 'up' ? '👍 תודה על המשוב!' : '👎 תודה, נשתפר!', 'info');
+    _logEvent('ai_question_rated', { rating, questionId: _questionRef(qOrSubId), courseCode: STATE.courseCode || STATE.courseId, examId: STATE.examLabel || STATE.examId || '' });
   } catch (e) {
     console.warn('Failed to save rating:', e.message);
   }

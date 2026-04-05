@@ -61,8 +61,8 @@ service cloud.firestore {
       allow create: if isLoggedIn()
         && request.resource.data.uid == request.auth.uid
         && request.resource.data.timestamp == request.time
-        && request.resource.data.type is string
-        && request.resource.data.type.size() < 100
+        && request.resource.data.event is string
+        && request.resource.data.event.size() < 100
         && request.resource.data.payload is map
         && request.resource.data.payload.size() <= 10
         && request.resource.data.expiresAt is timestamp;
