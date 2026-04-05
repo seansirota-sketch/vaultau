@@ -1633,7 +1633,7 @@ mjx-container { direction: ltr; }
   margin: 0 0 .75rem;
 }
 
-/* Step 6: Admin activity log modal + consent badges */
+/* ══ Step 6: Admin activity log modal + consent badges ══ */
 
 .admin-modal-overlay {
   position: fixed;
