@@ -1335,15 +1335,7 @@ function renderNavbar() {
 
   document.getElementById('app').innerHTML = `
     <nav class="navbar">
-      <span class="navbar-brand" onclick="goHome()">
-        VaultAU <span class="ni">📚</span>
-      </span>
       <div class="navbar-actions">
-        <span id="navbar-quota-badge" style="font-size:.72rem;padding:2px 8px;border-radius:12px;background:rgba(255,255,255,.2);color:#fff;white-space:nowrap;cursor:default" title="מכסת יצירת שאלות יומית"></span>
-        <div class="navbar-user">
-          <div class="av">${displayName[0].toUpperCase()}</div>
-          <span>${esc(displayName)}</span>
-        </div>
         <button class="btn btn-ghost btn-sm nav-menu-btn" id="nav-menu-btn"
           onclick="_openNavMenu()" aria-label="תפריט">
           <svg width="18" height="14" viewBox="0 0 18 14" fill="none">
@@ -1352,7 +1344,15 @@ function renderNavbar() {
             <rect y="12" width="18" height="2" rx="1" fill="currentColor"/>
           </svg>
         </button>
+        <div class="navbar-user">
+          <div class="av">${displayName[0].toUpperCase()}</div>
+          <span>${esc(displayName)}</span>
+        </div>
+        <span id="navbar-quota-badge" style="font-size:.72rem;padding:2px 8px;border-radius:12px;background:rgba(255,255,255,.2);color:#fff;white-space:nowrap;cursor:default" title="מכסת יצירת שאלות יומית"></span>
       </div>
+      <span class="navbar-brand" onclick="goHome()">
+        <span class="ni">📚</span> VaultAU
+      </span>
     </nav>
     <div id="page"></div>
     <div class="toast-wrap" id="toast-wrap"></div>
@@ -1368,19 +1368,14 @@ function _openNavMenu() {
   dropdown.id        = 'nav-dropdown';
   dropdown.className = 'nav-dropdown';
   dropdown.innerHTML = `
-    <button class="nav-dropdown-item" onclick="goHome();_closeNavMenu()">
-      <span>🏠</span> מסך בית
-    </button>
     <button class="nav-dropdown-item" onclick="goPrivacy()">
-      <span>🔒</span> פרטיות
-    </button>
-    <button class="nav-dropdown-item" onclick="doNavbarResetPassword()">
-      <span>🔑</span> איפוס סיסמה
+      <span>פרטיות</span>
     </button>
     <div class="nav-dropdown-divider"></div>
     <button class="nav-dropdown-item danger" onclick="doLogout()">
-      <span>🚪</span> יציאה
+      <span>יציאה</span>
     </button>`;
+
   // Anchor dropdown directly below the hamburger button
   const btn = document.getElementById('nav-menu-btn');
   btn.style.position = 'relative';
@@ -1402,24 +1397,6 @@ function _closeNavMenu() {
   if (_navMenuClickOutside) {
     document.removeEventListener('mousedown', _navMenuClickOutside);
     _navMenuClickOutside = null;
-  }
-}
-
-async function doNavbarResetPassword() {
-  _closeNavMenu();
-  const email = STATE.fireUser?.email;
-  if (!email) return;
-  try {
-    const res = await fetch('/.netlify/functions/send-reset-password-email', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email }),
-    });
-    toast(res.status === 429
-      ? 'יותר מדי בקשות — נסה שוב מאוחר יותר'
-      : '✉️ נשלח מייל לאיפוס סיסמה');
-  } catch {
-    toast('שגיאת רשת — בדוק חיבור לאינטרנט', 'error');
   }
 }
 
@@ -1658,7 +1635,7 @@ function renderPrivacy() {
 
       <div class="privacy-section">
         <h2>השתתפות במחקר</h2>
-        <p>נתוני השימוש האנונימיים משמשים לצורך מחקר אקדמי ושיפור המערכת.<p>
+        <p>נתוני השימוש האנונימיים משמשים לצורך מחקר אקדמי ושיפור המערכת.</p>
         <p>ניתן לשנות הסכמה זו בכל עת.</p>
         <label class="consent-check-label">
           <input type="checkbox" id="privacy-consent-cb" ${currentConsent ? 'checked' : ''}
