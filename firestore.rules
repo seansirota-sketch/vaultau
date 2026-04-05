@@ -31,11 +31,11 @@ service cloud.firestore {
         && !request.resource.data.diff(resource.data).affectedKeys()
             .hasAny(['role', 'uid', 'email']);
 
-      // Admins can update any user document EXCEPT analyticsConsent (IRB protection —
-      // only the user themselves can grant or revoke research consent).
+      // Admins can update any user document EXCEPT analyticsConsent and consentAuditLog
+      // (IRB protection — only the user themselves can grant, revoke, or audit their consent).
       allow update: if isAdmin()
         && !request.resource.data.diff(resource.data).affectedKeys()
-            .hasAny(['analyticsConsent']);
+            .hasAny(['analyticsConsent', 'consentAuditLog']);
 
       // New user document creation — force role to 'student' so nobody
       // can create their doc with role:'admin' on first login.

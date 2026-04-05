@@ -1559,10 +1559,16 @@ async function submitConsent() {
     const uid = STATE.fireUser?.uid;
     if (!uid) throw new Error('לא מחובר');
 
-    const now = firebase.firestore.FieldValue.serverTimestamp();
+    const now         = firebase.firestore.FieldValue.serverTimestamp();
+    const nowISO       = new Date().toISOString(); // for arrayUnion — serverTimestamp() can't be nested
+    const consentValue = cbResearch?.checked === true;
     const updates = {
-      analyticsConsent: cbResearch?.checked === true,
-      consentDate:      now,
+      analyticsConsent: consentValue,
+      consentDate:      consentValue ? now : firebase.firestore.FieldValue.delete(),
+      consentAuditLog:  firebase.firestore.FieldValue.arrayUnion({
+        status: consentValue ? 'enabled' : 'disabled',
+        at:     nowISO,
+      }),
     };
     // Only write acceptedTerms/acceptedTermsAt if not already set (legacy users)
     if (!STATE.userData?.acceptedTerms) {
@@ -1570,7 +1576,7 @@ async function submitConsent() {
       updates.acceptedTermsAt = now;
     }
 
-    await db.collection('users').doc(uid).set(updates, { merge: true }).catch(async (err) => {
+    await db.collection('users').doc(uid).update(updates).catch(async (err) => {
       if (err?.code === 'not-found') {
         await db.collection('users').doc(uid).set({
           uid,
@@ -1579,8 +1585,9 @@ async function submitConsent() {
           role:             'student',
           acceptedTerms:    true,
           acceptedTermsAt:  now,
-          analyticsConsent: cbResearch?.checked === true,
-          consentDate:      now,
+          analyticsConsent: consentValue,
+          ...(consentValue ? { consentDate: now } : {}),
+          consentAuditLog:  [{ status: consentValue ? 'enabled' : 'disabled', at: nowISO }],
           createdAt:        now,
         });
         return;
@@ -1591,8 +1598,7 @@ async function submitConsent() {
     STATE.userData = {
       ...STATE.userData,
       acceptedTerms:    true,
-      analyticsConsent: cbResearch?.checked === true,
-      consentDate:      new Date(),
+      analyticsConsent: consentValue,
     };
 
     _getOrCreateSession();
@@ -1730,9 +1736,17 @@ async function savePrivacyConsent() {
   if (btn) { btn.disabled = true; btn.textContent = 'שומר...'; }
 
   try {
-    const uid = STATE.fireUser?.uid;
+    const uid    = STATE.fireUser?.uid;
     if (!uid) throw new Error('לא מחובר');
-    await db.collection('users').doc(uid).set({ analyticsConsent: newConsent }, { merge: true });
+    const nowISO = new Date().toISOString(); // arrayUnion can't contain serverTimestamp()
+    await db.collection('users').doc(uid).update({
+      analyticsConsent: newConsent,
+      consentDate:      newConsent ? firebase.firestore.FieldValue.serverTimestamp() : firebase.firestore.FieldValue.delete(),
+      consentAuditLog:  firebase.firestore.FieldValue.arrayUnion({
+        status: newConsent ? 'enabled' : 'disabled',
+        at:     nowISO,
+      }),
+    });
     STATE.userData = { ...STATE.userData, analyticsConsent: newConsent };
     _getOrCreateSession();
     toast(newConsent ? '✅ ההסכמה נשמרה' : '✅ ההסכמה בוטלה — הנתונים לא יאספו יותר');
