@@ -1632,3 +1632,62 @@ mjx-container { direction: ltr; }
   line-height: 1.6;
   margin: 0 0 .75rem;
 }
+
+/* Step 6: Admin activity log modal + consent badges */
+
+.admin-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,.45);
+  z-index: 9000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  animation: fadeIn .15s ease;
+}
+.admin-modal {
+  background: #fff;
+  border-radius: 16px;
+  padding: 1.4rem 1.6rem;
+  width: min(520px, 94vw);
+  max-height: 88vh;
+  overflow-y: auto;
+  box-shadow: 0 20px 60px rgba(0,0,0,.25);
+  direction: rtl;
+  animation: slideDown .18s ease;
+}
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+.activity-row {
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: .5rem .75rem;
+  transition: background .12s;
+}
+.activity-row:hover { background: #f1f5f9; }
+.consent-badge {
+  display: inline-block;
+  padding: .2rem .55rem;
+  border-radius: 6px;
+  font-size: .78rem;
+  font-weight: 700;
+  border: 1px solid transparent;
+}
+.consent-badge-yes {
+  background: #dcfce7;
+  color: #166534;
+  border-color: #86efac;
+}
+.consent-badge-no {
+  background: #f1f5f9;
+  color: #475569;
+  border-color: #cbd5e1;
+}
+.consent-badge-pending {
+  background: #fff7ed;
+  color: #9a3412;
+  border-color: #fdba74;
+}
