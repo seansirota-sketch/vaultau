@@ -230,6 +230,8 @@ async function maybeBootstrapLtiSession() {
     }
 
     await auth.signInWithCustomToken(payload.customToken);
+    _gaLogin('lti');
+    if (payload.isNewUser) _ga('sign_up', { method: 'lti' });
 
     return { attempted: true, success: true, error: '' };
   } catch (err) {
@@ -546,6 +548,22 @@ function _logEvent(name, payload = {}) {
     timestamp: firebase.firestore.FieldValue.serverTimestamp(),
     expiresAt: firebase.firestore.Timestamp.fromMillis(now + 60 * 24 * 60 * 60 * 1000),
   }).catch(e => console.warn(`_logEvent(${name}) failed:`, e));
+}
+
+/* ── GA4 AGGREGATE ANALYTICS ───────────────────────────────── */
+function _ga(eventName, params = {}) {
+  if (typeof gtag !== 'function') return;
+  const safe = { ...params };
+  delete safe.uid; delete safe.email; delete safe.name; delete safe.displayName;
+  gtag('event', eventName, safe);
+}
+function _cc()  { return STATE.courseCode || STATE.courseId || ''; }
+function _eid() { return STATE.examLabel  || STATE.examId  || ''; }
+
+// Fires _ga('login') — placed in doLogin()/maybeBootstrapLtiSession() only,
+// never in onAuthStateChanged, so no refresh inflation.
+function _gaLogin(method) {
+  _ga('login', { method });
 }
 
 /* ── BOOTSTRAP ─────────────────────────────────────────────── */
@@ -1086,6 +1104,7 @@ async function doLogin() {
   authBusy(true);
   try {
     await auth.signInWithEmailAndPassword(email, pass);
+    _gaLogin('email');
     // onAuthStateChanged will handle the authorized flow
   } catch (e) {
     // Check if this is an email-not-found scenario and a Moodle account exists
@@ -1244,6 +1263,7 @@ async function doSignupStep2() {
       _verifyState.pass
     );
     await cred.user.updateProfile({ displayName: _verifyState.name });
+    _ga('sign_up', { method: 'email' });
 
     // onAuthStateChanged will handle user-doc creation + terms modal
 
@@ -1823,6 +1843,7 @@ async function removeSavedCourse(courseId, event) {
   const idx = saved.indexOf(courseId);
   if (idx !== -1) saved.splice(idx, 1);
   await _persistSavedCourses(saved);
+  _ga('manage_course', { course_code: (STATE.courses || []).find(c => c.id === courseId)?.code || courseId, action: 'remove' });
   _renderCourseCards();
 }
 
@@ -1933,6 +1954,7 @@ async function togglePickerCourse(courseId) {
     saved.push(courseId);
   }
   await _persistSavedCourses(saved);
+  _ga('manage_course', { course_code: (STATE.courses || []).find(c => c.id === courseId)?.code || courseId, action: idx !== -1 ? 'remove' : 'add' });
 
   // Update picker item UI without re-rendering the whole list
   const item = document.getElementById(`picker-item-${courseId}`);
@@ -2048,6 +2070,7 @@ async function submitContactForm() {
       status:    'open',
     });
     closeContactModal();
+    _ga('submit_feedback', { feedback_type: type });
     toast('תודה על הפנייה! 🙏', 'info');
   } catch(e) {
     if (btn) { btn.disabled = false; btn.textContent = 'שלח'; }
@@ -2092,8 +2115,12 @@ async function renderCourse() {
       console.log('renderCourse - access denied, admin-only course');
       return goHome();
     }
+    const _isFirstCourseRender = STATE.courseCode !== (course.code || '');
     STATE.courseCode = course.code || '';
-    _logEvent('course_open', { courseCode: course.code || '' });
+    if (_isFirstCourseRender) {
+      _logEvent('course_open', { courseCode: course.code || '' });
+      _ga('view_course', { course_code: _cc() });
+    }
 
     // Fetch exams (with cache)
     // Always re-fetch exams so pdfUrl and other updates are reflected immediately
@@ -2167,7 +2194,7 @@ function countStarred(exams, starred) {
   return n;
 }
 
-function setTab(t) { STATE.tab = t; renderCourse(); }
+function setTab(t) { STATE.tab = t; _ga('switch_tab', { course_code: _cc(), tab_name: t }); renderCourse(); }
 
 function renderExamsTab(course, exams, years, sems, moeds, lecturers) {
   const tc = document.getElementById('tab-content');
@@ -2252,6 +2279,14 @@ function applyFilters(fromUser = false) {
         },
         resultCount: filtered.length,
       });
+      _ga('filter_exams', {
+        course_code:     _cc(),
+        filter_year:     fy || '',
+        filter_semester: fs || '',
+        filter_moed:     fm || '',
+        filter_lecturer: fl || '',
+        results_count:   filtered.length,
+      });
     }, 20_000);
   }
 
@@ -2319,6 +2354,11 @@ function applyFilters(fromUser = false) {
         courseCode: STATE.courseCode || STATE.courseId || '',
         type:       this.classList.contains('sol-download-btn') ? 'solution' : 'exam',
       });
+      _ga('download_file', {
+        course_code: STATE.courseCode || STATE.courseId || '',
+        exam_id:     examLabel || this.dataset.examId,
+        file_type:   this.classList.contains('sol-download-btn') ? 'solution' : 'exam',
+      });
     });
   });
 }
@@ -2375,6 +2415,7 @@ async function toggleDone(examId) {
       completedExams:  completed,
     });
     _logEvent('exam_status_changed', { examId: _examRef(examId), status: adding ? 'done' : 'undone', courseCode: STATE.courseCode || STATE.courseId });
+    _ga('mark_status', { course_code: _cc(), exam_id: _examRef(examId) || _eid(), status_type: 'done', action: adding ? 'add' : 'remove' });
   } catch (e) {
     console.error('Failed to save doneExams:', e);
     toast('שגיאה בשמירת הסימון', 'error');
@@ -2415,6 +2456,7 @@ async function toggleInProgress(examId) {
   try {
     await saveUserData(uid, { doneExams: STATE.doneExams, inProgressExams: ip });
     _logEvent('exam_status_changed', { examId: _examRef(examId), status: adding ? 'in_progress' : 'removed', courseCode: STATE.courseCode || STATE.courseId });
+    _ga('mark_status', { course_code: _cc(), exam_id: _examRef(examId) || _eid(), status_type: 'in_progress', action: adding ? 'add' : 'remove' });
   } catch (e) {
     console.error('Failed to save inProgressExams:', e);
     toast('שגיאה בשמירת הסימון', 'error');
@@ -2540,14 +2582,7 @@ async function renderExam() {
     if (!exam) return goCourse(STATE.courseId);
     STATE.examLabel = [STATE.courseCode, exam.year, _heToLat(exam.semester), _heToLat(exam.moed)].filter(Boolean).join('_');
 
-    // GA — exam view start
-    if (typeof gtag === 'function') {
-      gtag('event', 'exam_view_start', {
-        course_id: STATE.courseId,
-        exam_id:   STATE.examId,
-        exam_title: exam.title || STATE.examId,
-      });
-    }
+    _ga('view_exam', { course_code: _cc(), exam_id: _eid() });
     _logEvent('exam_open', { examId: STATE.examLabel || STATE.examId, courseCode: STATE.courseCode || STATE.courseId });
 
     // Fetch userData only if not cached; fetch votes in parallel
@@ -2726,6 +2761,7 @@ async function toggleStar(id) {
   try {
     await saveUserData(uid, { starredQuestions: starred });
     _logEvent('star_toggled', { questionId: _questionRef(id), starred: adding, courseCode: STATE.courseCode || STATE.courseId, examId: STATE.examLabel || STATE.examId || '' });
+    _ga('mark_status', { course_code: _cc(), exam_id: _eid(), question_id: _questionRef(id), status_type: 'star', action: adding ? 'add' : 'remove' });
   } catch (e) {
     console.error('Failed to save starred:', e);
     toast('שגיאה בשמירת סימון', 'error');
@@ -2794,13 +2830,7 @@ async function voteDifficulty(qid, level) {
   STATE.examVotes[qid] = localCounts;
   STATE.userData = { ...STATE.userData, difficultyVotes: userVotes };
 
-  // שליחת אירוע ל-Google Analytics
-  if (typeof gtag === 'function') {
-    gtag('event', 'rate_difficulty', {
-      level:   userVotes[qid] || 'removed',
-      exam_id: STATE.examId || 'unknown',
-    });
-  }
+  _ga('rate_content', { course_code: _cc(), exam_id: _eid(), question_id: _questionRef(qid), rating_category: 'difficulty', rating_value: userVotes[qid] || 'removed' });
   _logEvent('difficulty_voted', { questionId: _questionRef(qid), level, courseCode: STATE.courseCode || STATE.courseId, examId: STATE.examLabel || STATE.examId || '' });
 
   // Re-render just the diff buttons inside the existing dw- container
@@ -2882,13 +2912,7 @@ function _doCopy(text, event, qid = '') {
       setTimeout(() => tip.classList.remove('show'), 1400);
     }
     toast('✅ הועתק!', 'info');
-    // GA — copy question
-    if (typeof gtag === 'function') {
-      gtag('event', 'copy_question', {
-        course_id: STATE.courseId || '',
-        exam_id:   STATE.examId   || '',
-      });
-    }
+    _ga('copy_content', { course_code: _cc(), exam_id: _eid(), question_id: _questionRef(qid), content_type: 'original_question' });
     _logEvent('question_copied', { questionId: _questionRef(qid), courseCode: STATE.courseCode || STATE.courseId, examId: STATE.examLabel || STATE.examId || '' });
     // Firestore — increment copy counter for this user
     const uid = STATE.fireUser?.uid;
@@ -3063,6 +3087,7 @@ async function submitBugReport() {
       status:    'open',
     });
     closeReportBugModal();
+    _ga('submit_feedback', { feedback_type: 'bug_report' });
     toast('הדיווח נשלח — תודה! 🙏', 'info');
   } catch(e) {
     if (btn) { btn.disabled = false; btn.textContent = 'שלח דיווח'; }
@@ -3245,6 +3270,7 @@ async function _loadFromCacheOrGenerate(cacheKey, sourceText) {
           if (footer) footer.style.display = 'flex';
           _showRateButtons();
           _logEvent('ai_question_generated', { courseCode: STATE.courseCode || STATE.courseId, examId: STATE.examLabel || STATE.examId || '', questionId: _questionRef(overlay?.dataset?.qOrSubId), fromCache: true });
+          _ga('use_ai', { course_code: _cc(), exam_id: _eid(), question_id: _questionRef(overlay?.dataset?.qOrSubId), action: 'generate', from_cache: true });
           return;
         }
       }
@@ -3292,7 +3318,7 @@ async function _saveToCache(cacheKey, sourceText, generatedText) {
  * Production: streams via Edge Function (API key stays server-side).
  * Local dev:  direct call (key from Firestore emulator).
  */
-async function _callGeminiAPI(sourceText) {
+async function _callGeminiAPI(sourceText, isRegenerate = false) {
   const bodyEl = document.getElementById('gemini-body');
   const footer = document.getElementById('gemini-footer');
   if (!bodyEl) return;
@@ -3344,6 +3370,7 @@ async function _callGeminiAPI(sourceText) {
     if (footer) footer.style.display = 'flex';
     _showRateButtons();
     _logEvent('ai_question_generated', { courseCode: STATE.courseCode || STATE.courseId, examId: STATE.examLabel || STATE.examId || '', questionId: _questionRef(overlay?.dataset?.qOrSubId), fromCache: false });
+    _ga('use_ai', { course_code: _cc(), exam_id: _eid(), question_id: _questionRef(overlay?.dataset?.qOrSubId), action: isRegenerate ? 'regenerate' : 'generate', from_cache: false });
 
     // Decrement local quota counter and persist to Firestore
     if (_isLocalDev && _aiQuotaRemaining !== null && _aiQuotaRemaining > 0) {
@@ -3597,7 +3624,7 @@ function _geminiRegenerate() {
   const overlay = document.getElementById('gemini-modal-overlay');
   if (!overlay) return;
   const sourceText = overlay.dataset.sourceText || '';
-  if (sourceText) _callGeminiAPI(sourceText);
+  if (sourceText) _callGeminiAPI(sourceText, true);
 }
 
 async function _geminiSave() {
@@ -3632,6 +3659,7 @@ async function _geminiSave() {
     STATE.userData.aiQuestions.push(entry);
     toast('✅ השאלה נשמרה!', 'info');
     _logEvent('ai_question_saved', { courseCode: STATE.courseCode || STATE.courseId, examId: STATE.examLabel || STATE.examId || '', questionId: _questionRef(overlay?.dataset?.qOrSubId || '') });
+    _ga('use_ai', { course_code: _cc(), exam_id: _eid(), question_id: _questionRef(overlay?.dataset?.qOrSubId || ''), action: 'save' });
     // Brief visual feedback on button, keep modal open
     if (saveBtn) {
       saveBtn.textContent = '✅ נשמר!';
@@ -3768,6 +3796,7 @@ function _copyGeneratedQuestion() {
   navigator.clipboard.writeText(text).then(() => {
     toast('📋 השאלה הועתקה!', 'info');
     _logEvent('ai_question_copied', { courseCode: STATE.courseCode || STATE.courseId, examId: STATE.examLabel || STATE.examId || '', questionId: _questionRef(overlay.dataset.qOrSubId || '') });
+    _ga('copy_content', { course_code: _cc(), exam_id: _eid(), question_id: _questionRef(overlay.dataset.qOrSubId || ''), content_type: 'ai_generated' });
   }).catch(() => {
     toast('שגיאה בהעתקה', 'error');
   });
@@ -3809,6 +3838,7 @@ async function _rateQuestion(rating) {
     });
     toast(rating === 'up' ? '👍 תודה על המשוב!' : '👎 תודה, נשתפר!', 'info');
     _logEvent('ai_question_rated', { rating, questionId: _questionRef(qOrSubId), courseCode: STATE.courseCode || STATE.courseId, examId: STATE.examLabel || STATE.examId || '' });
+    _ga('rate_content', { course_code: _cc(), exam_id: _eid(), question_id: _questionRef(qOrSubId), rating_category: 'ai_quality', rating_value: rating });
   } catch (e) {
     console.warn('Failed to save rating:', e.message);
   }

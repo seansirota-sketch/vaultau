@@ -377,6 +377,7 @@ exports.handler = async (event) => {
     }
 
     failureStep = 'firebase_auth_create_or_update';
+    let isNewUser = true;
     await firebaseAdmin.auth().createUser({
       uid,
       email: email || undefined,
@@ -385,6 +386,7 @@ exports.handler = async (event) => {
       disabled: false,
     }).catch(async (err) => {
       if (err.code === 'auth/uid-already-exists') {
+        isNewUser = false;
         failureStep = 'firebase_auth_update_existing_uid';
         try {
           await firebaseAdmin.auth().updateUser(uid, {
@@ -395,6 +397,7 @@ exports.handler = async (event) => {
         } catch (updateErr) {
           // Existing UID may belong to a different email while requested email is already owned by another account.
           if (updateErr.code === 'auth/email-already-exists' && email) {
+            isNewUser = false;
             failureStep = 'firebase_auth_link_existing_email_from_uid';
             const existingUser = await firebaseAdmin.auth().getUserByEmail(email);
             uid = existingUser.uid;
@@ -411,6 +414,7 @@ exports.handler = async (event) => {
 
       // If this email already belongs to a web user, attach LTI identity to that user.
       if (err.code === 'auth/email-already-exists' && email) {
+        isNewUser = false;
         failureStep = 'firebase_auth_link_existing_email';
         const existingUser = await firebaseAdmin.auth().getUserByEmail(email);
         uid = existingUser.uid;
@@ -505,6 +509,7 @@ exports.handler = async (event) => {
       body: JSON.stringify({
         success: true,
         customToken,
+        isNewUser,
         user: {
           uid,
           email,
