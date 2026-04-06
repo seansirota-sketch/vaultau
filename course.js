@@ -439,6 +439,7 @@ async function initAppBootstrap() {
       // Run in background — don't block initial render
       checkAndShowSurvey();
       _getOrCreateSession();
+      _gaIdentify();
 
       // ── 3. Normal load ─────────────────────────────────────
       renderNavbar();
@@ -518,6 +519,7 @@ function _getOrCreateSession() {
       db.collection('analytics_events').add({
         uid,
         sessionId,
+        role:      _role(),
         event:     'session_start',
         payload:   {},
         timestamp: firebase.firestore.FieldValue.serverTimestamp(),
@@ -543,6 +545,7 @@ function _logEvent(name, payload = {}) {
   db.collection('analytics_events').add({
     uid,
     sessionId,
+    role:      _role(),
     event:     name,
     payload,
     timestamp: firebase.firestore.FieldValue.serverTimestamp(),
@@ -559,6 +562,15 @@ function _ga(eventName, params = {}) {
 }
 function _cc()  { return STATE.courseCode || STATE.courseId || ''; }
 function _eid() { return STATE.examLabel  || STATE.examId  || ''; }
+function _role() {
+  if (STATE.userData?.role === 'admin') return 'admin';
+  if (STATE.userData?.ltiRole) return STATE.userData.ltiRole;
+  return STATE.userData?.role || 'student';
+}
+function _gaIdentify() {
+  if (typeof gtag !== 'function') return;
+  gtag('set', 'user_properties', { user_role: _role() });
+}
 
 // Fires _ga('login') — placed in doLogin()/maybeBootstrapLtiSession() only,
 // never in onAuthStateChanged, so no refresh inflation.
