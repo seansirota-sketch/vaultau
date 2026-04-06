@@ -519,6 +519,7 @@ function _getOrCreateSession() {
       db.collection('analytics_events').add({
         uid,
         sessionId,
+        role:      _role(),
         event:     'session_start',
         payload:   {},
         timestamp: firebase.firestore.FieldValue.serverTimestamp(),
