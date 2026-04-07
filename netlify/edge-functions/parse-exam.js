@@ -47,6 +47,54 @@ function roleFromFirestoreDoc(userDoc) {
   return normalizeRole(fields?.ltiRole?.stringValue || fields?.role?.stringValue || null);
 }
 
+async function resolveCallerRole(uid, idToken, verifyDataUser, request) {
+  const claimRole = roleFromCustomAttributes(verifyDataUser?.customAttributes);
+
+  if (claimRole && ROLE_ALLOWED.has(claimRole)) {
+    return { role: claimRole, source: 'claims' };
+  }
+
+  try {
+    const userDocRes = await fetch(
+      `https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT}/databases/(default)/documents/users/${uid}`,
+      { headers: { 'Authorization': `Bearer ${idToken}` } }
+    );
+    if (!userDocRes.ok) {
+      const status = userDocRes.status;
+      if (status >= 500) {
+        console.error(`parse-exam: Firestore role lookup failed with ${status} for uid=${uid}`);
+        return { error: jsonResponse(503, { error: 'Service temporarily unavailable — please retry' }, request) };
+      }
+      console.warn(`parse-exam: Firestore role lookup denied (HTTP ${status}) for uid=${uid}`);
+      if (claimRole) {
+        return { role: claimRole, source: 'claims_denied_firestore_unavailable' };
+      }
+      return { error: jsonResponse(403, { error: 'Forbidden: unable to verify role' }, request) };
+    }
+
+    const userDoc = await userDocRes.json();
+    const dbRole = roleFromFirestoreDoc(userDoc);
+    if (ROLE_ALLOWED.has(dbRole)) {
+      if (claimRole && claimRole !== dbRole) {
+        console.warn(JSON.stringify({
+          event: 'authz_role_override',
+          endpoint: 'parse-exam',
+          uid,
+          claimRole,
+          dbRole,
+          source: 'firestore_override',
+        }));
+      }
+      return { role: dbRole, source: 'firestore' };
+    }
+
+    return { role: claimRole || dbRole || null, source: claimRole ? 'claims' : 'firestore' };
+  } catch (_roleErr) {
+    console.error('parse-exam: Firestore role check threw an exception:', _roleErr?.message);
+    return { error: jsonResponse(503, { error: 'Service temporarily unavailable — role check failed' }, request) };
+  }
+}
+
 // ── Main handler ────────────────────────────────────────────
 export default async (request, _context) => {
   if (request.method === 'OPTIONS') {
@@ -99,57 +147,22 @@ export default async (request, _context) => {
       if (!verifyData?.users?.length) return jsonResponse(401, { error: 'Unauthorized: user not found' }, request);
 
       const uid = verifyData.users[0].localId;
-      const claimRole = roleFromCustomAttributes(verifyData.users[0].customAttributes);
+      const resolved = await resolveCallerRole(uid, idToken, verifyData.users[0], request);
+      if (resolved.error) return resolved.error;
 
-      if (claimRole && !ROLE_ALLOWED.has(claimRole)) {
+      if (!ROLE_ALLOWED.has(resolved.role)) {
         console.warn(JSON.stringify({
           event: 'authz_denied',
           endpoint: 'parse-exam',
           uid,
-          role: claimRole,
-          reason: 'custom_claim_role_not_allowed',
+          role: resolved.role || 'unknown',
+          roleSource: resolved.source,
+          reason: 'role_not_allowed',
         }));
         return jsonResponse(403, { error: 'Forbidden: instructor or admin role required' }, request);
       }
 
-      if (claimRole && ROLE_ALLOWED.has(claimRole)) {
-        // Authorized via trusted token claims; skip Firestore role lookup.
-        console.log(`parse-exam: authz allow uid=${uid} role=${claimRole} source=claims`);
-      } else {
-        // Fallback role resolution from Firestore user profile (web admin / legacy accounts).
-        try {
-          const userDocRes = await fetch(
-            `https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT}/databases/(default)/documents/users/${uid}`,
-            { headers: { 'Authorization': `Bearer ${idToken}` } }
-          );
-          // Distinguish a legitimate permission deny (403/404) from a transient infra failure (5xx).
-          if (!userDocRes.ok) {
-            const status = userDocRes.status;
-            if (status >= 500) {
-              console.error(`parse-exam: Firestore role lookup failed with ${status} for uid=${uid}`);
-              return jsonResponse(503, { error: 'Service temporarily unavailable — please retry' }, request);
-            }
-            console.warn(`parse-exam: Firestore role lookup denied (HTTP ${status}) for uid=${uid}`);
-            return jsonResponse(403, { error: 'Forbidden: unable to verify role' }, request);
-          }
-          const userDoc = await userDocRes.json();
-          const dbRole = roleFromFirestoreDoc(userDoc);
-          if (!ROLE_ALLOWED.has(dbRole)) {
-            console.warn(JSON.stringify({
-              event: 'authz_denied',
-              endpoint: 'parse-exam',
-              uid,
-              role: dbRole || 'unknown',
-              reason: 'firestore_role_not_allowed',
-            }));
-            return jsonResponse(403, { error: 'Forbidden: instructor or admin role required' }, request);
-          }
-          console.log(`parse-exam: authz allow uid=${uid} role=${dbRole} source=firestore`);
-        } catch (_roleErr) {
-          console.error('parse-exam: Firestore role check threw an exception:', _roleErr?.message);
-          return jsonResponse(503, { error: 'Service temporarily unavailable — role check failed' }, request);
-        }
-      }
+      console.log(`parse-exam: authz allow uid=${uid} role=${resolved.role} source=${resolved.source}`);
     } catch (_e) {
       return jsonResponse(401, { error: 'Unauthorized: token verification failed' }, request);
     }

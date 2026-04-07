@@ -66,15 +66,33 @@ function roleFromFirestoreDoc(userDoc) {
 
 async function resolveCallerRole(uid, idToken, verifyDataUser) {
   const claimRole = roleFromCustomAttributes(verifyDataUser?.customAttributes);
-  if (claimRole) return { role: claimRole, source: 'claims' };
+  if (claimRole && ROLE_ALLOWED.has(claimRole)) {
+    return { role: claimRole, source: 'claims' };
+  }
 
   const userDocRes = await fetch(
     `${FIRESTORE_BASE}/users/${uid}`,
     { headers: { 'Authorization': `Bearer ${idToken}` } }
   );
-  if (!userDocRes.ok) return { role: null, source: 'firestore_error' };
+  if (!userDocRes.ok) {
+    return { role: claimRole || null, source: 'firestore_error' };
+  }
   const userDoc = await userDocRes.json();
-  return { role: roleFromFirestoreDoc(userDoc), source: 'firestore' };
+  const dbRole = roleFromFirestoreDoc(userDoc);
+  if (ROLE_ALLOWED.has(dbRole)) {
+    if (claimRole && claimRole !== dbRole) {
+      console.warn(JSON.stringify({
+        event: 'authz_role_override',
+        endpoint: 'generate-question',
+        uid,
+        claimRole,
+        dbRole,
+        source: 'firestore_override',
+      }));
+    }
+    return { role: dbRole, source: 'firestore' };
+  }
+  return { role: claimRole || dbRole || null, source: claimRole ? 'claims' : 'firestore' };
 }
 
 // ── Main handler ────────────────────────────────────────────
