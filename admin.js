@@ -27,10 +27,6 @@ function normalizeHttpUrl(u) {
   }
 }
 
-function normalizeImageAlign(v) {
-  return ['left', 'center', 'right'].includes(v) ? v : 'center';
-}
-
 function sanitizeStorageFileName(name) {
   return String(name || 'image')
     .toLowerCase()

@@ -65,10 +65,6 @@ function safeUrl(u) {
   catch { return ''; }
 }
 
-function normalizeImageAlign(v) {
-  return ['left', 'center', 'right'].includes(v) ? v : 'center';
-}
-
 function toast(msg, type = '') {
   const c = document.getElementById('toast-wrap');
   if (!c) return;
