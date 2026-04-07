@@ -66,15 +66,33 @@ function roleFromFirestoreDoc(userDoc) {
 
 async function resolveCallerRole(uid, idToken, verifyDataUser) {
   const claimRole = roleFromCustomAttributes(verifyDataUser?.customAttributes);
-  if (claimRole) return { role: claimRole, source: 'claims' };
+  if (claimRole && ROLE_ALLOWED.has(claimRole)) {
+    return { role: claimRole, source: 'claims' };
+  }
 
   const userDocRes = await fetch(
     `${FIRESTORE_BASE}/users/${uid}`,
     { headers: { 'Authorization': `Bearer ${idToken}` } }
   );
-  if (!userDocRes.ok) return { role: null, source: 'firestore_error' };
+  if (!userDocRes.ok) {
+    return { role: claimRole || null, source: 'firestore_error' };
+  }
   const userDoc = await userDocRes.json();
-  return { role: roleFromFirestoreDoc(userDoc), source: 'firestore' };
+  const dbRole = roleFromFirestoreDoc(userDoc);
+  if (ROLE_ALLOWED.has(dbRole)) {
+    if (claimRole && claimRole !== dbRole) {
+      console.warn(JSON.stringify({
+        event: 'authz_role_override',
+        endpoint: 'generate-question',
+        uid,
+        claimRole,
+        dbRole,
+        source: 'firestore_override',
+      }));
+    }
+    return { role: dbRole, source: 'firestore' };
+  }
+  return { role: claimRole || dbRole || null, source: claimRole ? 'claims' : 'firestore' };
 }
 
 // ── Main handler ────────────────────────────────────────────
@@ -91,29 +109,43 @@ export default async (request, _context) => {
   const idToken = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null;
   if (!idToken) return jsonResponse(401, { error: 'Unauthorized: missing token' });
 
-  const firebaseWebApiKey = Deno.env.get('FIREBASE_WEB_API_KEY');
-  if (!firebaseWebApiKey) return jsonResponse(500, { error: 'Server misconfiguration: missing Firebase key' });
+  const isLocalDev = Deno.env.get('NETLIFY_DEV') === 'true';
 
   let uid;
   let verifyDataUser;
-  try {
-    const verifyRes = await fetch(
-      `https://identitytoolkit.googleapis.com/v1/accounts:lookup?key=${firebaseWebApiKey}`,
-      { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ idToken }) }
-    );
-    if (!verifyRes.ok) return jsonResponse(401, { error: 'Unauthorized: invalid or expired token' });
-    const verifyData = await verifyRes.json();
-    if (!verifyData?.users?.length) return jsonResponse(401, { error: 'Unauthorized: user not found' });
-    verifyDataUser = verifyData.users[0];
-    uid = verifyDataUser.localId;
-  } catch {
-    return jsonResponse(401, { error: 'Unauthorized: token verification failed' });
+
+  if (isLocalDev) {
+    // Local dev: emulator tokens cannot be verified against production.
+    // Accept the token as-is and skip role enforcement.
+    console.log('⚠️ generate-question: local dev mode — skipping auth token verification');
+    uid = 'dev-user';
+    verifyDataUser = {};
+  } else {
+    const firebaseWebApiKey = Deno.env.get('FIREBASE_WEB_API_KEY');
+    if (!firebaseWebApiKey) return jsonResponse(500, { error: 'Server misconfiguration: missing Firebase key' });
+
+    try {
+      const verifyRes = await fetch(
+        `https://identitytoolkit.googleapis.com/v1/accounts:lookup?key=${firebaseWebApiKey}`,
+        { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ idToken }) }
+      );
+      if (!verifyRes.ok) return jsonResponse(401, { error: 'Unauthorized: invalid or expired token' });
+      const verifyData = await verifyRes.json();
+      if (!verifyData?.users?.length) return jsonResponse(401, { error: 'Unauthorized: user not found' });
+      verifyDataUser = verifyData.users[0];
+      uid = verifyDataUser.localId;
+    } catch {
+      return jsonResponse(401, { error: 'Unauthorized: token verification failed' });
+    }
   }
 
   try {
     // ── 1.5. Enforce role-based access (Phase 4) ─────────────
-    const { role, source } = await resolveCallerRole(uid, idToken, verifyDataUser);
-    if (!ROLE_ALLOWED.has(role)) {
+    // Skip role check in local dev (same policy as parse-exam.js).
+    const { role, source } = isLocalDev
+      ? { role: 'admin', source: 'local_dev_bypass' }
+      : await resolveCallerRole(uid, idToken, verifyDataUser);
+    if (!isLocalDev && !ROLE_ALLOWED.has(role)) {
       console.warn(JSON.stringify({
         event: 'authz_denied',
         endpoint: 'generate-question',
