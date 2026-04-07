@@ -34,6 +34,9 @@ Complete LTI 1.3 implementation for Moodle integration.
 
 ## Quick Reference
 
+### Editor & Content
+- [Image Uploading In Question Editor](./image-uploading-editor.md) — How pasted question images are uploaded, stored, and rendered
+
 ### What is the LTI integration?
 VaultAU can now authenticate users via **Moodle LTI 1.3**, allowing Moodle students to log in directly without needing a separate email/password account.
 
