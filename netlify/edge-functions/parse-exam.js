@@ -116,13 +116,22 @@ export default async (request, _context) => {
         // Authorized via trusted token claims; skip Firestore role lookup.
         console.log(`parse-exam: authz allow uid=${uid} role=${claimRole} source=claims`);
       } else {
-        // Fallback role resolution from Firestore user profile (legacy accounts).
+        // Fallback role resolution from Firestore user profile (web admin / legacy accounts).
         try {
           const userDocRes = await fetch(
             `https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT}/databases/(default)/documents/users/${uid}`,
             { headers: { 'Authorization': `Bearer ${idToken}` } }
           );
-          if (!userDocRes.ok) return jsonResponse(403, { error: 'Forbidden: unable to verify role' }, request);
+          // Distinguish a legitimate permission deny (403/404) from a transient infra failure (5xx).
+          if (!userDocRes.ok) {
+            const status = userDocRes.status;
+            if (status >= 500) {
+              console.error(`parse-exam: Firestore role lookup failed with ${status} for uid=${uid}`);
+              return jsonResponse(503, { error: 'Service temporarily unavailable — please retry' }, request);
+            }
+            console.warn(`parse-exam: Firestore role lookup denied (HTTP ${status}) for uid=${uid}`);
+            return jsonResponse(403, { error: 'Forbidden: unable to verify role' }, request);
+          }
           const userDoc = await userDocRes.json();
           const dbRole = roleFromFirestoreDoc(userDoc);
           if (!ROLE_ALLOWED.has(dbRole)) {
@@ -137,7 +146,8 @@ export default async (request, _context) => {
           }
           console.log(`parse-exam: authz allow uid=${uid} role=${dbRole} source=firestore`);
         } catch (_roleErr) {
-          return jsonResponse(403, { error: 'Forbidden: role check failed' }, request);
+          console.error('parse-exam: Firestore role check threw an exception:', _roleErr?.message);
+          return jsonResponse(503, { error: 'Service temporarily unavailable — role check failed' }, request);
         }
       }
     } catch (_e) {
