@@ -7,7 +7,7 @@ function nl2br(html){if(!html)return '';return html.replace(/\n/g,'<br>');}
  * - Converts newlines to <br> only in text segments
  * - Trims blank lines immediately adjacent to display math blocks
  */
-function formatMathText(text) {
+function formatMathText(text, inlineImages = null) {
   if (!text) return '';
 
   // Split preserving the delimiter (display math blocks)
@@ -24,6 +24,21 @@ function formatMathText(text) {
     // Regular text — trim blank lines adjacent to display blocks
     let trimmed = part.replace(/^\s*\n/, '').replace(/\n\s*$/, '');
     if (!trimmed) return '';
+    // Convert markdown image syntax to HTML image blocks.
+    trimmed = trimmed.replace(/!\[([^\]]*)\]\(([^)]+)\)/g, (_, alt, rawRef) => {
+      const ref = String(rawRef || '').trim();
+      let resolved = '';
+      if (ref.startsWith('img:')) {
+        const key = ref.slice(4);
+        const map = inlineImages && typeof inlineImages === 'object' ? inlineImages : {};
+        resolved = String(map[key] || '').trim();
+      } else {
+        resolved = ref;
+      }
+      const safe = safeUrl(resolved);
+      if (!safe) return '';
+      return `<div class="qv-inline-image align-center"><img class="qv-image" src="${safe}" alt="${esc(alt || 'image')}" loading="lazy" referrerpolicy="no-referrer"></div>`;
+    });
     // Convert markdown bold **text** to <strong>
     trimmed = trimmed.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
     // Escape & in inline math ($...$) so matrices render correctly
@@ -2502,6 +2517,8 @@ function renderStarredTab(exams, starred) {
   tc.innerHTML = items.map((it) => {
     const { q, qi, examTitle } = it;
     const subs   = q.subs || q.parts || [];
+    const qImage = safeUrl(q.imageUrl || '');
+    const qAlign = normalizeImageAlign(q.imageAlign || 'center');
     const copyId = 'copy-starred-' + q.id;
     const fullStarredText = subs.length
       ? [q.text || '', ...subs.map((s, si) => {
@@ -2514,6 +2531,8 @@ function renderStarredTab(exams, starred) {
     const partsHtml = subs.length ? `<div class="qv-parts">${subs.map((s, si) => {
       const rawLabel = s.label || (s.letter ? '(' + s.letter + ')' : '(' + String.fromCharCode(0x05D0 + si) + ')');
       const sCopyId  = 'copy-starred-s-' + s.id;
+      const sImage   = safeUrl(s.imageUrl || '');
+      const sAlign   = normalizeImageAlign(s.imageAlign || 'center');
       COPY_MAP.set(sCopyId, s.text || '');
       return `<div class="qv-part" id="sc-si-${s.id}">
         <div class="qv-part-head">
@@ -2523,6 +2542,7 @@ function renderStarredTab(exams, starred) {
           </div>
         </div>
         <div class="qv-part-text"></div>
+        ${sImage ? `<div class="qv-image-wrap qv-image-wrap-sub align-${sAlign}"><img class="qv-image" src="${sImage}" alt="תמונה לסעיף" loading="lazy" referrerpolicy="no-referrer"></div>` : ''}
       </div>`;
     }).join('')}</div>` : '';
 
@@ -2539,6 +2559,7 @@ function renderStarredTab(exams, starred) {
         </div>
       </div>
       <div class="qv-text"></div>
+      ${qImage ? `<div class="qv-image-wrap align-${qAlign}"><img class="qv-image" src="${qImage}" alt="תמונה לשאלה ${qi + 1}" loading="lazy" referrerpolicy="no-referrer"></div>` : ''}
       ${partsHtml}
     </div>`;
   }).join('');
@@ -2548,10 +2569,10 @@ function renderStarredTab(exams, starred) {
     const { q } = it;
     const subs  = q.subs || q.parts || [];
     const qEl   = tc.querySelector(`#sc-${q.id} .qv-text`);
-    if (qEl) qEl.innerHTML = formatMathText(q.text || '');
+    if (qEl) qEl.innerHTML = formatMathText(q.text || '', q.inlineImages || null);
     subs.forEach(s => {
       const sEl = tc.querySelector(`#sc-si-${s.id} .qv-part-text`);
-      if (sEl) sEl.innerHTML = formatMathText(s.text || '');
+      if (sEl) sEl.innerHTML = formatMathText(s.text || '', s.inlineImages || null);
     });
   });
 
@@ -2647,10 +2668,10 @@ async function renderExam() {
     questions.forEach(q => {
       const subs   = q.subs || q.parts || [];
       const textEl = page.querySelector(`#qc-${q.id} .qv-text`);
-      if (textEl) textEl.innerHTML = formatMathText(q.text || '');
+      if (textEl) textEl.innerHTML = formatMathText(q.text || '', q.inlineImages || null);
       subs.forEach(s => {
         const subEl = page.querySelector(`#si-${s.id} .qv-part-text`);
-        if (subEl) subEl.innerHTML = formatMathText(s.text || '');
+        if (subEl) subEl.innerHTML = formatMathText(s.text || '', s.inlineImages || null);
       });
     });
 
@@ -2672,6 +2693,8 @@ function renderQuestionCard(q, qi, starred, userVotes = {}) {
   const subs       = q.subs || q.parts || [];
   const hasSubs    = subs.length > 0;
   const qText      = q.text || '';
+  const qImage     = safeUrl(q.imageUrl || '');
+  const qAlign     = normalizeImageAlign(q.imageAlign || 'center');
   const qCopyId    = 'copy-q-' + q.id;
 
   // Top copy button copies the full question: stem + all sub-parts
@@ -2700,6 +2723,8 @@ function renderQuestionCard(q, qi, starred, userVotes = {}) {
     partsHtml = subs.map((s, si) => {
       const rawLabel   = s.label || (s.letter ? '(' + s.letter + ')' : '(' + String.fromCharCode(0x05D0 + si) + ')');
       const sText      = s.text || '';
+      const sImage     = safeUrl(s.imageUrl || '');
+      const sAlign     = normalizeImageAlign(s.imageAlign || 'center');
       const sCopyId    = 'copy-s-' + s.id;
       COPY_MAP.set(sCopyId, sText);
       const sAllowAI = s.allowAIGen === true;
@@ -2712,6 +2737,7 @@ function renderQuestionCard(q, qi, starred, userVotes = {}) {
           </div>
         </div>
         <div class="qv-part-text"></div>
+        ${sImage ? `<div class="qv-image-wrap qv-image-wrap-sub align-${sAlign}"><img class="qv-image" src="${sImage}" alt="תמונה לסעיף" loading="lazy" referrerpolicy="no-referrer"></div>` : ''}
       </div>`;
     }).join('');
     partsHtml = `<div class="qv-parts">${partsHtml}</div>`;
@@ -2734,6 +2760,7 @@ function renderQuestionCard(q, qi, starred, userVotes = {}) {
       </div>
     </div>
     <div class="qv-text"></div>
+    ${qImage ? `<div class="qv-image-wrap align-${qAlign}"><img class="qv-image" src="${qImage}" alt="תמונה לשאלה ${qi + 1}" loading="lazy" referrerpolicy="no-referrer"></div>` : ''}
     ${partsHtml}
   </div>`;
 }

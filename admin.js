@@ -17,6 +17,24 @@ function safeUrl(u) {
   catch { return ''; }
 }
 
+function normalizeHttpUrl(u) {
+  if (!u) return '';
+  try {
+    const p = new URL(String(u).trim());
+    return ['https:','http:'].includes(p.protocol) ? p.toString() : '';
+  } catch {
+    return '';
+  }
+}
+
+function sanitizeStorageFileName(name) {
+  return String(name || 'image')
+    .toLowerCase()
+    .replace(/[^a-z0-9._-]+/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '') || 'image';
+}
+
 function toast(msg, type = '') {
   const c = document.getElementById('toast-wrap');
   if (!c) return;
@@ -1652,11 +1670,13 @@ function _normalizeResult(parsed) {
       id:      genId(),
       index:   q.number || i + 1,
       text,
+      inlineImages: {},
       isBonus: bonus,
       subs:    (q.parts || []).map(p => ({
         id:    genId(),
         label: '(' + (p.letter || '') + ')',
-        text:  stripPoints(p.text || '')
+        text:  stripPoints(p.text || ''),
+        inlineImages: {},
       }))
     };
   });
@@ -1897,6 +1917,8 @@ let _editingExamId  = null;  // tracks the exam being edited (for safe update, n
 let _examPdfFile    = null;  // File object selected for PDF download upload
 let _solPdfFile     = null;  // File object selected for solution PDF upload
 let _parsedModel    = null;  // which Claude model parsed the current exam
+let _loadedExamImageUrls = new Set();
+let _pendingImageDeletes  = new Set(); // URLs uploaded this session but removed before save
 
 function onExamPdfSelected(input) {
   const file = input.files[0];
@@ -2047,6 +2069,426 @@ async function uploadSolPdf(examId) {
   });
 }
 
+async function uploadInlineImageFile(file, storagePath, onProgress) {
+  const stor = typeof storage !== 'undefined' && storage
+    ? storage
+    : firebase.storage();
+
+  if (!stor) throw new Error('Firebase Storage לא זמין — וודא שה-SDK נטען');
+
+  const ref = stor.ref(storagePath);
+
+  return await new Promise((resolve, reject) => {
+    const uploadTask = ref.put(file);
+
+    const timeout = setTimeout(() => {
+      uploadTask.cancel();
+      reject(new Error('העלאת תמונה נכשלה: חרגה מ-60 שניות'));
+    }, 60000);
+
+    uploadTask.on('state_changed',
+      (snapshot) => {
+        const pct = Math.round((snapshot.bytesTransferred / snapshot.totalBytes) * 100);
+        if (onProgress) onProgress(pct);
+      },
+      (error) => {
+        clearTimeout(timeout);
+        const messages = {
+          'storage/unauthorized':     'אין הרשאה להעלות תמונה — בדוק Firebase Storage Rules',
+          'storage/canceled':         'העלאת התמונה בוטלה',
+          'storage/unknown':          'שגיאת רשת לא ידועה',
+          'storage/quota-exceeded':   'חרגת ממכסת האחסון',
+          'storage/unauthenticated':  'לא מחובר — יש להתחבר מחדש',
+        };
+        reject(new Error(messages[error.code] || `שגיאת Storage: ${error.code} — ${error.message}`));
+      },
+      async () => {
+        clearTimeout(timeout);
+        try {
+          const url = await uploadTask.snapshot.ref.getDownloadURL();
+          resolve(url);
+        } catch (e) {
+          reject(new Error('ההעלאה הצליחה אך לא ניתן לקבל URL: ' + e.message));
+        }
+      }
+    );
+  });
+}
+
+const ALLOWED_IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp']);
+const MAX_IMAGE_SIZE_BYTES = 10 * 1024 * 1024; // 10 MB
+
+function extractImageFileFromPasteEvent(e) {
+  const items = e?.clipboardData?.items || [];
+  for (const item of items) {
+    if (item?.type && ALLOWED_IMAGE_TYPES.has(item.type)) {
+      return item.getAsFile();
+    }
+  }
+  return null;
+}
+
+function insertTextAtCursor(textarea, text) {
+  const start = textarea.selectionStart ?? textarea.value.length;
+  const end = textarea.selectionEnd ?? textarea.value.length;
+  const next = textarea.value.slice(0, start) + text + textarea.value.slice(end);
+  textarea.value = next;
+  const caret = start + text.length;
+  textarea.selectionStart = caret;
+  textarea.selectionEnd = caret;
+}
+
+function removeTokenFromText(text, ref) {
+  const escaped = String(ref || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return String(text || '')
+    .replace(new RegExp(`\\n?!\\[[^\\]]*\\]\\(${escaped}\\)\\n?`, 'g'), '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
+function deleteInlineImageFromEntity(entity, ref) {
+  if (!entity) return;
+  entity.text = removeTokenFromText(entity.text || '', ref);
+  if (String(ref || '').startsWith('img:')) {
+    const key = String(ref).slice(4);
+    if (entity.inlineImages && typeof entity.inlineImages === 'object') {
+      delete entity.inlineImages[key];
+    }
+  }
+}
+
+function removeInlineImageToken(qi, si, ref) {
+  const q = parsedQuestions[qi];
+  if (!q) return;
+  const entity = (si === null || si === undefined) ? q : q.subs?.[si];
+  if (!entity) return;
+  const entry = resolveInlineImageEntry(ref, entity.inlineImages || {});
+  deleteInlineImageFromEntity(entity, ref);
+  renderPreview();
+  // Defer Storage deletion to save time so a cancel/refresh cannot orphan the Firestore token.
+  if (entry?.url && !entry.uploading) {
+    const safe = normalizeHttpUrl(entry.url);
+    if (safe) _pendingImageDeletes.add(safe);
+  }
+}
+
+function filterInlineImagesForText(text, inlineImages) {
+  const keys = new Set(extractInlineImageKeysFromText(text));
+  return Object.fromEntries(
+    Object.entries(normalizeInlineImagesMap(inlineImages)).filter(([key]) => keys.has(key))
+  );
+}
+
+function refreshInlinePreviewContainer(containerId, text, inlineImages, idPrefix, qi, si) {
+  const el = document.getElementById(containerId);
+  if (!el) return;
+  el.innerHTML = renderEditorInlineImagePreview(text, inlineImages, idPrefix, qi, si);
+}
+
+function updateQuestionText(qi, val) {
+  if (!parsedQuestions[qi]) return;
+  parsedQuestions[qi].text = val;
+  refreshInlinePreviewContainer(`q-inline-preview-${qi}`, val, parsedQuestions[qi].inlineImages, `q-${qi}`, qi, null);
+  refreshInlinePreviewContainer(`qb-inline-preview-${qi}`, val, parsedQuestions[qi].inlineImages, `qb-${qi}`, qi, null);
+}
+
+function updateSubText(qi, si, val) {
+  if (!parsedQuestions[qi]?.subs?.[si]) return;
+  parsedQuestions[qi].subs[si].text = val;
+  refreshInlinePreviewContainer(`s-inline-preview-${qi}-${si}`, val, parsedQuestions[qi].subs[si].inlineImages, `s-${qi}-${si}`, qi, si);
+}
+
+function setDropActive(el, on) {
+  if (!el) return;
+  el.classList.toggle('pq-drop-active', !!on);
+}
+
+function getImageFileFromDropEvent(e) {
+  const files = Array.from(e?.dataTransfer?.files || []);
+  return files.find(f => ALLOWED_IMAGE_TYPES.has(String(f.type || ''))) || null;
+}
+
+async function insertImageFileIntoEntity(file, entity, textarea, successMsg, storagePathBuilder, renderCallback) {
+  if (file.size > MAX_IMAGE_SIZE_BYTES) {
+    toast(`הקובץ גדול מדי (${(file.size / 1024 / 1024).toFixed(1)} MB) — המקסימום הוא 10 MB`, 'error');
+    return;
+  }
+  entity.inlineImages = normalizeInlineImagesMap(entity.inlineImages);
+  const key = genId();
+  const token = `img:${key}`;
+  entity.inlineImages[key] = {
+    url: URL.createObjectURL(file),
+    uploading: true,
+    progress: 0,
+    error: '',
+  };
+  insertTextAtCursor(textarea, `\n![image](${token})\n`);
+  entity.text = textarea.value;
+  renderCallback();
+
+  showSpinner('📤 מעלה תמונה...');
+  try {
+    let lastPct = 0;
+    const url = await uploadInlineImageFile(file, storagePathBuilder(), (pct) => {
+      if (pct - lastPct < 10 && pct < 100) return;
+      lastPct = pct;
+      if (entity.inlineImages[key]) {
+        entity.inlineImages[key].progress = pct;
+        renderCallback();
+      }
+    });
+    entity.inlineImages[key] = { url, uploading: false, progress: 100, error: '' };
+    toast(successMsg, 'success');
+  } catch (err) {
+    if (entity.inlineImages[key]) {
+      entity.inlineImages[key].uploading = false;
+      entity.inlineImages[key].error = err.message || 'שגיאה בהעלאה';
+    }
+    toast('שגיאה בהעלאת תמונה: ' + err.message, 'error');
+  } finally {
+    renderCallback();
+    hideSpinner();
+  }
+}
+
+function collectPersistedInlineImageUrls(exam) {
+  const urls = new Set();
+  (exam?.questions || []).forEach(q => {
+    Object.values(q.inlineImages || {}).forEach(url => {
+      const safe = normalizeHttpUrl(typeof url === 'string' ? url : url?.url || '');
+      if (safe) urls.add(safe);
+    });
+    (q.subs || q.parts || []).forEach(s => {
+      Object.values(s.inlineImages || {}).forEach(url => {
+        const safe = normalizeHttpUrl(typeof url === 'string' ? url : url?.url || '');
+        if (safe) urls.add(safe);
+      });
+    });
+  });
+  return urls;
+}
+
+async function deleteStorageFileByUrl(url) {
+  const safe = normalizeHttpUrl(url);
+  if (!safe) return true;
+  const stor = typeof storage !== 'undefined' && storage ? storage : firebase.storage();
+  if (!stor?.refFromURL) return false;
+  try {
+    await stor.refFromURL(safe).delete();
+    return true;
+  } catch (e) {
+    if (e?.code === 'storage/object-not-found') return true;
+    console.warn('Could not delete removed image from storage:', safe, e?.message || e);
+    return false;
+  }
+}
+
+function extractImageRefsFromText(text) {
+  const refs = [];
+  const re = /!\[([^\]]*)\]\(([^)]+)\)/g;
+  let m;
+  while ((m = re.exec(String(text || ''))) !== null) {
+    refs.push({ alt: m[1] || 'image', ref: (m[2] || '').trim() });
+  }
+  return refs;
+}
+
+function extractInlineImageKeysFromText(text) {
+  return extractImageRefsFromText(text)
+    .map(it => it.ref)
+    .filter(ref => String(ref || '').startsWith('img:'))
+    .map(ref => ref.slice(4));
+}
+
+function normalizeInlineImagesMap(map) {
+  if (!map || typeof map !== 'object') return {};
+  return map;
+}
+
+function resolveInlineImageEntry(ref, inlineImages) {
+  if (!ref) return null;
+  if (ref.startsWith('http://') || ref.startsWith('https://')) {
+    return { url: ref, uploading: false, progress: 100, error: '' };
+  }
+  if (!ref.startsWith('img:')) return null;
+  const key = ref.slice(4);
+  const raw = normalizeInlineImagesMap(inlineImages)[key];
+  if (!raw) return null;
+  if (typeof raw === 'string') {
+    return { url: raw, uploading: false, progress: 100, error: '' };
+  }
+  return {
+    url: raw.url || '',
+    uploading: raw.uploading === true,
+    progress: Number(raw.progress || 0),
+    error: raw.error || '',
+  };
+}
+
+function renderEditorInlineImagePreview(text, inlineImages, idPrefix = '', qi = null, si = null) {
+  const refs = extractImageRefsFromText(text);
+  if (!refs.length) return '';
+
+  const cards = refs.map((it, idx) => {
+    const entry = resolveInlineImageEntry(it.ref, inlineImages);
+    if (!entry || !entry.url) return '';
+    const safe = safeUrl(entry.url);
+    if (!safe) return '';
+    const status = entry.error
+      ? esc(entry.error)
+      : (entry.uploading ? `מעלה תמונה... ${entry.progress}%` : 'הועלה');
+    const cls = entry.error ? 'error' : (entry.uploading ? '' : 'ok');
+    const qArg = qi === null || qi === undefined ? 'null' : qi;
+    const sArg = si === null || si === undefined ? 'null' : si;
+    return `<div class="pq-inline-image-card">
+      <button type="button" class="pq-inline-image-remove" onclick="removeInlineImageToken(${qArg},${sArg},'${esc(it.ref).replace(/'/g, '&#39;')}')" title="הסר תמונה">✕</button>
+      <img class="pq-inline-image-thumb" src="${safe}" alt="${esc(it.alt || 'image')}" loading="lazy" referrerpolicy="no-referrer">
+      <div class="pq-inline-image-meta">${esc(it.ref)}</div>
+      <div id="${idPrefix}-img-${idx}" class="pq-inline-image-status ${cls}">${status}</div>
+    </div>`;
+  }).join('');
+
+  if (!cards) return '';
+  return `<div class="pq-inline-image-grid">${cards}</div>`;
+}
+
+function migrateLegacyImageToInlineText(entity, alt = 'image') {
+  if (!entity || typeof entity !== 'object') return entity;
+
+  const legacyUrl = normalizeHttpUrl(entity.imageUrl || '');
+  entity.inlineImages = normalizeInlineImagesMap(entity.inlineImages);
+
+  if (legacyUrl) {
+    let existingKey = '';
+    for (const [k, v] of Object.entries(entity.inlineImages)) {
+      const url = typeof v === 'string' ? v : (v?.url || '');
+      if (normalizeHttpUrl(url) === legacyUrl) {
+        existingKey = k;
+        break;
+      }
+    }
+
+    const key = existingKey || `imglegacy${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+    if (!existingKey) entity.inlineImages[key] = legacyUrl;
+
+    const token = `![${alt}](img:${key})`;
+    const txt = String(entity.text || '');
+    const hasToken = txt.includes(`img:${key}`) || txt.includes(`(${legacyUrl})`);
+    if (!hasToken) {
+      entity.text = txt.trim() ? `${txt.trim()}\n${token}` : token;
+    }
+  }
+
+  // Keep editor source-of-truth in text + inlineImages.
+  delete entity.imageUrl;
+  delete entity.imageAlign;
+  delete entity.imageStoragePath;
+  return entity;
+}
+
+async function pasteImageIntoQuestionText(e, qi) {
+  const file = extractImageFileFromPasteEvent(e);
+  if (!file) return;
+  e.preventDefault();
+
+  const q = parsedQuestions[qi];
+  if (!q) return;
+  q.id = q.id || genId();
+  const ta = e.target;
+  await insertImageFileIntoEntity(
+    file,
+    q,
+    ta,
+    '✅ תמונה הודבקה לטקסט השאלה',
+    () => {
+      const owner = adminUser?.uid || 'admin';
+      const draftExamId = _editingExamId || `draft-${owner}`;
+      return `question-images/${draftExamId}/q-${q.id}-${Date.now()}-${sanitizeStorageFileName(file.name)}`;
+    },
+    () => renderPreview()
+  );
+}
+
+async function pasteImageIntoSubText(e, qi, si) {
+  const file = extractImageFileFromPasteEvent(e);
+  if (!file) return;
+  e.preventDefault();
+
+  const q = parsedQuestions[qi];
+  const s = q?.subs?.[si];
+  if (!q || !s) return;
+  q.id = q.id || genId();
+  s.id = s.id || genId();
+  const ta = e.target;
+  await insertImageFileIntoEntity(
+    file,
+    s,
+    ta,
+    '✅ תמונה הודבקה לטקסט הסעיף',
+    () => {
+      const owner = adminUser?.uid || 'admin';
+      const draftExamId = _editingExamId || `draft-${owner}`;
+      return `question-images/${draftExamId}/q-${q.id}/s-${s.id}-${Date.now()}-${sanitizeStorageFileName(file.name)}`;
+    },
+    () => renderPreview()
+  );
+}
+
+function allowImageDrop(e) {
+  e.preventDefault();
+  setDropActive(e.currentTarget, true);
+}
+
+function clearImageDropState(e) {
+  setDropActive(e.currentTarget, false);
+}
+
+async function dropImageIntoQuestionText(e, qi) {
+  e.preventDefault();
+  setDropActive(e.currentTarget, false);
+  const file = getImageFileFromDropEvent(e);
+  if (!file) return;
+  const q = parsedQuestions[qi];
+  if (!q) return;
+  q.id = q.id || genId();
+  await insertImageFileIntoEntity(
+    file,
+    q,
+    e.currentTarget,
+    '✅ תמונה נוספה לשאלה',
+    () => {
+      const owner = adminUser?.uid || 'admin';
+      const draftExamId = _editingExamId || `draft-${owner}`;
+      return `question-images/${draftExamId}/q-${q.id}-${Date.now()}-${sanitizeStorageFileName(file.name)}`;
+    },
+    () => renderPreview()
+  );
+}
+
+async function dropImageIntoSubText(e, qi, si) {
+  e.preventDefault();
+  setDropActive(e.currentTarget, false);
+  const file = getImageFileFromDropEvent(e);
+  if (!file) return;
+  const q = parsedQuestions[qi];
+  const s = q?.subs?.[si];
+  if (!q || !s) return;
+  q.id = q.id || genId();
+  s.id = s.id || genId();
+  await insertImageFileIntoEntity(
+    file,
+    s,
+    e.currentTarget,
+    '✅ תמונה נוספה לסעיף',
+    () => {
+      const owner = adminUser?.uid || 'admin';
+      const draftExamId = _editingExamId || `draft-${owner}`;
+      return `question-images/${draftExamId}/q-${q.id}/s-${s.id}-${Date.now()}-${sanitizeStorageFileName(file.name)}`;
+    },
+    () => renderPreview()
+  );
+}
+
 async function runParser() {
   const raw = document.getElementById('raw-text')?.value || '';
   if (!raw.trim()) { toast('הטקסט ריק', 'error'); return; }
@@ -2147,13 +2589,23 @@ function renderPreview() {
         ? `<div style="font-size:.78rem;color:var(--muted);margin:.6rem 1.1rem .2rem;font-weight:600;display:flex;align-items:center;gap:.4rem">טקסט פתיחה (אופציונלי):
              <button class="btn-icon btn-sm btn-remove-intro" onclick="removeIntro(${i})" title="הסר הקדמה">✕</button></div>
            <textarea class="pq-textarea" id="qt-${i}" rows="2"
-             oninput="parsedQuestions[${i}].text=this.value">${esc(q.text)}</textarea>`
+             oninput="updateQuestionText(${i},this.value)"
+             onpaste="pasteImageIntoQuestionText(event,${i})"
+             ondragover="allowImageDrop(event)"
+             ondragleave="clearImageDropState(event)"
+             ondrop="dropImageIntoQuestionText(event,${i})">${esc(q.text)}</textarea>
+           <div id="q-inline-preview-${i}">${renderEditorInlineImagePreview(q.text, q.inlineImages, `q-${i}`, i, null)}</div>`
         : `<input type="hidden" id="qt-${i}" value="">`}
       ${q.subs.length ? renderSubsPreview(q.subs, i) : `
         <div style="font-size:.78rem;color:var(--muted);margin:.6rem 1.1rem .2rem;font-weight:600">תוכן השאלה:</div>
         <textarea class="pq-textarea" id="qbody-${i}" rows="4"
-          oninput="ensureBody(${i},this.value)"
-          placeholder="טקסט השאלה כאן...">${esc(q._body || q.text)}</textarea>`}
+          oninput="updateQuestionText(${i},this.value)"
+          onpaste="pasteImageIntoQuestionText(event,${i})"
+          ondragover="allowImageDrop(event)"
+          ondragleave="clearImageDropState(event)"
+          ondrop="dropImageIntoQuestionText(event,${i})"
+          placeholder="טקסט השאלה כאן...">${esc(q.text)}</textarea>
+        <div id="qb-inline-preview-${i}">${renderEditorInlineImagePreview(q.text, q.inlineImages, `qb-${i}`, i, null)}</div>`}
     </div>`).join('');
 
   if (window.MathJax) MathJax.typesetPromise([grid]);
@@ -2161,21 +2613,42 @@ function renderPreview() {
 
 function ensureBody(qi, val) { parsedQuestions[qi].text = val; }
 
+function hasPendingImageUploads() {
+  return parsedQuestions.some(q => {
+    const qMap = normalizeInlineImagesMap(q.inlineImages);
+    const qUploading = Object.values(qMap).some(v => typeof v === 'object' && v?.uploading === true);
+    if (qUploading) return true;
+    return (q.subs || []).some(s => {
+      const sMap = normalizeInlineImagesMap(s.inlineImages);
+      return Object.values(sMap).some(v => typeof v === 'object' && v?.uploading === true);
+    });
+  });
+}
+
 function renderSubsPreview(subs, qi) {
   const heLetters = ['א','ב','ג','ד','ה','ו','ז','ח','ט','י','כ','ל'];
   return `<div class="sub-preview" id="static-subs-${qi}">
     <div style="font-size:.78rem;color:var(--muted);margin:.55rem 1.1rem .3rem;font-weight:600">סעיפים:</div>
     ${subs.map((s, si) => `
     <div class="sub-preview-item" style="margin:0 1.1rem .5rem">
-      <span class="sub-preview-lbl">${esc(s.label || ('(' + (heLetters[si] || si + 1) + ')'))}</span>
-      <textarea class="pq-textarea" style="min-height:52px;flex:1" id="st-${qi}-${si}"
-        oninput="parsedQuestions[${qi}].subs[${si}].text=this.value">${esc(s.text)}</textarea>
-      <label class="bonus-chk-label" style="font-size:.72rem;white-space:nowrap" title="אפשר יצירת AI לסעיף זה">
-        <input type="checkbox" ${s.allowAIGen === true ? 'checked' : ''}
-          onchange="parsedQuestions[${qi}].subs[${si}].allowAIGen=this.checked"> ✨
-      </label>
-      <button class="btn-icon btn-sm" style="background:var(--danger-l);color:var(--danger);margin-right:.3rem;flex-shrink:0"
-        onclick="removeSub(${qi},${si})" title="מחק סעיף">✕</button>
+      <div class="sub-preview-top">
+        <span class="sub-preview-lbl">${esc(s.label || ('(' + (heLetters[si] || si + 1) + ')'))}</span>
+        <div class="sub-preview-actions">
+          <label class="bonus-chk-label" style="font-size:.72rem;white-space:nowrap" title="אפשר יצירת AI לסעיף זה">
+            <input type="checkbox" ${s.allowAIGen === true ? 'checked' : ''}
+              onchange="parsedQuestions[${qi}].subs[${si}].allowAIGen=this.checked"> ✨
+          </label>
+          <button class="btn-icon btn-sm" style="background:var(--danger-l);color:var(--danger);flex-shrink:0"
+            onclick="removeSub(${qi},${si})" title="מחק סעיף">✕</button>
+        </div>
+      </div>
+      <textarea class="pq-textarea sub-pq-textarea" id="st-${qi}-${si}"
+        oninput="updateSubText(${qi},${si},this.value)"
+        onpaste="pasteImageIntoSubText(event,${qi},${si})"
+        ondragover="allowImageDrop(event)"
+        ondragleave="clearImageDropState(event)"
+        ondrop="dropImageIntoSubText(event,${qi},${si})">${esc(s.text)}</textarea>
+      <div id="s-inline-preview-${qi}-${si}">${renderEditorInlineImagePreview(s.text, s.inlineImages, `s-${qi}-${si}`, qi, si)}</div>
     </div>`).join('')}
   </div>`;
 }
@@ -2183,7 +2656,12 @@ function renderSubsPreview(subs, qi) {
 function addSubToPreview(qi) {
   const heLetters = ['א','ב','ג','ד','ה','ו','ז','ח','ט','י','כ','ל'];
   const n = parsedQuestions[qi].subs.length;
-  parsedQuestions[qi].subs.push({ id: genId(), label: '(' + (heLetters[n] || String(n + 1)) + ')', text: '' });
+  parsedQuestions[qi].subs.push({
+    id: genId(),
+    label: '(' + (heLetters[n] || String(n + 1)) + ')',
+    text: '',
+    inlineImages: {},
+  });
   renderPreview();
   setTimeout(() => document.getElementById(`pqc-${qi}`)?.scrollIntoView({ behavior: 'smooth', block: 'nearest' }), 50);
 }
@@ -2284,7 +2762,16 @@ async function submitAddExam() {
     if (raw.trim()) parsedQuestions = parseExamText(raw);
   }
 
-  const questions = parsedQuestions.filter(q => q.text || q.subs.length);
+  if (hasPendingImageUploads()) {
+    toast('יש העלאות תמונה בתהליך. המתן לסיום לפני שמירה.', 'error');
+    return;
+  }
+
+  const questions = parsedQuestions.filter(q => {
+    const subs = q.subs || [];
+    const hasSubContent = subs.some(s => String(s.text || '').trim());
+    return String(q.text || '').trim() || hasSubContent;
+  });
   if (!questions.length && !confirm('לא זוהו שאלות. לשמור מבחן ריק?')) return;
 
   const currentQuality = _lastParseQuality || computeParseQuality({
@@ -2387,12 +2874,24 @@ async function submitAddExam() {
       questions: questions.map(q => ({
         id:      q.id || genId(),
         text:    q.text,
+        inlineImages: Object.fromEntries(
+          Object.entries(filterInlineImagesForText(q.text, q.inlineImages)).map(([k, v]) => {
+            const url = typeof v === 'string' ? normalizeHttpUrl(v) : normalizeHttpUrl(v?.url || '');
+            return [k, url || ''];
+          }).filter(([, url]) => !!url)
+        ),
         isBonus: q.isBonus === true,
         allowAIGen: q.allowAIGen === true,
         subs:    (q.subs || []).map(s => ({
           id:    s.id || genId(),
           label: s.label,
           text:  s.text,
+          inlineImages: Object.fromEntries(
+            Object.entries(filterInlineImagesForText(s.text, s.inlineImages)).map(([k, v]) => {
+              const url = typeof v === 'string' ? normalizeHttpUrl(v) : normalizeHttpUrl(v?.url || '');
+              return [k, url || ''];
+            }).filter(([, url]) => !!url)
+          ),
           allowAIGen: s.allowAIGen === true,
         }))
       })),
@@ -2405,6 +2904,21 @@ async function submitAddExam() {
     }
     // Always set createdAt for new exams; editing preserves it via the exam object
     await db.collection('exams').doc(examId).set(exam);
+
+    if (_editingExamId && _loadedExamImageUrls.size) {
+      const newUrls = collectPersistedInlineImageUrls(exam);
+      const removed = [..._loadedExamImageUrls].filter(url => !newUrls.has(url));
+      for (const url of removed) {
+        _pendingImageDeletes.delete(url); // avoid double-delete
+        await deleteStorageFileByUrl(url);
+      }
+      _loadedExamImageUrls = newUrls;
+    }
+    // Delete images that were uploaded this session but removed before saving.
+    for (const url of _pendingImageDeletes) {
+      await deleteStorageFileByUrl(url);
+    }
+    _pendingImageDeletes.clear();
 
     // Save a curated example for few-shot prompting; low-confidence stays unapproved.
     try {
@@ -2441,6 +2955,8 @@ function resetForm() {
   parsedQuestions = [];
   _editingExamId  = null;
   _parsedModel    = null;
+  _loadedExamImageUrls = new Set();
+  _pendingImageDeletes  = new Set();
   _lastParseQuality = null;
   clearImport();
   document.getElementById('ae-error')?.classList.remove('show');
@@ -2519,6 +3035,7 @@ async function renderUserStats() {
       const copies     = u.copyCount || 0;
       const accepted   = u.acceptedTerms === true;
       const aiCount    = (u.aiQuestions || []).length;
+      // analyticsConsent: true = consented, false = opted out, undefined = never shown
       const consent    = u.analyticsConsent;
       const canViewLog = consent === true;
       const uid        = u.uid || u._docId || '';
@@ -2691,7 +3208,6 @@ function _fmtPayload(payload) {
 async function openActivityLogModal(uid, email) {
   const existing = document.getElementById('activity-log-modal');
   if (existing) existing.remove();
-
   const overlay = document.createElement('div');
   overlay.id = 'activity-log-modal';
   overlay.className = 'admin-modal-overlay';
@@ -3119,9 +3635,12 @@ async function editExam(courseId, examId) {
 
     // ── Questions ──────────────────────────────────────────────
     parsedQuestions = (exam.questions || []).map(q => ({
-      ...q,
-      subs: (q.subs || q.parts || []).map(s => ({ ...s }))
+      ...migrateLegacyImageToInlineText({ ...q, inlineImages: normalizeInlineImagesMap(q.inlineImages) }, 'question-image'),
+      subs: (q.subs || q.parts || []).map(s => (
+        migrateLegacyImageToInlineText({ ...s, inlineImages: normalizeInlineImagesMap(s.inlineImages) }, 'sub-image')
+      ))
     }));
+    _loadedExamImageUrls = collectPersistedInlineImageUrls(exam);
 
     if (parsedQuestions.length) {
       renderPreview();
