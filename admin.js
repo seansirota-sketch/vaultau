@@ -1922,6 +1922,7 @@ let _examPdfFile    = null;  // File object selected for PDF download upload
 let _solPdfFile     = null;  // File object selected for solution PDF upload
 let _parsedModel    = null;  // which Claude model parsed the current exam
 let _loadedExamImageUrls = new Set();
+let _pendingImageDeletes  = new Set(); // URLs uploaded this session but removed before save
 
 function onExamPdfSelected(input) {
   const file = input.files[0];
@@ -2118,10 +2119,13 @@ async function uploadInlineImageFile(file, storagePath, onProgress) {
   });
 }
 
+const ALLOWED_IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp']);
+const MAX_IMAGE_SIZE_BYTES = 10 * 1024 * 1024; // 10 MB
+
 function extractImageFileFromPasteEvent(e) {
   const items = e?.clipboardData?.items || [];
   for (const item of items) {
-    if (item?.type && item.type.startsWith('image/')) {
+    if (item?.type && ALLOWED_IMAGE_TYPES.has(item.type)) {
       return item.getAsFile();
     }
   }
@@ -2157,7 +2161,7 @@ function deleteInlineImageFromEntity(entity, ref) {
   }
 }
 
-async function removeInlineImageToken(qi, si, ref) {
+function removeInlineImageToken(qi, si, ref) {
   const q = parsedQuestions[qi];
   if (!q) return;
   const entity = (si === null || si === undefined) ? q : q.subs?.[si];
@@ -2165,11 +2169,10 @@ async function removeInlineImageToken(qi, si, ref) {
   const entry = resolveInlineImageEntry(ref, entity.inlineImages || {});
   deleteInlineImageFromEntity(entity, ref);
   renderPreview();
+  // Defer Storage deletion to save time so a cancel/refresh cannot orphan the Firestore token.
   if (entry?.url && !entry.uploading) {
-    const deleted = await deleteStorageFileByUrl(entry.url);
-    if (!deleted) {
-      toast('התמונה הוסרה מהעורך, אבל מחיקת הקובץ מ-Storage נכשלה. שמירה תנסה שוב.', 'warn');
-    }
+    const safe = normalizeHttpUrl(entry.url);
+    if (safe) _pendingImageDeletes.add(safe);
   }
 }
 
@@ -2206,12 +2209,16 @@ function setDropActive(el, on) {
 
 function getImageFileFromDropEvent(e) {
   const files = Array.from(e?.dataTransfer?.files || []);
-  return files.find(f => String(f.type || '').startsWith('image/')) || null;
+  return files.find(f => ALLOWED_IMAGE_TYPES.has(String(f.type || ''))) || null;
 }
 
 async function insertImageFileIntoEntity(file, entity, textarea, successMsg, storagePathBuilder, renderCallback) {
+  if (file.size > MAX_IMAGE_SIZE_BYTES) {
+    toast(`הקובץ גדול מדי (${(file.size / 1024 / 1024).toFixed(1)} MB) — המקסימום הוא 10 MB`, 'error');
+    return;
+  }
   entity.inlineImages = normalizeInlineImagesMap(entity.inlineImages);
-  const key = `img${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+  const key = genId();
   const token = `img:${key}`;
   entity.inlineImages[key] = {
     url: URL.createObjectURL(file),
@@ -2906,10 +2913,16 @@ async function submitAddExam() {
       const newUrls = collectPersistedInlineImageUrls(exam);
       const removed = [..._loadedExamImageUrls].filter(url => !newUrls.has(url));
       for (const url of removed) {
+        _pendingImageDeletes.delete(url); // avoid double-delete
         await deleteStorageFileByUrl(url);
       }
       _loadedExamImageUrls = newUrls;
     }
+    // Delete images that were uploaded this session but removed before saving.
+    for (const url of _pendingImageDeletes) {
+      await deleteStorageFileByUrl(url);
+    }
+    _pendingImageDeletes.clear();
 
     // Save a curated example for few-shot prompting; low-confidence stays unapproved.
     try {
@@ -2947,6 +2960,7 @@ function resetForm() {
   _editingExamId  = null;
   _parsedModel    = null;
   _loadedExamImageUrls = new Set();
+  _pendingImageDeletes  = new Set();
   _lastParseQuality = null;
   clearImport();
   document.getElementById('ae-error')?.classList.remove('show');
