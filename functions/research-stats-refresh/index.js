@@ -178,7 +178,34 @@ async function runRefresh() {
   }
   console.log(`question docs: ${questionRows.length} rows → ${questionRows.length} docs`);
 
-  // ── 3. Exam aggregate docs ────────────────────────────────────────────────
+  // ── 3. Exam daily views (popularity by exam_open events) ──────────────────
+  const examDayRows = await queryBQ(sqlExamDailyViews());
+  const examDayBatches = chunkArray(examDayRows, 400);
+  for (const chunk of examDayBatches) {
+    const batch = firestore.batch();
+    for (const row of chunk) {
+      const code   = String(row.courseCode || '').trim();
+      const examId = String(row.examId     || '').trim();
+      const dateStr = row.date && row.date.value ? row.date.value : String(row.date);
+      if (!code || !examId) continue;
+      courseCodesWithData.add(code);
+      const docId = `examday_${code}_${examId}_${dateStr}`;
+      batch.set(
+        firestore.collection('research_stats').doc(docId),
+        {
+          courseCode:     code,
+          examId,
+          date:           dateStr,
+          uniqueViewers:  Number(row.uniqueViewers) || 0,
+        },
+        { merge: false },
+      );
+    }
+    await batch.commit();
+  }
+  console.log(`examday docs: ${examDayRows.length} rows`);
+
+  // ── 4. Exam aggregate docs (deep-dive) ────────────────────────────────────
   const examRows    = await queryBQ(sqlExamStats());
   const examQRows   = await queryBQ(sqlExamQuestionList());
 
@@ -215,20 +242,18 @@ async function runRefresh() {
 
   const allExamRows = Array.from(allExamIds).map(examId => {
     const row = examStatusMap[examId];
-    const attempted = row ? Number(row.totalAttempted) || 0 : 0;
-    const finished  = row ? Math.min(Number(row.totalFinished) || 0, attempted) : 0;
-    return { examId, attempted, finished };
+    const finished  = row ? Number(row.totalFinished) || 0 : 0;
+    return { examId, finished };
   });
 
   const examBatches = chunkArray(allExamRows, 400);
   for (const chunk of examBatches) {
     const batch = firestore.batch();
-    for (const { examId, attempted, finished } of chunk) {
+    for (const { examId, finished } of chunk) {
       batch.set(
         firestore.collection('research_stats').doc(`exam_${examId}`),
         {
           examId,
-          totalAttempted: attempted,
           totalFinished:  finished,
           questions:      qByExam[examId] || [],
         },
@@ -239,7 +264,7 @@ async function runRefresh() {
   }
   console.log(`exam docs: ${allExamRows.length} docs (${examRows.length} with status data)`);
 
-  // ── 4. Update _meta ────────────────────────────────────────────────────
+  // ── 5. Update _meta ────────────────────────────────────────────────────
   await firestore.collection('research_stats').doc('_meta').set(
     {
       coursesWithData: Array.from(courseCodesWithData).sort(),
@@ -338,15 +363,31 @@ function sqlQuestionStats() {
 }
 
 /**
- * Per-exam: distinct users who attempted and finished.
+ * Per-exam daily unique viewers — for popularity ranking.
+ * Source: events_safe — counts distinct users who opened each exam per day.
+ */
+function sqlExamDailyViews() {
+  return `
+    SELECT
+      courseCode,
+      examId,
+      DATE(event_datetime_il) AS date,
+      COUNT(DISTINCT uid_hash) AS uniqueViewers
+    FROM ${view('events_safe')}
+    WHERE event = 'exam_open'
+      AND examId IS NOT NULL
+    GROUP BY 1, 2, 3
+  `;
+}
+
+/**
+ * Per-exam: distinct users who finished (done).
  * Source: latest_exam_status — already deduped to 1 row per (uid_hash, examId).
- * attempted = all rows for that exam   finished = rows where action_status = 'done'.
  */
 function sqlExamStats() {
   return `
     SELECT
       examId,
-      COUNT(DISTINCT uid_hash)                                      AS totalAttempted,
       COUNT(DISTINCT IF(action_status = 'done', uid_hash, NULL))    AS totalFinished
     FROM ${view('latest_exam_status')}
     WHERE examId IS NOT NULL

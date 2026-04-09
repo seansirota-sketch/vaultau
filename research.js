@@ -153,6 +153,7 @@ const STATE = {
   allDailyDocs: [],          // all daily_* docs loaded for current course
   allQuestionDocs: [],       // all question_* docs for current course
   allExamDocs: [],           // all exam_* docs for current course
+  allExamDayDocs: [],        // all examday_* docs for current course
   currentExamAnalyticsId: null,
   currentExamDoc: null,      // research_stats exam doc
   activeTab: 'overview',
@@ -317,6 +318,7 @@ async function rpSelectCourse(courseCode, firestoreId) {
   STATE.allDailyDocs = [];
   STATE.allQuestionDocs = [];
   STATE.allExamDocs = [];
+  STATE.allExamDayDocs = [];
 
   if (!courseCode) {
     showOverviewEmpty();
@@ -359,7 +361,7 @@ async function loadDailyAndQuestionDocs(courseCode) {
     // Daily docs: range query by doc ID prefix pattern
     const startId = `daily_${courseCode}_0`;   // '0' < any digit
     const endId   = `daily_${courseCode}_~`;   // '~' > any digit/letter in ASCII
-    const [dailySnap, questionSnap, examSnap] = await Promise.all([
+    const [dailySnap, questionSnap, examSnap, examDaySnap] = await Promise.all([
       db.collection('research_stats')
         .orderBy(firebase.firestore.FieldPath.documentId())
         .startAt(startId).endAt(endId)
@@ -374,15 +376,22 @@ async function loadDailyAndQuestionDocs(courseCode) {
         .startAt(`exam_${courseCode}_`)
         .endAt(`exam_${courseCode}_~`)
         .get(),
+      db.collection('research_stats')
+        .orderBy(firebase.firestore.FieldPath.documentId())
+        .startAt(`examday_${courseCode}_`)
+        .endAt(`examday_${courseCode}_~`)
+        .get(),
     ]);
     STATE.allDailyDocs    = dailySnap.docs.map(d => ({ id: d.id, ...d.data() }));
     STATE.allQuestionDocs = questionSnap.docs.map(d => ({ id: d.id, ...d.data() }));
     STATE.allExamDocs     = examSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+    STATE.allExamDayDocs  = examDaySnap.docs.map(d => ({ id: d.id, ...d.data() }));
   } catch (err) {
     console.error('loadDailyAndQuestionDocs error:', err);
     STATE.allDailyDocs = [];
     STATE.allQuestionDocs = [];
     STATE.allExamDocs = [];
+    STATE.allExamDayDocs = [];
   }
 }
 
@@ -443,8 +452,8 @@ function renderOverviewFromState() {
   renderTopTable('rp-table-easiest', sortByEasiest(allQuestionDocs).slice(0, 7), 'easy');
   renderSavedTable('rp-table-saved', sortBySaved(allQuestionDocs).slice(0, 7));
 
-  // Popular exams table
-  renderPopularExamsTable('rp-table-popular', STATE.allExamDocs);
+  // Popular exams table (date-filtered exam_open views)
+  renderPopularExamsTable('rp-table-popular', STATE.allExamDayDocs, dateFrom, dateTo);
 
   document.getElementById('rp-overview-content').style.display = 'block';
 }
@@ -579,29 +588,38 @@ function renderTopTable(tableId, questions, mode = 'hard') {
   }).join('');
 }
 
-function renderPopularExamsTable(tableId, examDocs) {
+function renderPopularExamsTable(tableId, examDayDocs, dateFrom, dateTo) {
   const tbody = document.querySelector(`#${tableId} tbody`);
   if (!tbody) return;
-  // Sort by total engagement = totalAttempted (in_progress + done users)
-  const sorted = [...examDocs]
-    .filter(e => (e.totalAttempted || 0) > 0)
-    .sort((a, b) => (b.totalAttempted || 0) - (a.totalAttempted || 0))
+  // Filter by date range
+  const fromStr = dateFrom ? toDateStr(dateFrom) : '0';
+  const toStr   = dateTo   ? toDateStr(dateTo)   : '9999-99-99';
+  const filtered = examDayDocs.filter(d => d.date >= fromStr && d.date <= toStr);
+  // Aggregate uniqueViewers per examId
+  const examMap = {};
+  for (const d of filtered) {
+    const eid = d.examId || '';
+    if (!eid) continue;
+    examMap[eid] = (examMap[eid] || 0) + (d.uniqueViewers || 0);
+  }
+  const sorted = Object.entries(examMap)
+    .filter(([, v]) => v > 0)
+    .sort((a, b) => b[1] - a[1])
     .slice(0, 7);
   if (sorted.length === 0) {
     tbody.innerHTML = `<tr><td colspan="3" class="rp-no-data-inline">אין נתונים</td></tr>`;
     return;
   }
-  tbody.innerHTML = sorted.map((e, i) => {
-    const parsed = parseAnalyticsExamId(e.examId || '');
+  tbody.innerHTML = sorted.map(([examId, viewers], i) => {
+    const parsed = parseAnalyticsExamId(examId);
     const label = parsed
       ? `${parsed.year} סמ' ${parsed.semester} / מועד ${parsed.moed}`
-      : esc(e.examId || '');
-    const attempted = e.totalAttempted || 0;
+      : esc(examId);
     return `
       <tr>
         <td><span class="rp-rank-num">${i + 1}</span></td>
         <td>${label}</td>
-        <td style="color:var(--primary);font-weight:600">${esc(String(attempted))}</td>
+        <td style="color:var(--primary);font-weight:600">${esc(String(viewers))}</td>
       </tr>`;
   }).join('');
 }
@@ -697,7 +715,6 @@ async function rpSelectExam(examAnalyticsId) {
 function renderExamDeepdive(examDoc) {
   // KPIs
   renderKPIGrid('rp-exam-kpi-grid', [
-    { label: 'סטודנטים שניסו',  value: (examDoc.totalAttempted || 0).toLocaleString('he-IL') },
     { label: 'סטודנטים שסיימו', value: (examDoc.totalFinished  || 0).toLocaleString('he-IL') },
   ]);
 
