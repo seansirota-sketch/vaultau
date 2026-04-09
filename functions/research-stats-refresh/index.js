@@ -239,9 +239,12 @@ async function runRefresh() {
   }
   console.log(`exam docs: ${allExamRows.length} docs (${examRows.length} with status data)`);
 
-  // ── 4. Update _meta.coursesWithData ──────────────────────────────────────
+  // ── 4. Update _meta ────────────────────────────────────────────────────
   await firestore.collection('research_stats').doc('_meta').set(
-    { coursesWithData: Array.from(courseCodesWithData).sort() },
+    {
+      coursesWithData: Array.from(courseCodesWithData).sort(),
+      examIdsWithData: Array.from(allExamIds).sort(),
+    },
     { merge: true },
   );
 }

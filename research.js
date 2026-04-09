@@ -149,6 +149,7 @@ const STATE = {
   currentCourseCode: null,
   currentCourseFirestoreId: null,  // Firestore UUID for the selected course
   coursesWithData: [],
+  examIdsWithData: [],       // all examIds that have any analytics data
   allDailyDocs: [],          // all daily_* docs loaded for current course
   allQuestionDocs: [],       // all question_* docs for current course
   currentExamAnalyticsId: null,
@@ -255,10 +256,10 @@ async function loadCourseDropdown() {
       db.collection('research_stats').doc('_meta').get(),
     ]);
 
-    const coursesWithData = metaSnap.exists
-      ? (metaSnap.data().coursesWithData || [])
-      : [];
-    STATE.coursesWithData = coursesWithData;
+    const metaData = metaSnap.exists ? metaSnap.data() : {};
+    const coursesWithData = metaData.coursesWithData || [];
+    STATE.coursesWithData  = coursesWithData;
+    STATE.examIdsWithData  = metaData.examIdsWithData || [];
 
     if (metaSnap.exists && metaSnap.data().lastRefresh) {
       const ts = metaSnap.data().lastRefresh.toDate
@@ -596,10 +597,8 @@ async function loadExamDropdown(courseCode, firestoreId) {
     // Sort by year descending in JS (avoids needing a composite Firestore index)
     const docs = snap.docs.slice().sort((a, b) => (b.data().year || 0) - (a.data().year || 0));
 
-    // Build a set of examAnalyticsIds that have stats
-    const statsExamIds = new Set(
-      STATE.allQuestionDocs.map(q => q.examId)
-    );
+    // Build a set of examAnalyticsIds that have any stats (question votes OR completions)
+    const statsExamIds = new Set(STATE.examIdsWithData);
 
     docs.forEach(doc => {
       const d = doc.data();
