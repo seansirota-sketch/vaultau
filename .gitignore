@@ -28,6 +28,9 @@ firebase-export-*/
 # VS Code agent customization files (local only)
 .github/agents/
 
+# Google Cloud CLI artifacts
+.gcloudignore
+
 # OS generated files (Mac/Windows hidden files)
 .DS_Store
 Thumbs.db
