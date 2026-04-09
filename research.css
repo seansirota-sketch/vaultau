@@ -564,8 +564,14 @@
   font-size: .83rem; font-weight: 600; color: var(--text-2);
 }
 .rp-drawer-chart-wrap {
-  height: 180px; display: flex;
-  align-items: center; justify-content: center;
+  height: 180px; width: 180px;
+  max-width: 180px; max-height: 180px;
+  display: flex; align-items: center; justify-content: center;
+  margin: 0 auto;
+}
+.rp-drawer-chart-wrap canvas {
+  max-width: 180px !important;
+  max-height: 180px !important;
 }
 
 /* Skeleton inside drawer */

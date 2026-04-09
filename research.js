@@ -523,6 +523,8 @@ function renderDoughnutChart(canvasId, struggled, abandoned, success) {
       }],
     },
     options: {
+      responsive: canvasId !== 'rp-drawer-donut',
+      maintainAspectRatio: true,
       cutout: '65%',
       plugins: {
         legend: { display: false },
