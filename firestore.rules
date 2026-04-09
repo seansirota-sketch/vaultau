@@ -156,6 +156,16 @@ service cloud.firestore {
       allow read, write: if isAdmin();
     }
 
+    // Pre-computed analytics aggregates written by Cloud Function.
+    // Admin: full read/write. Instructor: read only.
+    match /research_stats/{docId} {
+      allow read: if isAdmin() || (
+        isLoggedIn() &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'instructor'
+      );
+      allow write: if isAdmin();
+    }
+
     // CATCH-ALL: deny everything not explicitly matched above.
     // Any new collection MUST get its own explicit rule above.
     match /{document=**} {

@@ -1,0 +1,300 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>פאנל מחקר אקדמי — VaultAU</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="style.css">
+<link rel="stylesheet" href="research.css">
+
+<!-- Firebase v9 compat SDK -->
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
+
+<!-- Shared Firebase config + helpers -->
+<script src="firebase-config.js"></script>
+
+<!-- Chart.js -->
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.2/dist/chart.umd.min.js"></script>
+
+<!-- MathJax — identical config to admin.html -->
+<script>
+  window.MathJax = {
+    tex: { inlineMath: [['$','$'],['\\(','\\)']], displayMath: [['$$','$$'],['\\[','\\]']] },
+    options: { skipHtmlTags: ['script','noscript','style','textarea','pre'] },
+    startup: { typeset: false }
+  };
+</script>
+<script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js" async></script>
+</head>
+<body>
+
+<!-- ═══ AUTH WALL ══════════════════════════════════════════ -->
+<div id="rp-auth-wall" style="display:none">
+  <div class="rp-auth-icon">🔒</div>
+  <h2>גישה מוגבלת</h2>
+  <p>פאנל זה נגיש למנהלים ומרצים בלבד.</p>
+  <a href="index.html" class="btn btn-primary" style="margin-top:.5rem">חזרה לאתר</a>
+</div>
+
+<!-- ═══ MAIN APP (shown after auth) ════════════════════════ -->
+<div id="rp-app" style="display:none;flex-direction:column;min-height:100vh">
+
+  <!-- TOP BAR -->
+  <header class="rp-topbar">
+    <a href="admin.html" class="rp-back-link" title="חזרה לפאנל ניהול">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+        <polyline points="15 18 9 12 15 6"/>
+      </svg>
+      ניהול
+    </a>
+    <a class="rp-topbar-brand">
+      <span class="rp-brand-icon">🔬</span>
+      פאנל מחקר אקדמי
+    </a>
+    <div class="rp-topbar-controls">
+      <div class="rp-topbar-user">
+        <div class="rp-av" id="rp-user-avatar">?</div>
+        <span id="rp-user-name"></span>
+        <span class="rp-role-badge" id="rp-role-badge"></span>
+      </div>
+    </div>
+  </header>
+
+  <!-- COURSE SELECT ROW -->
+  <div class="rp-course-row">
+    <span class="rp-course-label">קורס:</span>
+    <select id="rp-course-select" class="rp-course-select">
+      <option value="">-- טוען קורסים... --</option>
+    </select>
+    <span id="rp-last-refresh" style="font-size:.75rem;color:var(--light);margin-right:auto"></span>
+  </div>
+
+  <!-- TAB BAR -->
+  <div class="rp-tabs">
+    <button class="rp-tab active" data-tab="overview" onclick="rpSwitchTab('overview')">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/>
+        <rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/>
+      </svg>
+      סקירת קורס
+    </button>
+    <button class="rp-tab" data-tab="deepdive" onclick="rpSwitchTab('deepdive')">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+      </svg>
+      ניתוח מבחן
+    </button>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════
+       SCREEN 1 — COURSE OVERVIEW
+  ══════════════════════════════════════════════════════════ -->
+  <div class="rp-screen active" id="rp-screen-overview">
+
+    <!-- No course selected state -->
+    <div id="rp-overview-empty" class="rp-empty-state">
+      <div class="rp-empty-icon">📊</div>
+      <p>בחר קורס מהרשימה למעלה כדי לצפות בנתוני המחקר.</p>
+    </div>
+
+    <!-- Loaded content (hidden until course selected) -->
+    <div id="rp-overview-content" style="display:none">
+
+      <!-- Active Today Badge (independent of date range) -->
+      <div id="rp-today-badge" class="rp-today-badge zero">
+        <div class="rp-today-dot"></div>
+        <span id="rp-today-text">טוען...</span>
+      </div>
+
+      <!-- Date Range Controls -->
+      <div class="rp-daterange">
+        <span class="rp-daterange-label">טווח תאריכים:</span>
+        <div class="rp-range-pills">
+          <button class="rp-range-pill" data-days="7"  onclick="rpSelectPreset(7)">7 ימים</button>
+          <button class="rp-range-pill active" data-days="30" onclick="rpSelectPreset(30)">30 ימים</button>
+          <button class="rp-range-pill" data-days="90" onclick="rpSelectPreset(90)">90 ימים</button>
+          <button class="rp-range-pill" data-days="0"  onclick="rpSelectPreset(0)">הכל</button>
+          <div class="rp-custom-wrap">
+            <button class="rp-range-pill" id="rp-custom-btn" onclick="rpToggleCustom()">טווח מותאם</button>
+            <div class="rp-custom-popover" id="rp-custom-popover">
+              <div class="rp-dprow">
+                <div class="form-group">
+                  <label>מתאריך</label>
+                  <input type="date" id="rp-date-from">
+                </div>
+                <div class="form-group">
+                  <label>עד תאריך</label>
+                  <input type="date" id="rp-date-to">
+                </div>
+              </div>
+              <div class="rp-dp-error" id="rp-dp-error"></div>
+              <div class="rp-dp-actions">
+                <button class="btn btn-primary btn-sm" onclick="rpApplyCustomRange()">החל</button>
+                <button class="btn btn-secondary btn-sm" onclick="rpCloseCustom()">ביטול</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- KPI Cards -->
+      <div class="rp-kpi-grid" id="rp-kpi-grid">
+        <!-- populated by JS -->
+      </div>
+
+      <!-- Difficulty chart + Legend -->
+      <div class="rp-row-2">
+        <div class="rp-card">
+          <div class="rp-card-header">פילוג קושי — כל שאלות הקורס</div>
+          <div class="rp-chart-wrap" style="height:200px">
+            <canvas id="rp-overview-donut" width="200" height="200"></canvas>
+          </div>
+          <div class="rp-chart-legend">
+            <div class="rp-legend-item">
+              <div class="rp-legend-dot" style="background:#c8860a"></div>
+              <span>התקשיתי (<span id="rp-leg-struggled">—</span>)</span>
+            </div>
+            <div class="rp-legend-item">
+              <div class="rp-legend-dot" style="background:#b91c1c"></div>
+              <span>נטשתי (<span id="rp-leg-abandoned">—</span>)</span>
+            </div>
+            <div class="rp-legend-item">
+              <div class="rp-legend-dot" style="background:#1a7c45"></div>
+              <span>הצלחתי (<span id="rp-leg-success">—</span>)</span>
+            </div>
+          </div>
+        </div>
+
+        <div>
+          <!-- Top Tables Row -->
+          <div class="rp-tables-row">
+            <!-- Hardest Questions -->
+            <div class="rp-card">
+              <div class="rp-card-header">
+                <span>שאלות הכי קשות</span>
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--danger)" stroke-width="2.5"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+              </div>
+              <table class="rp-table" id="rp-table-hardest"><tbody></tbody></table>
+            </div>
+            <!-- Easiest Questions -->
+            <div class="rp-card">
+              <div class="rp-card-header">
+                <span>שאלות הכי קלות</span>
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--success)" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>
+              </div>
+              <table class="rp-table" id="rp-table-easiest"><tbody></tbody></table>
+            </div>
+            <!-- Most Saved -->
+            <div class="rp-card">
+              <div class="rp-card-header">
+                <span>הכי מסומנות (⭐)</span>
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="var(--accent)" stroke="var(--accent)" stroke-width="1"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+              </div>
+              <table class="rp-table" id="rp-table-saved"><tbody></tbody></table>
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </div><!-- /rp-overview-content -->
+  </div><!-- /rp-screen-overview -->
+
+
+  <!-- ═══════════════════════════════════════════════════════
+       SCREEN 2 — EXAM DEEP-DIVE
+  ══════════════════════════════════════════════════════════ -->
+  <div class="rp-screen" id="rp-screen-deepdive">
+
+    <!-- No course selected state -->
+    <div id="rp-deepdive-empty-course" class="rp-empty-state">
+      <div class="rp-empty-icon">🎯</div>
+      <p>בחר קורס מהרשימה למעלה, ולאחר מכן בחר מבחן לניתוח מעמיק.</p>
+    </div>
+
+    <!-- Exam selection (shown when course selected) -->
+    <div id="rp-deepdive-exam-select" style="display:none">
+      <div class="rp-exam-row">
+        <span class="rp-course-label">מבחן:</span>
+        <select id="rp-exam-select" class="rp-exam-select" onchange="rpSelectExam(this.value)">
+          <option value="">-- בחר מבחן --</option>
+        </select>
+        <small style="color:var(--light);font-size:.75rem">מבחנים ללא נתונים מסומנים באפור</small>
+      </div>
+    </div>
+
+    <!-- No exam selected -->
+    <div id="rp-deepdive-empty-exam" style="display:none" class="rp-empty-state">
+      <div class="rp-empty-icon">📋</div>
+      <p>בחר מבחן מהרשימה כדי לצפות בניתוח המעמיק.</p>
+    </div>
+
+    <!-- Loaded exam content -->
+    <div id="rp-deepdive-content" style="display:none">
+
+      <div class="rp-section-header">מדדי מבחן</div>
+
+      <!-- KPI: 2 cards -->
+      <div class="rp-kpi-grid-2" id="rp-exam-kpi-grid">
+        <!-- populated by JS -->
+      </div>
+
+      <!-- Deep-dive split: donut cards left, table right -->
+      <div class="rp-deepdive-split">
+
+        <div class="rp-card rp-deepdive-charts-col">
+          <div class="rp-card-header">פילוג קושי לפי שאלה <small style="font-weight:400;color:var(--muted)">לחץ לפרטים</small></div>
+          <div class="rp-card-body">
+            <div id="rp-question-cards" class="rp-question-cards"></div>
+          </div>
+        </div>
+
+        <div class="rp-card rp-exam-table-card">
+          <div class="rp-card-header">דירוג שאלות לפי קושי</div>
+          <table class="rp-table rp-table-compact" id="rp-exam-table">
+            <thead>
+              <tr>
+                <th style="width:2.5rem">#</th>
+                <th>שאלה</th>
+                <th style="width:5.5rem">התקשיתי</th>
+                <th style="width:5rem">נטשתי</th>
+                <th style="width:5.5rem">הצלחתי</th>
+                <th style="width:3rem">⭐</th>
+              </tr>
+            </thead>
+            <tbody id="rp-exam-table-body"></tbody>
+          </table>
+        </div>
+
+      </div><!-- /rp-deepdive-split -->
+
+    </div><!-- /rp-deepdive-content -->
+  </div><!-- /rp-screen-deepdive -->
+
+</div><!-- /rp-app -->
+
+
+<!-- ═══ LIVE DRAWER ══════════════════════════════════════ -->
+<div class="rp-backdrop" id="rp-backdrop" onclick="rpCloseDrawer()"></div>
+<aside class="rp-drawer" id="rp-drawer">
+  <div class="rp-drawer-header">
+    <div class="rp-drawer-title">
+      <span id="rp-drawer-q-label">שאלה</span>
+      <span class="rp-drawer-qid" id="rp-drawer-qid"></span>
+    </div>
+    <button class="rp-drawer-close" onclick="rpCloseDrawer()" title="סגור">✕</button>
+  </div>
+  <div class="rp-drawer-body" id="rp-drawer-body">
+    <!-- populated by JS -->
+  </div>
+</aside>
+
+<!-- TOAST container -->
+<div id="rp-toast-wrap"></div>
+
+<script src="research.js"></script>
+</body>
+</html>
