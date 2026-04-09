@@ -258,10 +258,10 @@ function sqlDailyMetrics() {
       DATE(event_datetime_il)                                           AS date,
       COUNT(DISTINCT uid_hash)                                          AS dau,
       COUNTIF(event = 'exam_status_changed' AND action_status = 'done') AS examsSolved,
-      COUNTIF(event = 'difficulty_voted')                               AS questionsFeedbacked,
-      COUNTIF(event = 'difficulty_voted' AND difficulty_level = 'struggled') AS struggled,
-      COUNTIF(event = 'difficulty_voted' AND difficulty_level = 'abandoned') AS abandoned,
-      COUNTIF(event = 'difficulty_voted' AND difficulty_level = 'success')   AS success
+      COUNTIF(event = 'difficulty_voted')                                              AS questionsFeedbacked,
+      COUNTIF(event = 'difficulty_voted' AND difficulty_level = 'hard')                AS struggled,
+      COUNTIF(event = 'difficulty_voted' AND difficulty_level = 'unsolved')            AS abandoned,
+      COUNTIF(event = 'difficulty_voted' AND difficulty_level IN ('easy', 'medium'))   AS success
     FROM ${view('events_safe')}
     WHERE
       event_datetime_il >= DATETIME_SUB(CURRENT_DATETIME(), INTERVAL ${DAILY_WINDOW_DAYS} DAY)
@@ -285,9 +285,9 @@ function sqlQuestionStats() {
         courseCode,
         examId,
         REGEXP_EXTRACT(questionId, r'(Q\\d+)$') AS questionId,
-        COUNTIF(difficulty_level = 'struggled') AS struggled,
-        COUNTIF(difficulty_level = 'abandoned') AS abandoned,
-        COUNTIF(difficulty_level = 'success')   AS success
+        COUNTIF(difficulty_category = 'Struggled') AS struggled,
+        COUNTIF(difficulty_category = 'Abandoned')  AS abandoned,
+        COUNTIF(difficulty_category = 'Success')    AS success
       FROM ${view('latest_question_difficulty')}
       WHERE courseCode IS NOT NULL AND examId IS NOT NULL AND questionId IS NOT NULL
       GROUP BY 1, 2, 3
@@ -348,9 +348,9 @@ function sqlExamQuestionList() {
       SELECT
         examId,
         REGEXP_EXTRACT(questionId, r'(Q\\d+)$') AS questionId,
-        COUNTIF(difficulty_level = 'struggled') AS struggled,
-        COUNTIF(difficulty_level = 'abandoned') AS abandoned,
-        COUNTIF(difficulty_level = 'success')   AS success
+        COUNTIF(difficulty_category = 'Struggled') AS struggled,
+        COUNTIF(difficulty_category = 'Abandoned')  AS abandoned,
+        COUNTIF(difficulty_category = 'Success')    AS success
       FROM ${view('latest_question_difficulty')}
       WHERE examId IS NOT NULL AND questionId IS NOT NULL
       GROUP BY 1, 2
