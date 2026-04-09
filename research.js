@@ -276,8 +276,7 @@ async function loadCourseDropdown() {
       // Store the Firestore doc ID in a data attribute for later exam queries
       opt.dataset.firestoreId = doc.id;
       opt.disabled = !hasData;
-      // esc() the course name to prevent XSS in option text
-      opt.textContent = esc((d.icon ? d.icon + ' ' : '') + d.name) + (!hasData ? ' (אין נתונים)' : '');
+      opt.textContent = (d.icon ? d.icon + ' ' : '') + (d.name || '') + (!hasData ? ' (אין נתונים)' : '');
       select.appendChild(opt);
     });
 
@@ -592,15 +591,17 @@ async function loadExamDropdown(courseCode, firestoreId) {
   try {
     const snap = await db.collection('exams')
       .where('courseId', '==', firestoreId)
-      .orderBy('year', 'desc')
       .get();
+
+    // Sort by year descending in JS (avoids needing a composite Firestore index)
+    const docs = snap.docs.slice().sort((a, b) => (b.data().year || 0) - (a.data().year || 0));
 
     // Build a set of examAnalyticsIds that have stats
     const statsExamIds = new Set(
       STATE.allQuestionDocs.map(q => q.examId)
     );
 
-    snap.forEach(doc => {
+    docs.forEach(doc => {
       const d = doc.data();
       // Build the analytics-format exam ID to check for data presence
       const semLetter  = Object.keys(SEMESTER_MAP).find(k => SEMESTER_MAP[k] === d.semester) || d.semester || '';
@@ -955,7 +956,7 @@ function renderDrawerContent(questionId, examAnalyticsId, questionContent, analy
     const mainText = formatMathText(questionContent.text, questionContent.inlineImages || {});
     const subsHtml = (questionContent.subs || []).map(sub => `
       <div class="rp-sub-question">
-        <div class="rp-sub-label">(${esc(sub.label || '')})</div>
+        <div class="rp-sub-label">${esc(sub.label || '')}</div>
         <div>${formatMathText(sub.text, questionContent.inlineImages || {})}</div>
       </div>`).join('');
 
