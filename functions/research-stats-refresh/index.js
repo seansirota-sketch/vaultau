@@ -200,17 +200,32 @@ async function runRefresh() {
     });
   }
 
-  const examBatches = chunkArray(examRows, 400);
+  // Build map of examIds that have status-change data
+  const examStatusMap = {};
+  for (const row of examRows) {
+    const examId = String(row.examId || '').trim();
+    if (examId) examStatusMap[examId] = row;
+  }
+
+  // Merge: all examIds from question data + all from status data
+  const allExamIds = new Set([
+    ...Object.keys(examStatusMap),
+    ...Object.keys(qByExam),
+  ]);
+
+  const allExamRows = Array.from(allExamIds).map(examId => {
+    const row = examStatusMap[examId];
+    const attempted = row ? Number(row.totalAttempted) || 0 : 0;
+    const finished  = row ? Math.min(Number(row.totalFinished) || 0, attempted) : 0;
+    return { examId, attempted, finished };
+  });
+
+  const examBatches = chunkArray(allExamRows, 400);
   for (const chunk of examBatches) {
     const batch = firestore.batch();
-    for (const row of chunk) {
-      const examId = String(row.examId || '').trim();
-      if (!examId) continue;
-      const attempted = Number(row.totalAttempted) || 0;
-      const finished  = Math.min(Number(row.totalFinished) || 0, attempted);
-      const docId = `exam_${examId}`;
+    for (const { examId, attempted, finished } of chunk) {
       batch.set(
-        firestore.collection('research_stats').doc(docId),
+        firestore.collection('research_stats').doc(`exam_${examId}`),
         {
           examId,
           totalAttempted: attempted,
@@ -222,7 +237,7 @@ async function runRefresh() {
     }
     await batch.commit();
   }
-  console.log(`exam docs: ${examRows.length} rows → ${examRows.length} docs`);
+  console.log(`exam docs: ${allExamRows.length} docs (${examRows.length} with status data)`);
 
   // ── 4. Update _meta.coursesWithData ──────────────────────────────────────
   await firestore.collection('research_stats').doc('_meta').set(
