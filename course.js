@@ -511,6 +511,7 @@ const SESSION_TIMEOUT_MS  = 4 * 60 * 60 * 1000;  // 4 hours
 const LOG_THROTTLE_MS     = 1_000;           // 1 s minimum between same event type
 const _lastLogTime        = {};
 let   _filterDebounceTimer = null;
+const _difficultyDebounceTimers = {};        // per-question 10 s debounce for difficulty_voted
 
 function _getOrCreateSession() {
   // GDPR/CCPA: never write a tracking identifier to the device without consent.
@@ -2870,7 +2871,27 @@ async function voteDifficulty(qid, level) {
   STATE.userData = { ...STATE.userData, difficultyVotes: userVotes };
 
   _ga('rate_content', { course_code: _cc(), exam_id: _eid(), question_id: _questionRef(qid), rating_category: 'difficulty', rating_value: userVotes[qid] || 'removed' });
-  _logEvent('difficulty_voted', { questionId: _questionRef(qid), level, courseCode: STATE.courseCode || STATE.courseId, examId: STATE.examLabel || STATE.examId || '' });
+
+  // Debounce difficulty_voted: cancel any pending timer for this question.
+  // If the user toggled their vote off, cancel and log nothing.
+  // Otherwise, (re)start a 10 s timer that reads the *final* state at fire-time.
+  clearTimeout(_difficultyDebounceTimers[qid]);
+  if (prev === level) {
+    // toggled off — no vote to log
+    delete _difficultyDebounceTimers[qid];
+  } else {
+    _difficultyDebounceTimers[qid] = setTimeout(() => {
+      delete _difficultyDebounceTimers[qid];
+      const finalLevel = STATE.userData?.difficultyVotes?.[qid];
+      if (!finalLevel) return; // vote was removed in a later click
+      _logEvent('difficulty_voted', {
+        questionId: _questionRef(qid),
+        level:      finalLevel,
+        courseCode: STATE.courseCode || STATE.courseId,
+        examId:     STATE.examLabel || STATE.examId || '',
+      });
+    }, 10_000);
+  }
 
   // Re-render just the diff buttons inside the existing dw- container
   const container = document.getElementById('dw-' + qid);
