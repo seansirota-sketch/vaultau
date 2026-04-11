@@ -23,7 +23,7 @@ const GEMINI_URL     = `https://generativelanguage.googleapis.com/v1beta/models/
 const CLAUDE_MODEL   = 'claude-sonnet-4-20250514';
 const FIREBASE_PROJECT = 'eaxmbank';
 const FIRESTORE_BASE   = `https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT}/databases/(default)/documents`;
-const ROLE_ALLOWED     = new Set(['instructor', 'admin']);
+const ROLE_ALLOWED     = new Set(['student', 'instructor', 'admin']);
 
 const MAX_PROMPT_LENGTH   = 8000;   // characters
 const MAX_RETRIES         = 1;
@@ -46,6 +46,7 @@ function normalizeRole(role) {
   const value = String(role || '').toLowerCase();
   if (value === 'administrator') return 'admin';
   if (value === 'teacher' || value === 'staff') return 'instructor';
+  if (value === 'learner' || value === 'student') return 'student';
   return value;
 }
 
@@ -168,7 +169,7 @@ export default async (request, _context) => {
         errorMessage: `Forbidden role: ${role || 'unknown'}`,
       }).catch(() => {});
 
-      return jsonResponse(403, { error: 'Forbidden: instructor or admin role required' });
+      return jsonResponse(403, { error: 'Forbidden: recognized role required (student/instructor/admin)' });
     }
 
     // ── 2. Parse & validate input ───────────────────────────
