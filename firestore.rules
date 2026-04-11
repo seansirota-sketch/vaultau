@@ -102,6 +102,14 @@ service cloud.firestore {
         && resource.data.userId == request.auth.uid
         && request.resource.data.userId == resource.data.userId
         && request.resource.data.diff(resource.data).changedKeys().hasOnly(['userLastReadAt', 'userDeletedAt', 'bothDeletedAt'])
+        && (
+          !request.resource.data.diff(resource.data).changedKeys().hasAny(['bothDeletedAt'])
+          || (
+            resource.data.adminDeletedAt is timestamp
+            && resource.data.bothDeletedAt == null
+            && request.resource.data.diff(resource.data).changedKeys().hasAll(['userDeletedAt', 'bothDeletedAt'])
+          )
+        )
       );
       allow delete: if isAdmin();
     }

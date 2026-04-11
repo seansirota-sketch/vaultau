@@ -4802,7 +4802,7 @@ async function _renderReportsContent() {
 
       const actionBtn = isArchive
         ? `<button class="btn btn-sm" style="background:#fee2e2;color:#b91c1c;border-color:#fca5a5"
-             onclick="deleteReport('${esc(r.id)}')">🗑 מחק לצמיתות</button>`
+           onclick="deleteReport('${esc(r.id)}')">🗑 הסר מהפאנל</button>`
         : `<button class="btn btn-secondary btn-sm" onclick="closeReport('${esc(r.id)}')">✓ סגור תקלה</button>`;
 
       return `

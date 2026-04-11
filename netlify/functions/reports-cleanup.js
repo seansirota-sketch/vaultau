@@ -4,6 +4,26 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 const THIRTY_DAYS_MS = 30 * DAY_MS;
 const ONE_EIGHTY_DAYS_MS = 180 * DAY_MS;
 
+function getHeader(event, name) {
+  const headers = event?.headers || {};
+  const target = String(name || '').toLowerCase();
+  for (const key of Object.keys(headers)) {
+    if (String(key).toLowerCase() === target) return headers[key];
+  }
+  return '';
+}
+
+function isAuthorizedInvocation(event) {
+  const eventType = String(getHeader(event, 'x-netlify-event') || '').toLowerCase();
+  if (eventType === 'schedule') return true;
+
+  const manualToken = process.env.REPORTS_CLEANUP_TOKEN;
+  if (!manualToken) return false;
+
+  const authHeader = String(getHeader(event, 'authorization') || '');
+  return authHeader === `Bearer ${manualToken}`;
+}
+
 function getAdmin() {
   if (admin.apps.length) return admin;
 
@@ -40,8 +60,15 @@ async function deleteDocsByQuery(db, query) {
   return deleted;
 }
 
-exports.handler = async () => {
+exports.handler = async (event) => {
   try {
+    if (!isAuthorizedInvocation(event || {})) {
+      return {
+        statusCode: 401,
+        body: JSON.stringify({ ok: false, error: 'unauthorized_cleanup_invocation' }),
+      };
+    }
+
     const firebaseAdmin = getAdmin();
     const db = firebaseAdmin.firestore();
 
