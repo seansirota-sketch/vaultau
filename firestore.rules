@@ -96,7 +96,14 @@ service cloud.firestore {
     // enforce userId matches authenticated user to prevent forged reports.
     match /reports/{reportId} {
       allow create: if isLoggedIn() && request.resource.data.userId == request.auth.uid;
-      allow read, list, update, delete: if isAdmin();
+      allow read, list: if isAdmin() || (isLoggedIn() && resource.data.userId == request.auth.uid);
+      allow update: if isAdmin() || (
+        isLoggedIn()
+        && resource.data.userId == request.auth.uid
+        && request.resource.data.userId == resource.data.userId
+        && request.resource.data.diff(resource.data).changedKeys().hasOnly(['userLastReadAt', 'userDeletedAt', 'bothDeletedAt'])
+      );
+      allow delete: if isAdmin();
     }
 
     // Per-user AI generation quota (daily/weekly counters).

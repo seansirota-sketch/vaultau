@@ -4677,9 +4677,10 @@ async function renderAIMonitor() {
 async function _loadReportsBadge() {
   try {
     const snap = await db.collection('reports').where('status', '==', 'open').get();
+    const visibleOpen = snap.docs.map(d => d.data()).filter(r => !r.adminDeletedAt).length;
     const badge = document.getElementById('reports-badge');
     if (!badge) return;
-    if (snap.size > 0) { badge.textContent = snap.size; badge.style.display = 'inline-block'; }
+    if (visibleOpen > 0) { badge.textContent = visibleOpen; badge.style.display = 'inline-block'; }
     else badge.style.display = 'none';
   } catch(e) { console.warn('_loadReportsBadge:', e.message); }
 }
@@ -4704,9 +4705,10 @@ async function renderReportsSection() {
   // update badge with open count
   try {
     const snap = await db.collection('reports').where('status', '==', 'open').get();
+    const visibleOpen = snap.docs.map(d => d.data()).filter(r => !r.adminDeletedAt).length;
     const badge = document.getElementById('reports-badge');
     if (badge) {
-      if (snap.size > 0) { badge.textContent = snap.size; badge.style.display = 'inline-block'; }
+      if (visibleOpen > 0) { badge.textContent = visibleOpen; badge.style.display = 'inline-block'; }
       else badge.style.display = 'none';
     }
   } catch(e) { /* non-critical */ }
@@ -4727,6 +4729,7 @@ async function _renderReportsContent() {
 
     const items = snap.docs
       .map(d => ({ id: d.id, ...d.data() }))
+      .filter(r => !r.adminDeletedAt)
       .sort((a, b) => (b.createdAt?.toMillis?.() || 0) - (a.createdAt?.toMillis?.() || 0));
 
     if (!items.length) {
@@ -4769,6 +4772,34 @@ async function _renderReportsContent() {
            </div>`
         : '';
 
+      const responseDate = r.adminResponseAt?.toDate?.();
+      const responseStr = responseDate
+        ? responseDate.toLocaleDateString('he-IL', { day:'2-digit', month:'2-digit', year:'numeric', hour:'2-digit', minute:'2-digit' })
+        : '';
+      const hasResponse = Boolean(String(r.adminResponseText || '').trim());
+      const responseInfo = hasResponse
+        ? `<div style="background:#ecfeff;border:1px solid #a5f3fc;border-radius:8px;padding:.65rem .9rem;display:flex;flex-direction:column;gap:.35rem">
+             <div style="font-size:.78rem;color:#0e7490;display:flex;align-items:center;gap:.4rem;flex-wrap:wrap">
+               <span>✉ תגובת מנהל למשתמש</span>
+               ${responseStr ? `<span style="margin-right:auto">${responseStr}</span>` : ''}
+             </div>
+             <div style="font-size:.88rem;line-height:1.6;white-space:pre-wrap;word-break:break-word">${esc(r.adminResponseText)}</div>
+           </div>`
+        : '';
+
+      const responseEditor = `
+        <div style="display:flex;flex-direction:column;gap:.4rem">
+          <label style="font-size:.8rem;color:var(--muted);font-weight:600">${hasResponse ? 'עדכון תגובה למשתמש' : 'תגובה למשתמש'}</label>
+          <textarea id="report-admin-response-${r.id}" rows="3" dir="rtl"
+            placeholder="כתוב כאן תגובה שתופיע למשתמש..."
+            style="width:100%;border:1.5px solid var(--border);border-radius:8px;padding:.7rem;
+                   font-family:inherit;font-size:.86rem;resize:vertical;box-sizing:border-box;color:var(--text)">${esc(r.adminResponseText || '')}</textarea>
+          <div style="display:flex;justify-content:flex-end">
+            <button class="btn btn-primary btn-sm" id="report-admin-response-btn-${r.id}"
+              onclick="saveReportResponse('${esc(r.id)}')">${hasResponse ? 'עדכן תגובה' : 'שלח תגובה'}</button>
+          </div>
+        </div>`;
+
       const actionBtn = isArchive
         ? `<button class="btn btn-sm" style="background:#fee2e2;color:#b91c1c;border-color:#fca5a5"
              onclick="deleteReport('${esc(r.id)}')">🗑 מחק לצמיתות</button>`
@@ -4788,6 +4819,8 @@ async function _renderReportsContent() {
             <div style="background:var(--bg,#f9fafb);border-radius:8px;padding:.65rem .9rem;
                         font-size:.9rem;line-height:1.6;border:1px solid var(--border);
                         white-space:pre-wrap;word-break:break-word">${esc(r.message)}</div>
+            ${responseInfo}
+            ${responseEditor}
             ${closedInfo}
             <div style="display:flex;justify-content:flex-end">${actionBtn}</div>
           </div>
@@ -4798,6 +4831,42 @@ async function _renderReportsContent() {
 
   } catch(e) {
     el.innerHTML = `<div style="color:var(--danger);padding:1.5rem">שגיאה בטעינה: ${esc(e.message)}</div>`;
+  }
+}
+
+async function saveReportResponse(reportId) {
+  if (!adminUser) return;
+
+  const ta = document.getElementById(`report-admin-response-${reportId}`);
+  const btn = document.getElementById(`report-admin-response-btn-${reportId}`);
+  const responseText = ta?.value.trim() || '';
+
+  if (!responseText) {
+    toast('נא למלא תגובה לפני השליחה', 'error');
+    ta?.focus();
+    return;
+  }
+
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = 'שומר...';
+  }
+
+  try {
+    await db.collection('reports').doc(reportId).update({
+      adminResponseText: responseText,
+      adminResponseAt: firebase.firestore.FieldValue.serverTimestamp(),
+      adminResponseBy: adminUser.uid || '',
+      adminResponseByEmail: adminUser.email || '',
+    });
+    toast('התגובה נשלחה למשתמש', 'info');
+    renderReportsSection();
+  } catch (e) {
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = 'שלח תגובה';
+    }
+    toast('שגיאה בשמירת התגובה: ' + e.message, 'error');
   }
 }
 
@@ -4864,10 +4933,28 @@ async function _doCloseReport(reportId) {
 }
 
 async function deleteReport(reportId) {
-  if (!confirm('למחוק את הדיווח לצמיתות? פעולה זו אינה הפיכה.')) return;
+  if (!confirm('להסיר את הדיווח מהפאנל הניהולי בלבד? המשתמש עדיין יוכל לראות אותו.')) return;
   try {
-    await db.collection('reports').doc(reportId).delete();
-    toast('הדיווח נמחק', 'info');
+    const ref = db.collection('reports').doc(reportId);
+    const snap = await ref.get();
+    if (!snap.exists) {
+      toast('הדיווח כבר לא קיים', 'info');
+      renderReportsSection();
+      return;
+    }
+    const data = snap.data() || {};
+
+    const update = {
+      adminDeletedAt: firebase.firestore.FieldValue.serverTimestamp(),
+      adminDeletedBy: adminUser?.uid || '',
+      adminDeletedByEmail: adminUser?.email || '',
+    };
+    if (data.userDeletedAt && !data.bothDeletedAt) {
+      update.bothDeletedAt = firebase.firestore.FieldValue.serverTimestamp();
+    }
+
+    await ref.update(update);
+    toast('הדיווח הוסר מפאנל הניהול', 'info');
     renderReportsSection();
   } catch(e) {
     toast('שגיאה במחיקה: ' + e.message, 'error');

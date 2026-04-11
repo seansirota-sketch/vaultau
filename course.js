@@ -506,6 +506,167 @@ let STATE = {
   examQuestions:  [],   // question array snapshot for _questionRef() — set after const questions in renderExam
 };
 
+let _userInboxUnsub = null;
+let _userInboxReports = [];
+let _userInboxUnread = 0;
+
+function _tsToMillis(ts) {
+  return ts?.toMillis?.() || 0;
+}
+
+function _hasAdminResponse(report) {
+  return Boolean(String(report?.adminResponseText || '').trim()) && !!report?.adminResponseAt;
+}
+
+function _isUnreadAdminResponse(report) {
+  if (!_hasAdminResponse(report)) return false;
+  return _tsToMillis(report.adminResponseAt) > _tsToMillis(report.userLastReadAt);
+}
+
+function _updateInboxBadge() {
+  const badge = document.getElementById('navbar-msg-badge');
+  if (!badge) return;
+  if (_userInboxUnread > 0) {
+    badge.style.display = 'inline-flex';
+    badge.textContent = _userInboxUnread > 99 ? '99+' : String(_userInboxUnread);
+  } else {
+    badge.style.display = 'none';
+    badge.textContent = '';
+  }
+}
+
+function _recomputeInboxUnread() {
+  _userInboxUnread = _userInboxReports.filter(_isUnreadAdminResponse).length;
+  _updateInboxBadge();
+}
+
+function _stopUserInboxListener() {
+  if (_userInboxUnsub) {
+    _userInboxUnsub();
+    _userInboxUnsub = null;
+  }
+  _userInboxReports = [];
+  _userInboxUnread = 0;
+  _updateInboxBadge();
+}
+
+function _startUserInboxListener() {
+  const uid = STATE.fireUser?.uid;
+  if (!uid) return;
+
+  if (_userInboxUnsub) _userInboxUnsub();
+  _userInboxUnsub = db.collection('reports')
+    .where('userId', '==', uid)
+    .onSnapshot((snap) => {
+      _userInboxReports = snap.docs
+        .map(d => ({ id: d.id, ...d.data() }))
+        .filter(r => !r.userDeletedAt);
+      _recomputeInboxUnread();
+    }, (err) => {
+      console.warn('User inbox listener failed:', err.message);
+    });
+}
+
+function _formatInboxDate(ts) {
+  const d = ts?.toDate?.();
+  if (!d) return '—';
+  return d.toLocaleDateString('he-IL', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit'
+  });
+}
+
+async function _markInboxAsRead() {
+  const unread = _userInboxReports.filter(_isUnreadAdminResponse);
+  if (!unread.length) return;
+
+  const batch = db.batch();
+  unread.forEach(r => {
+    batch.update(db.collection('reports').doc(r.id), {
+      userLastReadAt: firebase.firestore.FieldValue.serverTimestamp(),
+    });
+  });
+  await batch.commit();
+
+  _userInboxUnread = 0;
+  _updateInboxBadge();
+}
+
+function closeUserInboxModal() {
+  document.getElementById('user-inbox-modal')?.remove();
+  document.body.style.overflow = '';
+}
+
+async function userDeleteInboxMessage(reportId) {
+  if (!confirm('להסיר את ההודעה מהתיבה שלך?')) return;
+  try {
+    const ref = db.collection('reports').doc(reportId);
+    const report = _userInboxReports.find(r => r.id === reportId) || null;
+    const update = {
+      userDeletedAt: firebase.firestore.FieldValue.serverTimestamp(),
+    };
+    if (report?.adminDeletedAt && !report?.bothDeletedAt) {
+      update.bothDeletedAt = firebase.firestore.FieldValue.serverTimestamp();
+    }
+    await ref.update(update);
+    _userInboxReports = _userInboxReports.filter(r => r.id !== reportId);
+    _recomputeInboxUnread();
+    openUserInboxModal();
+  } catch (err) {
+    toast('שגיאה במחיקה: ' + err.message, 'error');
+  }
+}
+
+function openUserInboxModal() {
+  document.getElementById('user-inbox-modal')?.remove();
+  const modal = document.createElement('div');
+  modal.id = 'user-inbox-modal';
+  modal.className = 'modal-overlay';
+
+  const rows = _userInboxReports
+    .filter(_hasAdminResponse)
+    .sort((a, b) => _tsToMillis(b.adminResponseAt) - _tsToMillis(a.adminResponseAt));
+
+  modal.innerHTML = `
+    <div class="modal-card user-inbox-card">
+      <div class="modal-header">
+        <h3 style="margin:0;font-size:1.1rem">📩 הודעות מהמנהל</h3>
+        <button class="modal-close" onclick="closeUserInboxModal()">✕</button>
+      </div>
+      <div class="user-inbox-body">
+        ${rows.length ? rows.map(r => {
+          const unread = _isUnreadAdminResponse(r);
+          const category = r.category === 'bug' ? '⚠ תקלה' : '✉ פנייה';
+          return `
+            <div class="user-inbox-item">
+              <div class="user-inbox-item-head">
+                <span>${category}</span>
+                ${unread ? '<span class="user-inbox-unread-dot">חדש</span>' : ''}
+                <span style="margin-right:auto;color:var(--muted);font-size:.76rem">${_formatInboxDate(r.adminResponseAt)}</span>
+              </div>
+              <div class="user-inbox-orig">הפנייה שלך: ${esc(r.message || '')}</div>
+              <div class="user-inbox-reply">${esc(r.adminResponseText || '')}</div>
+              <div style="display:flex;justify-content:flex-end">
+                <button class="btn btn-secondary btn-sm" onclick="userDeleteInboxMessage('${esc(r.id)}')">הסר מהתיבה שלי</button>
+              </div>
+            </div>`;
+        }).join('') : '<div class="empty" style="padding:2rem 1rem"><span class="ei">📭</span><h3>אין הודעות חדשות</h3><p>כאן יופיעו תגובות מהמנהל לפניות שלך</p></div>'}
+      </div>
+      <div style="padding:0 1.25rem 1.1rem;display:flex;justify-content:flex-end">
+        <button class="btn btn-secondary" onclick="closeUserInboxModal()">סגור</button>
+      </div>
+    </div>`;
+
+  document.body.appendChild(modal);
+  document.body.style.overflow = 'hidden';
+  modal.addEventListener('click', e => { if (e.target === modal) closeUserInboxModal(); });
+
+  _markInboxAsRead().catch(err => console.warn('Failed to mark inbox read:', err.message));
+}
+
 /* ── ANALYTICS ─────────────────────────────────────────────── */
 const SESSION_TIMEOUT_MS  = 4 * 60 * 60 * 1000;  // 4 hours
 const LOG_THROTTLE_MS     = 1_000;           // 1 s minimum between same event type
@@ -1369,6 +1530,7 @@ function backToSignupStep1() {
 async function doSignup() { doSignupStep1(); }
 
 async function doLogout() {
+  _stopUserInboxListener();
   await auth.signOut();
   STATE = { page: 'home', courseId: null, examId: null, tab: 'exams',
             fireUser: null, userData: null, courses: null, exams: {}, examVotes: {},
@@ -1392,6 +1554,13 @@ function renderNavbar() {
             <rect y="12" width="18" height="2" rx="1" fill="currentColor"/>
           </svg>
         </button>
+        <button class="navbar-message-btn" onclick="openUserInboxModal()" title="הודעות מנהל" aria-label="הודעות מנהל">
+          <svg class="navbar-message-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <rect x="3.5" y="5.5" width="17" height="13" rx="2.4"></rect>
+            <path d="M4.6 7.2L12 13.2l7.4-6"></path>
+          </svg>
+          <span id="navbar-msg-badge" class="navbar-message-badge" style="display:none"></span>
+        </button>
         <div class="navbar-user">
           <div class="av">${displayName[0].toUpperCase()}</div>
           <span>${esc(displayName)}</span>
@@ -1405,6 +1574,9 @@ function renderNavbar() {
     <div id="page"></div>
     <div class="toast-wrap" id="toast-wrap"></div>
     <div class="copy-tip" id="copy-tip">הועתק!</div>`;
+
+  _updateInboxBadge();
+  _startUserInboxListener();
 }
 
 /* ── NAV MENU ────────────────────────────────────────────── */
@@ -2096,6 +2268,12 @@ async function submitContactForm() {
       userEmail: STATE.fireUser?.email || '',
       createdAt: firebase.firestore.FieldValue.serverTimestamp(),
       status:    'open',
+      adminResponseText: '',
+      adminResponseAt: null,
+      userLastReadAt: null,
+      adminDeletedAt: null,
+      userDeletedAt: null,
+      bothDeletedAt: null,
     });
     closeContactModal();
     _ga('submit_feedback', { feedback_type: type });
@@ -3145,6 +3323,12 @@ async function submitBugReport() {
       userEmail: STATE.fireUser?.email || '',
       createdAt: firebase.firestore.FieldValue.serverTimestamp(),
       status:    'open',
+      adminResponseText: '',
+      adminResponseAt: null,
+      userLastReadAt: null,
+      adminDeletedAt: null,
+      userDeletedAt: null,
+      bothDeletedAt: null,
     });
     closeReportBugModal();
     _ga('submit_feedback', { feedback_type: 'bug_report' });

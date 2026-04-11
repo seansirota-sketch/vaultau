@@ -28,6 +28,9 @@
   [functions.parse-result]
     timeout = 10
 
+  [functions.reports-cleanup]
+    schedule = "@daily"
+
 # ── Edge Functions ──
 [[edge_functions]]
   path = "/api/generate-question"
