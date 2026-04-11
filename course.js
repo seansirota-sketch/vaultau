@@ -601,7 +601,6 @@ function closeUserInboxModal() {
 }
 
 async function userDeleteInboxMessage(reportId) {
-  if (!confirm('להסיר את ההודעה מהתיבה שלך?')) return;
   try {
     const ref = db.collection('reports').doc(reportId);
     const report = _userInboxReports.find(r => r.id === reportId) || null;
