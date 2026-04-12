@@ -230,10 +230,12 @@ body {
   max-height: 82vh;
   display: flex;
   flex-direction: column;
+  overflow: hidden;
 }
 .user-inbox-body {
   padding: 1rem 1.25rem;
   overflow-y: auto;
+  overflow-x: hidden;
   display: flex;
   flex-direction: column;
   gap: .75rem;
@@ -272,6 +274,8 @@ body {
   border-radius: 8px;
   padding: .45rem .6rem;
   white-space: pre-wrap;
+  word-break: break-word;
+  overflow-wrap: anywhere;
 }
 .user-inbox-reply {
   font-size: .88rem;
