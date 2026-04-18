@@ -2915,7 +2915,7 @@ function renderQuestionCard(q, qi, starred, userVotes = {}, videoMap = {}, isAdm
           <div class="qv-actions">
             <button class="qv-btn" onclick="copyById('${sCopyId}',event)" title="העתק LaTeX">${copySVG}</button>
             ${sAllowAI ? `<button class="qv-btn" onclick="openGeminiModal('${s.id}','sub')" title="צור סעיף דומה">✨</button>` : ''}
-            ${videoMap[s.id] ? `<button class="qv-btn qv-video-btn" onclick="openVideoModal('${videoMap[s.id].libraryId}','${videoMap[s.id].videoId}',decodeURIComponent('${encodeURIComponent(videoMap[s.id].title||'פתרון מוצג')}'))" title="צפה בסרטון פתרון">${videoSVG}</button>` : ''}
+            ${videoMap[s.id] ? `<button class="qv-btn qv-video-btn" data-lib="${esc(videoMap[s.id].libraryId)}" data-vid="${esc(videoMap[s.id].videoId)}" data-title="${esc(videoMap[s.id].title || 'פתרון מוצג')}" onclick="openVideoModalFromBtn(this)" title="צפה בסרטון פתרון">${videoSVG}</button>` : ''}
           </div>
         </div>
         <div class="qv-part-text"></div>
@@ -2939,7 +2939,7 @@ function renderQuestionCard(q, qi, starred, userVotes = {}, videoMap = {}, isAdm
           onclick="toggleStar('${q.id}')" title="סמן שאלה">${starSVG(isStarredQ)}</button>
         <button class="qv-btn" onclick="copyById('${qCopyId}',event)" title="העתק LaTeX">${copySVG}</button>
         ${q.allowAIGen === true ? `<button class="qv-btn" onclick="openGeminiModal('${q.id}','question')" title="צור שאלה דומה">✨</button>` : ''}
-        ${videoMap[q.id] ? `<button class="qv-btn qv-video-btn" onclick="openVideoModal('${videoMap[q.id].libraryId}','${videoMap[q.id].videoId}',decodeURIComponent('${encodeURIComponent(videoMap[q.id].title||'פתרון מוצג')}'))" title="צפה בסרטון פתרון">${videoSVG}</button>` : ''}
+        ${videoMap[q.id] ? `<button class="qv-btn qv-video-btn" data-lib="${esc(videoMap[q.id].libraryId)}" data-vid="${esc(videoMap[q.id].videoId)}" data-title="${esc(videoMap[q.id].title || 'פתרון מוצג')}" onclick="openVideoModalFromBtn(this)" title="צפה בסרטון פתרון">${videoSVG}</button>` : ''}
       </div>
     </div>
     <div class="qv-text"></div>
@@ -4125,6 +4125,13 @@ async function fetchExamVideoMap(questions) {
 }
 
 /** Open a Bunny.net video explanation in a modal overlay. */
+function openVideoModalFromBtn(btn) {
+  const libraryId = btn?.dataset?.lib || '';
+  const videoId = btn?.dataset?.vid || '';
+  const title = btn?.dataset?.title || 'סרטון פתרון';
+  openVideoModal(libraryId, videoId, title);
+}
+
 function openVideoModal(libraryId, videoId, title) {
   document.getElementById('video-modal')?.remove();
   // Validate IDs — only allow alphanumeric + hyphens (no injection)
