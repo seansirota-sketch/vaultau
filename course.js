@@ -4202,6 +4202,7 @@ function openVideoIssueReportModal(ctx = {}) {
   const modal = document.createElement('div');
   modal.id = 'video-report-modal';
   modal.className = 'modal-overlay';
+  modal.style.zIndex = '10620';
   modal.dataset.videoLibraryId = ctx.videoLibraryId || '';
   modal.dataset.videoId = ctx.videoId || '';
   modal.dataset.videoTitle = ctx.videoTitle || 'סרטון פתרון';
