@@ -2915,7 +2915,7 @@ function renderQuestionCard(q, qi, starred, userVotes = {}, videoMap = {}, isAdm
           <div class="qv-actions">
             <button class="qv-btn" onclick="copyById('${sCopyId}',event)" title="העתק LaTeX">${copySVG}</button>
             ${sAllowAI ? `<button class="qv-btn" onclick="openGeminiModal('${s.id}','sub')" title="צור סעיף דומה">✨</button>` : ''}
-            ${videoMap[s.id] ? `<button class="qv-btn qv-video-btn" onclick="openVideoModal('${videoMap[s.id].libraryId}','${videoMap[s.id].videoId}','${esc(videoMap[s.id].title||'פתרון מוצג')}')" title="צפה בסרטון פתרון">${videoSVG}</button>` : ''}
+            ${videoMap[s.id] ? `<button class="qv-btn qv-video-btn" onclick="openVideoModal('${videoMap[s.id].libraryId}','${videoMap[s.id].videoId}',decodeURIComponent('${encodeURIComponent(videoMap[s.id].title||'פתרון מוצג')}'))" title="צפה בסרטון פתרון">${videoSVG}</button>` : ''}
           </div>
         </div>
         <div class="qv-part-text"></div>
@@ -2939,7 +2939,7 @@ function renderQuestionCard(q, qi, starred, userVotes = {}, videoMap = {}, isAdm
           onclick="toggleStar('${q.id}')" title="סמן שאלה">${starSVG(isStarredQ)}</button>
         <button class="qv-btn" onclick="copyById('${qCopyId}',event)" title="העתק LaTeX">${copySVG}</button>
         ${q.allowAIGen === true ? `<button class="qv-btn" onclick="openGeminiModal('${q.id}','question')" title="צור שאלה דומה">✨</button>` : ''}
-        ${videoMap[q.id] ? `<button class="qv-btn qv-video-btn" onclick="openVideoModal('${videoMap[q.id].libraryId}','${videoMap[q.id].videoId}','${esc(videoMap[q.id].title||'פתרון מוצג')}')" title="צפה בסרטון פתרון">${videoSVG}</button>` : ''}
+        ${videoMap[q.id] ? `<button class="qv-btn qv-video-btn" onclick="openVideoModal('${videoMap[q.id].libraryId}','${videoMap[q.id].videoId}',decodeURIComponent('${encodeURIComponent(videoMap[q.id].title||'פתרון מוצג')}'))" title="צפה בסרטון פתרון">${videoSVG}</button>` : ''}
       </div>
     </div>
     <div class="qv-text"></div>
