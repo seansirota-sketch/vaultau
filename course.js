@@ -4139,6 +4139,7 @@ function openVideoModal(libraryId, videoId, title) {
   const safeVid = String(videoId).replace(/[^a-zA-Z0-9\-]/g, '');
   if (!safeLib || !safeVid) { toast('מזהה סרטון לא תקין', 'error'); return; }
   const embedUrl = `https://player.mediadelivery.net/embed/${safeLib}/${safeVid}?autoplay=false&preload=true&showSpeed=true&playsinline=true&rememberPosition=false`;
+  const directPlayUrl = `https://video.bunnycdn.com/play/${safeLib}/${safeVid}`;
 
   const overlay = document.createElement('div');
   overlay.id = 'video-modal';
@@ -4150,7 +4151,10 @@ function openVideoModal(libraryId, videoId, title) {
     <div class="video-modal-card">
       <div class="video-modal-header">
         <span class="video-modal-title">${esc(title || 'סרטון פתרון')}</span>
-        <button class="video-modal-close" onclick="document.getElementById('video-modal').remove()" aria-label="סגור">✕</button>
+        <div class="video-modal-actions">
+          <a class="video-modal-open" href="${directPlayUrl}" target="_blank" rel="noopener noreferrer" title="פתח בנגן Bunny">⤢</a>
+          <button class="video-modal-close" onclick="document.getElementById('video-modal').remove()" aria-label="סגור">✕</button>
+        </div>
       </div>
       <div class="video-modal-player">
         <iframe

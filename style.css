@@ -1944,6 +1944,28 @@ mjx-container { direction: ltr; }
   font-size: .9rem; font-weight: 700; color: #e2e8f0;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
+.video-modal-actions {
+  display: flex;
+  align-items: center;
+  gap: .45rem;
+}
+.video-modal-open {
+  background: rgba(99,102,241,.16);
+  border: 1px solid rgba(99,102,241,.38);
+  color: #c7d2fe;
+  text-decoration: none;
+  font-size: .95rem;
+  font-weight: 700;
+  padding: .22rem .48rem;
+  border-radius: 6px;
+  line-height: 1;
+  transition: background .15s, color .15s, border-color .15s;
+}
+.video-modal-open:hover {
+  background: rgba(99,102,241,.28);
+  border-color: rgba(129,140,248,.62);
+  color: #eef2ff;
+}
 .video-modal-close {
   background: rgba(255,255,255,.08); border: none; cursor: pointer;
   color: #cbd5e1; font-size: 1rem; font-weight: 700;
