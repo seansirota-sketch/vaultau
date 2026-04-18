@@ -4138,7 +4138,7 @@ function openVideoModal(libraryId, videoId, title) {
   const safeLib = String(libraryId).replace(/[^a-zA-Z0-9\-]/g, '');
   const safeVid = String(videoId).replace(/[^a-zA-Z0-9\-]/g, '');
   if (!safeLib || !safeVid) { toast('מזהה סרטון לא תקין', 'error'); return; }
-  const embedUrl = `https://iframe.mediadelivery.net/embed/${safeLib}/${safeVid}?autoplay=false&preload=true`;
+  const embedUrl = `https://player.mediadelivery.net/embed/${safeLib}/${safeVid}?autoplay=false&preload=true&showSpeed=true&playsinline=true&rememberPosition=false`;
 
   const overlay = document.createElement('div');
   overlay.id = 'video-modal';
