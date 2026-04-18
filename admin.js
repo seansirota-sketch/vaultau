@@ -2582,7 +2582,7 @@ function renderPreview() {
           </label>
           ${!q.text?.trim() && !q._showIntro ? `<button class="btn btn-sm btn-secondary" onclick="addIntroToPreview(${i})">+ הקדמה</button>` : ''}
           <button class="btn btn-sm btn-secondary" onclick="addSubToPreview(${i})">+ סעיף</button>
-          <button class="btn btn-sm" style="background:rgba(99,102,241,.1);color:#6366f1;border-color:rgba(99,102,241,.3)" onclick="openVideoAttachAdminModal('${q.id}','שאלה ${q.index||i+1}')" title="צרף סרטון פתרון">🎬</button>
+          <button class="btn btn-sm" id="vbtn-${q.id}" style="background:rgba(239,68,68,.1);color:#dc2626;border-color:rgba(239,68,68,.3);padding:.28rem .38rem" onclick="openVideoAttachAdminModal('${q.id}','שאלה ${q.index||i+1}')" title="צרף סרטון פתרון"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="5" width="14" height="14" rx="2.5" ry="2.5"/><polygon points="16 8 22 12 16 16"/></svg></button>
           <button class="btn btn-sm btn-danger" onclick="removeQuestion(${i})">🗑️</button>
         </div>
       </div>
@@ -2609,6 +2609,7 @@ function renderPreview() {
         <div id="qb-inline-preview-${i}">${renderEditorInlineImagePreview(q.text, q.inlineImages, `qb-${i}`, i, null)}</div>`}
     </div>`).join('');
 
+  _refreshAdminVideoButtons();
   if (window.MathJax) MathJax.typesetPromise([grid]);
 }
 
@@ -2639,7 +2640,7 @@ function renderSubsPreview(subs, qi) {
             <input type="checkbox" ${s.allowAIGen === true ? 'checked' : ''}
               onchange="parsedQuestions[${qi}].subs[${si}].allowAIGen=this.checked"> ✨
           </label>
-          <button class="btn-icon btn-sm" style="background:rgba(99,102,241,.1);color:#6366f1;border:1px solid rgba(99,102,241,.3)" onclick="openVideoAttachAdminModal('${s.id}','${esc(s.label||'סעיף '+(si+1))}')" title="צרף סרטון">🎬</button>
+          <button class="btn-icon btn-sm" id="vbtn-${s.id}" style="background:rgba(239,68,68,.1);color:#dc2626;border:1px solid rgba(239,68,68,.3);padding:.28rem .38rem" onclick="openVideoAttachAdminModal('${s.id}','${esc(s.label||'סעיף '+(si+1))}')" title="צרף סרטון"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="5" width="14" height="14" rx="2.5" ry="2.5"/><polygon points="16 8 22 12 16 16"/></svg></button>
           <button class="btn-icon btn-sm" style="background:var(--danger-l);color:var(--danger);flex-shrink:0"
             onclick="removeSub(${qi},${si})" title="מחק סעיף">✕</button>
         </div>
@@ -5059,6 +5060,7 @@ async function saveVideoAttachAdmin(entityId) {
     });
     toast('✅ סרטון נשמר בהצלחה', 'success');
     document.getElementById('video-attach-admin-modal')?.remove();
+      _refreshAdminVideoButtons();
   } catch (e) {
     if (errEl) { errEl.textContent = 'שגיאה בשמירה: ' + e.message; errEl.style.display = 'block'; }
     if (btn) { btn.disabled = false; btn.textContent = '💾 שמור'; }
@@ -5071,8 +5073,44 @@ async function detachQuestionVideoAdmin(entityId) {
     await db.collection('question_videos').doc(entityId).delete();
     toast('סרטון הוסר', 'info');
     document.getElementById('video-attach-admin-modal')?.remove();
+      _refreshAdminVideoButtons();
   } catch (e) {
     toast('שגיאה בהסרה: ' + e.message, 'error');
   }
 }
+
+  async function _refreshAdminVideoButtons() {
+    const ids = [];
+    for (const q of (parsedQuestions || [])) {
+      if (q.id) ids.push(q.id);
+      for (const s of (q.subs || [])) { if (s.id) ids.push(s.id); }
+    }
+    if (!ids.length) return;
+
+    const videoSet = new Set();
+    for (let i = 0; i < ids.length; i += 30) {
+      const chunk = ids.slice(i, i + 30);
+      try {
+        const snap = await db.collection('question_videos')
+          .where(firebase.firestore.FieldPath.documentId(), 'in', chunk).get();
+        snap.forEach(d => videoSet.add(d.id));
+      } catch (e) { /* ignore */ }
+    }
+
+    for (const id of ids) {
+      const btn = document.getElementById('vbtn-' + id);
+      if (!btn) continue;
+      if (videoSet.has(id)) {
+        btn.style.background = 'rgba(34,197,94,.12)';
+        btn.style.color = '#16a34a';
+        btn.style.borderColor = 'rgba(34,197,94,.35)';
+        btn.title = 'ערוך סרטון פתרון';
+      } else {
+        btn.style.background = 'rgba(239,68,68,.1)';
+        btn.style.color = '#dc2626';
+        btn.style.borderColor = 'rgba(239,68,68,.3)';
+        btn.title = 'צרף סרטון פתרון';
+      }
+    }
+  }
 
