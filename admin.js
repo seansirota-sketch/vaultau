@@ -2582,6 +2582,7 @@ function renderPreview() {
           </label>
           ${!q.text?.trim() && !q._showIntro ? `<button class="btn btn-sm btn-secondary" onclick="addIntroToPreview(${i})">+ הקדמה</button>` : ''}
           <button class="btn btn-sm btn-secondary" onclick="addSubToPreview(${i})">+ סעיף</button>
+          <button class="btn btn-sm" style="background:rgba(99,102,241,.1);color:#6366f1;border-color:rgba(99,102,241,.3)" onclick="openVideoAttachAdminModal('${q.id}','שאלה ${q.index||i+1}')" title="צרף סרטון פתרון">🎬</button>
           <button class="btn btn-sm btn-danger" onclick="removeQuestion(${i})">🗑️</button>
         </div>
       </div>
@@ -2638,6 +2639,7 @@ function renderSubsPreview(subs, qi) {
             <input type="checkbox" ${s.allowAIGen === true ? 'checked' : ''}
               onchange="parsedQuestions[${qi}].subs[${si}].allowAIGen=this.checked"> ✨
           </label>
+          <button class="btn-icon btn-sm" style="background:rgba(99,102,241,.1);color:#6366f1;border:1px solid rgba(99,102,241,.3)" onclick="openVideoAttachAdminModal('${s.id}','${esc(s.label||'סעיף '+(si+1))}')" title="צרף סרטון">🎬</button>
           <button class="btn-icon btn-sm" style="background:var(--danger-l);color:var(--danger);flex-shrink:0"
             onclick="removeSub(${qi},${si})" title="מחק סעיף">✕</button>
         </div>
@@ -4958,6 +4960,119 @@ async function deleteReport(reportId) {
     renderReportsSection();
   } catch(e) {
     toast('שגיאה במחיקה: ' + e.message, 'error');
+  }
+}
+
+/* ══════════════════════════════════════════════════════════
+   VIDEO ATTACH MODAL — admin panel (mirrors course.js)
+══════════════════════════════════════════════════════════ */
+
+async function openVideoAttachAdminModal(entityId, entityLabel) {
+  document.getElementById('video-attach-admin-modal')?.remove();
+  let existing = {};
+  try {
+    const doc = await db.collection('question_videos').doc(entityId).get();
+    if (doc.exists) existing = doc.data();
+  } catch (e) { console.warn('openVideoAttachAdminModal fetch:', e); }
+
+  function _esc(s) {
+    if (!s && s !== 0) return '';
+    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  }
+
+  const overlay = document.createElement('div');
+  overlay.id = 'video-attach-admin-modal';
+  overlay.className = 'admin-modal-overlay';
+  overlay.innerHTML = `
+    <div class="admin-modal" style="max-width:460px">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1rem">
+        <h3 style="margin:0;font-size:1rem">🎬 ${_esc(entityLabel)} — צרף סרטון Bunny</h3>
+        <button class="btn-icon" onclick="document.getElementById('video-attach-admin-modal').remove()" style="font-size:1.1rem;background:none;border:none;cursor:pointer;color:var(--muted)">✕</button>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:.8rem">
+        <div>
+          <label style="font-size:.85rem;color:var(--muted);display:block;margin-bottom:.3rem">Library ID (מספר הספרייה ב-Bunny)</label>
+          <input id="vaa-lib" type="text" placeholder="למשל: 123456"
+            value="${_esc(existing.libraryId || '')}"
+            style="width:100%;box-sizing:border-box;padding:.5rem .7rem;border:1.5px solid var(--border);border-radius:8px;font-size:.9rem;font-family:inherit">
+        </div>
+        <div>
+          <label style="font-size:.85rem;color:var(--muted);display:block;margin-bottom:.3rem">Video ID (ה-GUID של הסרטון ב-Bunny)</label>
+          <input id="vaa-vid" type="text" placeholder="למשל: a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+            value="${_esc(existing.videoId || '')}"
+            style="width:100%;box-sizing:border-box;padding:.5rem .7rem;border:1.5px solid var(--border);border-radius:8px;font-size:.9rem;font-family:inherit">
+        </div>
+        <div>
+          <label style="font-size:.85rem;color:var(--muted);display:block;margin-bottom:.3rem">כותרת (אופציונלי)</label>
+          <input id="vaa-title" type="text" placeholder="פתרון לשאלה..."
+            value="${_esc(existing.title || '')}"
+            style="width:100%;box-sizing:border-box;padding:.5rem .7rem;border:1.5px solid var(--border);border-radius:8px;font-size:.9rem;font-family:inherit">
+        </div>
+        <p style="font-size:.8rem;color:var(--muted);margin:0;background:#f8fafc;padding:.6rem .8rem;border-radius:8px;line-height:1.6">
+          📋 <strong>איך מוצאים את המזהים?</strong><br>
+          Bunny Dashboard → Stream Library → בחר סרטון → העתק Library ID (מספר) ו-Video ID (GUID).
+        </p>
+        <div id="vaa-err" style="color:#ef4444;font-size:.85rem;display:none"></div>
+        <div style="display:flex;gap:.6rem;justify-content:flex-end;flex-wrap:wrap">
+          ${existing.videoId ? `<button class="btn" style="color:#ef4444;border-color:#ef4444" onclick="detachQuestionVideoAdmin('${_esc(entityId)}')">🗑 הסר סרטון</button>` : ''}
+          <button class="btn" onclick="document.getElementById('video-attach-admin-modal').remove()">ביטול</button>
+          <button class="btn btn-primary" onclick="saveVideoAttachAdmin('${_esc(entityId)}')">💾 שמור</button>
+        </div>
+      </div>
+    </div>`;
+
+  overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
+  document.body.appendChild(overlay);
+  document.getElementById('vaa-lib')?.focus();
+}
+
+async function saveVideoAttachAdmin(entityId) {
+  const libraryId = (document.getElementById('vaa-lib')?.value || '').trim();
+  const videoId   = (document.getElementById('vaa-vid')?.value || '').trim();
+  const title     = (document.getElementById('vaa-title')?.value || '').trim();
+  const errEl     = document.getElementById('vaa-err');
+
+  if (!libraryId || !videoId) {
+    errEl.textContent = 'Library ID ו-Video ID הם שדות חובה';
+    errEl.style.display = 'block';
+    return;
+  }
+  if (!/^\d+$/.test(libraryId)) {
+    errEl.textContent = 'Library ID חייב להיות מספר בלבד';
+    errEl.style.display = 'block';
+    return;
+  }
+  if (!/^[a-zA-Z0-9\-]{8,}$/.test(videoId)) {
+    errEl.textContent = 'Video ID לא תקין — יש להעתיק את ה-GUID מ-Bunny';
+    errEl.style.display = 'block';
+    return;
+  }
+
+  const btn = document.querySelector('#video-attach-admin-modal .btn-primary');
+  if (btn) { btn.disabled = true; btn.textContent = 'שומר...'; }
+  try {
+    await db.collection('question_videos').doc(entityId).set({
+      libraryId,
+      videoId,
+      title: title || '',
+      updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+    });
+    toast('✅ סרטון נשמר בהצלחה', 'success');
+    document.getElementById('video-attach-admin-modal')?.remove();
+  } catch (e) {
+    if (errEl) { errEl.textContent = 'שגיאה בשמירה: ' + e.message; errEl.style.display = 'block'; }
+    if (btn) { btn.disabled = false; btn.textContent = '💾 שמור'; }
+  }
+}
+
+async function detachQuestionVideoAdmin(entityId) {
+  if (!confirm('להסיר את הסרטון מהשאלה?')) return;
+  try {
+    await db.collection('question_videos').doc(entityId).delete();
+    toast('סרטון הוסר', 'info');
+    document.getElementById('video-attach-admin-modal')?.remove();
+  } catch (e) {
+    toast('שגיאה בהסרה: ' + e.message, 'error');
   }
 }
 
