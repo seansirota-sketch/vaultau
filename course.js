@@ -4131,7 +4131,7 @@ function openVideoModal(libraryId, videoId, title) {
   const safeLib = String(libraryId).replace(/[^a-zA-Z0-9\-]/g, '');
   const safeVid = String(videoId).replace(/[^a-zA-Z0-9\-]/g, '');
   if (!safeLib || !safeVid) { toast('מזהה סרטון לא תקין', 'error'); return; }
-  const embedUrl = `https://iframe.mediadelivery.net/embed/${safeLib}/${safeVid}?autoplay=false&preload=false`;
+  const embedUrl = `https://iframe.mediadelivery.net/embed/${safeLib}/${safeVid}?autoplay=false&preload=true`;
 
   const overlay = document.createElement('div');
   overlay.id = 'video-modal';
@@ -4148,7 +4148,7 @@ function openVideoModal(libraryId, videoId, title) {
       <div class="video-modal-player">
         <iframe
           src="${embedUrl}"
-          loading="lazy"
+          loading="eager"
           allow="accelerometer; gyroscope; autoplay; encrypted-media; picture-in-picture"
           allowfullscreen
           title="${esc(title || 'סרטון פתרון')}"
