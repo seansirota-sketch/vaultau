@@ -2916,7 +2916,6 @@ function renderQuestionCard(q, qi, starred, userVotes = {}, videoMap = {}, isAdm
             <button class="qv-btn" onclick="copyById('${sCopyId}',event)" title="העתק LaTeX">${copySVG}</button>
             ${sAllowAI ? `<button class="qv-btn" onclick="openGeminiModal('${s.id}','sub')" title="צור סעיף דומה">✨</button>` : ''}
             ${videoMap[s.id] ? `<button class="qv-btn qv-video-btn" onclick="openVideoModal('${videoMap[s.id].libraryId}','${videoMap[s.id].videoId}','${esc(videoMap[s.id].title||'פתרון מוצג')}')" title="צפה בסרטון פתרון">${videoSVG}</button>` : ''}
-            ${isAdmin ? `<button class="qv-btn qv-video-admin-btn" onclick="openVideoAttachModal('${s.id}','${rawLabel}')" title="${videoMap[s.id] ? 'ערוך סרטון' : 'צרף סרטון'}">🎬</button>` : ''}
           </div>
         </div>
         <div class="qv-part-text"></div>
@@ -2941,7 +2940,6 @@ function renderQuestionCard(q, qi, starred, userVotes = {}, videoMap = {}, isAdm
         <button class="qv-btn" onclick="copyById('${qCopyId}',event)" title="העתק LaTeX">${copySVG}</button>
         ${q.allowAIGen === true ? `<button class="qv-btn" onclick="openGeminiModal('${q.id}','question')" title="צור שאלה דומה">✨</button>` : ''}
         ${videoMap[q.id] ? `<button class="qv-btn qv-video-btn" onclick="openVideoModal('${videoMap[q.id].libraryId}','${videoMap[q.id].videoId}','${esc(videoMap[q.id].title||'פתרון מוצג')}')" title="צפה בסרטון פתרון">${videoSVG}</button>` : ''}
-        ${isAdmin ? `<button class="qv-btn qv-video-admin-btn" onclick="openVideoAttachModal('${q.id}','שאלה ${qi+1}')" title="${videoMap[q.id] ? 'ערוך סרטון' : 'צרף סרטון'}">🎬</button>` : ''}
       </div>
     </div>
     <div class="qv-text"></div>
