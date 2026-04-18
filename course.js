@@ -2796,16 +2796,18 @@ async function renderExam() {
     _ga('view_exam', { course_code: _cc(), exam_id: _eid() });
     _logEvent('exam_open', { examId: STATE.examLabel || STATE.examId, courseCode: STATE.courseCode || STATE.courseId });
 
-    // Fetch userData only if not cached; fetch votes in parallel
-    const [_, votes] = await Promise.all([
+    // Fetch userData only if not cached; fetch votes and video map in parallel
+    const [_, votes, videoMap] = await Promise.all([
       STATE.userData ? Promise.resolve() : fetchUserData(STATE.fireUser.uid, STATE.fireUser.email).then(d => { STATE.userData = d; }),
       fetchExamVotes(exam.questions || []),
+      fetchExamVideoMap(exam.questions || []),
     ]);
     STATE.examVotes = votes;
     const starred   = STATE.userData?.starredQuestions || [];
     const questions = exam.questions || [];
     STATE.examQuestions = questions;
-    const userVotes = STATE.userData?.difficultyVotes || {};
+    const userVotes   = STATE.userData?.difficultyVotes || {};
+    const isAdminNow  = STATE.userData?.role === 'admin';
 
     const metaParts = [
       exam.year,
@@ -2838,7 +2840,7 @@ async function renderExam() {
         <div class="ev-body" id="ev-questions-body">
           ${!questions.length
             ? `<div class="empty"><span class="ei">📝</span><h3>אין שאלות עדיין</h3></div>`
-            : questions.map((q, qi) => renderQuestionCard(q, qi, starred, userVotes)).join('')}
+            : questions.map((q, qi) => renderQuestionCard(q, qi, starred, userVotes, videoMap, isAdminNow)).join('')}
         </div>
       </div>`;
 
@@ -2865,7 +2867,7 @@ async function renderExam() {
   }
 }
 
-function renderQuestionCard(q, qi, starred, userVotes = {}) {
+function renderQuestionCard(q, qi, starred, userVotes = {}, videoMap = {}, isAdmin = false) {
   const isStarredQ = starred.includes(q.id);
   const isBonus    = q.isBonus === true;
   const subs       = q.subs || q.parts || [];
@@ -2890,6 +2892,7 @@ function renderQuestionCard(q, qi, starred, userVotes = {}) {
   const copySVG = `<svg width="15" height="15" viewBox="0 0 16 16" fill="#9ca3af">
     <path d="M4 1.5H3a2 2 0 0 0-2 2V14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V3.5a2 2 0 0 0-2-2h-1v1h1a1 1 0 0 1 1 1V14a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V3.5a1 1 0 0 1 1-1h1v-1z"/>
     <path d="M9.5 1a.5.5 0 0 1 .5.5v1a.5.5 0 0 1-.5.5h-3a.5.5 0 0 1-.5-.5v-1a.5.5 0 0 1 .5-.5h3zm-3-1A1.5 1.5 0 0 0 5 1.5v1A1.5 1.5 0 0 0 6.5 4h3A1.5 1.5 0 0 0 11 2.5v-1A1.5 1.5 0 0 0 9.5 0h-3z"/></svg>`;
+  const videoSVG = `<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="5" width="14" height="14" rx="2.5" ry="2.5"/><polygon points="16 8 22 12 16 16"/></svg>`;
 
   const points = q.points ? `<span class="qv-pts">(${q.points} נקודות)</span>` : '';
   const bonusBadge = isBonus
@@ -2912,6 +2915,7 @@ function renderQuestionCard(q, qi, starred, userVotes = {}) {
           <div class="qv-actions">
             <button class="qv-btn" onclick="copyById('${sCopyId}',event)" title="העתק LaTeX">${copySVG}</button>
             ${sAllowAI ? `<button class="qv-btn" onclick="openGeminiModal('${s.id}','sub')" title="צור סעיף דומה">✨</button>` : ''}
+            ${videoMap[s.id] ? `<button class="qv-btn qv-video-btn" data-lib="${esc(videoMap[s.id].libraryId)}" data-vid="${esc(videoMap[s.id].videoId)}" data-title="${esc(videoMap[s.id].title || 'פתרון מוצג')}" data-entity-id="${esc(s.id)}" data-entity-label="${esc('שאלה ' + (qi + 1) + ' ' + rawLabel)}" onclick="openVideoModalFromBtn(this)" title="צפה בסרטון פתרון">${videoSVG}</button>` : ''}
           </div>
         </div>
         <div class="qv-part-text"></div>
@@ -2935,6 +2939,7 @@ function renderQuestionCard(q, qi, starred, userVotes = {}) {
           onclick="toggleStar('${q.id}')" title="סמן שאלה">${starSVG(isStarredQ)}</button>
         <button class="qv-btn" onclick="copyById('${qCopyId}',event)" title="העתק LaTeX">${copySVG}</button>
         ${q.allowAIGen === true ? `<button class="qv-btn" onclick="openGeminiModal('${q.id}','question')" title="צור שאלה דומה">✨</button>` : ''}
+        ${videoMap[q.id] ? `<button class="qv-btn qv-video-btn" data-lib="${esc(videoMap[q.id].libraryId)}" data-vid="${esc(videoMap[q.id].videoId)}" data-title="${esc(videoMap[q.id].title || 'פתרון מוצג')}" data-entity-id="${esc(q.id)}" data-entity-label="${esc('שאלה ' + (qi + 1))}" onclick="openVideoModalFromBtn(this)" title="צפה בסרטון פתרון">${videoSVG}</button>` : ''}
       </div>
     </div>
     <div class="qv-text"></div>
@@ -4084,5 +4089,322 @@ async function _rateQuestion(rating) {
     _ga('rate_content', { course_code: _cc(), exam_id: _eid(), question_id: _questionRef(qOrSubId), rating_category: 'ai_quality', rating_value: rating });
   } catch (e) {
     console.warn('Failed to save rating:', e.message);
+  }
+}
+
+/* ══════════════════════════════════════════════════════════
+   VIDEO EXPLANATIONS — Bunny.net integration
+══════════════════════════════════════════════════════════ */
+
+/**
+ * Fetch question_videos docs for all question IDs + sub-question IDs in this exam.
+ * Returns a map: { [id]: { libraryId, videoId, title } }
+ */
+async function fetchExamVideoMap(questions) {
+  const allIds = [];
+  questions.forEach(q => {
+    allIds.push(q.id);
+    (q.subs || q.parts || []).forEach(s => allIds.push(s.id));
+  });
+  if (!allIds.length) return {};
+  const videoMap = {};
+  // Firestore 'in' supports up to 30 items per query — chunk accordingly
+  const chunks = [];
+  for (let i = 0; i < allIds.length; i += 30) chunks.push(allIds.slice(i, i + 30));
+  await Promise.all(chunks.map(async chunk => {
+    try {
+      const snap = await db.collection('question_videos')
+        .where(firebase.firestore.FieldPath.documentId(), 'in', chunk)
+        .get();
+      snap.forEach(doc => { videoMap[doc.id] = doc.data(); });
+    } catch (e) {
+      console.warn('fetchExamVideoMap error:', e);
+    }
+  }));
+  return videoMap;
+}
+
+/** Open a Bunny.net video explanation in a modal overlay. */
+function openVideoModalFromBtn(btn) {
+  const libraryId = btn?.dataset?.lib || '';
+  const videoId = btn?.dataset?.vid || '';
+  const title = btn?.dataset?.title || 'סרטון פתרון';
+  const entityId = btn?.dataset?.entityId || '';
+  const entityLabel = btn?.dataset?.entityLabel || '';
+  openVideoModal(libraryId, videoId, title, entityId, entityLabel);
+}
+
+let _videoModalEscHandler = null;
+
+function closeVideoModal() {
+  document.getElementById('video-modal')?.remove();
+  if (_videoModalEscHandler) {
+    document.removeEventListener('keydown', _videoModalEscHandler);
+    _videoModalEscHandler = null;
+  }
+}
+
+function openVideoModal(libraryId, videoId, title, entityId = '', entityLabel = '') {
+  closeVideoModal();
+  // Validate IDs — only allow alphanumeric + hyphens (no injection)
+  const safeLib = String(libraryId).replace(/[^a-zA-Z0-9\-]/g, '');
+  const safeVid = String(videoId).replace(/[^a-zA-Z0-9\-]/g, '');
+  if (!safeLib || !safeVid) { toast('מזהה סרטון לא תקין', 'error'); return; }
+  const embedUrl = `https://player.mediadelivery.net/embed/${safeLib}/${safeVid}?autoplay=false&preload=true&showSpeed=true&playsinline=true&rememberPosition=false`;
+  const directPlayUrl = `https://video.bunnycdn.com/play/${safeLib}/${safeVid}`;
+
+  const overlay = document.createElement('div');
+  overlay.id = 'video-modal';
+  overlay.className = 'video-modal-overlay';
+  overlay.setAttribute('role', 'dialog');
+  overlay.setAttribute('aria-modal', 'true');
+  overlay.setAttribute('aria-label', esc(title || 'סרטון פתרון'));
+  overlay.innerHTML = `
+    <div class="video-modal-card">
+      <div class="video-modal-header">
+        <span class="video-modal-title">${esc(title || 'סרטון פתרון')}</span>
+        <div class="video-modal-actions">
+          <a class="video-modal-open" href="${directPlayUrl}" target="_blank" rel="noopener noreferrer" title="פתח בנגן Bunny">⤢</a>
+          <button class="video-modal-report"
+            data-video-library-id="${esc(safeLib)}"
+            data-video-id="${esc(safeVid)}"
+            data-video-title="${esc(title || 'סרטון פתרון')}"
+            data-entity-id="${esc(entityId)}"
+            data-entity-label="${esc(entityLabel)}"
+            onclick="openVideoReportFromModalBtn(this)"
+            title="דווח על טעות בסרטון">⚠</button>
+          <button class="video-modal-close" onclick="closeVideoModal()" aria-label="סגור">✕</button>
+        </div>
+      </div>
+      <div class="video-modal-player">
+        <iframe
+          src="${embedUrl}"
+          loading="eager"
+          allow="accelerometer; gyroscope; autoplay; encrypted-media; picture-in-picture"
+          allowfullscreen
+          title="${esc(title || 'סרטון פתרון')}"
+        ></iframe>
+      </div>
+    </div>`;
+
+  overlay.addEventListener('click', e => { if (e.target === overlay) closeVideoModal(); });
+  _videoModalEscHandler = e => {
+    if (e.key === 'Escape') closeVideoModal();
+  };
+  document.addEventListener('keydown', _videoModalEscHandler);
+  document.body.appendChild(overlay);
+}
+
+function openVideoReportFromModalBtn(btn) {
+  openVideoIssueReportModal({
+    videoLibraryId: btn?.dataset?.videoLibraryId || '',
+    videoId: btn?.dataset?.videoId || '',
+    videoTitle: btn?.dataset?.videoTitle || 'סרטון פתרון',
+    entityId: btn?.dataset?.entityId || '',
+    entityLabel: btn?.dataset?.entityLabel || '',
+  });
+}
+
+function openVideoIssueReportModal(ctx = {}) {
+  document.getElementById('video-report-modal')?.remove();
+  const examTitle = document.querySelector('.ev-banner-title')?.textContent?.trim() || '';
+
+  const modal = document.createElement('div');
+  modal.id = 'video-report-modal';
+  modal.className = 'modal-overlay';
+  modal.style.zIndex = '10620';
+  modal.dataset.videoLibraryId = ctx.videoLibraryId || '';
+  modal.dataset.videoId = ctx.videoId || '';
+  modal.dataset.videoTitle = ctx.videoTitle || 'סרטון פתרון';
+  modal.dataset.entityId = ctx.entityId || '';
+  modal.dataset.entityLabel = ctx.entityLabel || '';
+  modal.dataset.examId = STATE.examId || '';
+  modal.dataset.examTitle = examTitle;
+  modal.dataset.courseId = STATE.courseId || '';
+
+  modal.innerHTML = `
+    <div class="modal-card" style="max-width:500px">
+      <div class="modal-header">
+        <h3 style="margin:0;font-size:1.05rem">⚠ דווח על טעות בסרטון</h3>
+        <button class="modal-close" onclick="closeVideoIssueReportModal()">✕</button>
+      </div>
+      <div style="padding:1.15rem;display:flex;flex-direction:column;gap:.9rem">
+        <div style="background:var(--bg2,#f9fafb);border-radius:8px;padding:.65rem .9rem;font-size:.84rem;color:var(--muted);border:1px solid var(--border)">
+          סרטון: <strong>${esc(ctx.videoTitle || 'סרטון פתרון')}</strong><br>
+          ${ctx.entityLabel ? `מיקום: <strong>${esc(ctx.entityLabel)}</strong>` : ''}
+        </div>
+        <div class="form-group" style="margin:0">
+          <label>תיאור הבעיה</label>
+          <textarea id="video-report-message" rows="4" dir="rtl"
+            placeholder="מה הבעיה בסרטון? (אפשר לציין גם זמן בסרטון, למשל 02:15)"
+            style="width:100%;border:1.5px solid var(--border);border-radius:8px;padding:.75rem;font-family:inherit;font-size:.9rem;resize:vertical;box-sizing:border-box;color:var(--text)"></textarea>
+        </div>
+        <div id="video-report-err" style="color:var(--danger);font-size:.83rem;display:none"></div>
+        <div style="display:flex;justify-content:flex-end;gap:.7rem">
+          <button class="btn btn-secondary" onclick="closeVideoIssueReportModal()">ביטול</button>
+          <button class="btn btn-primary" id="video-report-submit-btn" onclick="submitVideoIssueReport()">שלח דיווח</button>
+        </div>
+      </div>
+    </div>`;
+
+  document.body.appendChild(modal);
+  modal.addEventListener('click', e => { if (e.target === modal) closeVideoIssueReportModal(); });
+}
+
+async function submitVideoIssueReport() {
+  const modal = document.getElementById('video-report-modal');
+  const msgEl = document.getElementById('video-report-message');
+  const errEl = document.getElementById('video-report-err');
+  const btn = document.getElementById('video-report-submit-btn');
+  const message = (msgEl?.value || '').trim();
+
+  if (!message) {
+    if (errEl) { errEl.textContent = 'אנא תאר את הבעיה בסרטון'; errEl.style.display = 'block'; }
+    return;
+  }
+  if (!modal) return;
+
+  if (errEl) errEl.style.display = 'none';
+  if (btn) { btn.disabled = true; btn.textContent = 'שולח...'; }
+  try {
+    await db.collection('reports').add({
+      category: 'video_bug',
+      type: 'video_issue',
+      message,
+      courseId: modal.dataset.courseId || '',
+      examId: modal.dataset.examId || '',
+      examTitle: modal.dataset.examTitle || '',
+      entityId: modal.dataset.entityId || '',
+      entityLabel: modal.dataset.entityLabel || '',
+      videoLibraryId: modal.dataset.videoLibraryId || '',
+      videoId: modal.dataset.videoId || '',
+      videoTitle: modal.dataset.videoTitle || '',
+      userId: STATE.fireUser?.uid || '',
+      userEmail: STATE.fireUser?.email || '',
+      createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+      status: 'open',
+      adminResponseText: '',
+      adminResponseAt: null,
+      userLastReadAt: null,
+      adminDeletedAt: null,
+      userDeletedAt: null,
+      bothDeletedAt: null,
+    });
+    _ga('submit_feedback', { feedback_type: 'video_report' });
+    closeVideoIssueReportModal();
+    toast('הדיווח נשלח — תודה! 🙏', 'info');
+  } catch (e) {
+    if (btn) { btn.disabled = false; btn.textContent = 'שלח דיווח'; }
+    if (errEl) { errEl.textContent = 'שגיאה בשליחה — נסה שוב'; errEl.style.display = 'block'; }
+  }
+}
+
+function closeVideoIssueReportModal() {
+  document.getElementById('video-report-modal')?.remove();
+}
+
+/** Admin: open modal to attach or update a Bunny video for a question / sub-question. */
+async function openVideoAttachModal(entityId, entityLabel) {
+  document.getElementById('video-attach-modal')?.remove();
+  let existing = {};
+  try {
+    const doc = await db.collection('question_videos').doc(entityId).get();
+    if (doc.exists) existing = doc.data();
+  } catch (e) { console.warn('openVideoAttachModal fetch:', e); }
+
+  const overlay = document.createElement('div');
+  overlay.id = 'video-attach-modal';
+  overlay.className = 'video-modal-overlay';
+  overlay.innerHTML = `
+    <div class="video-modal-card" style="max-width:480px">
+      <div class="video-modal-header">
+        <span class="video-modal-title">🎬 ${esc(entityLabel)} — צרף סרטון Bunny</span>
+        <button class="video-modal-close" onclick="document.getElementById('video-attach-modal').remove()" aria-label="סגור">✕</button>
+      </div>
+      <div style="padding:1.2rem;display:flex;flex-direction:column;gap:.85rem">
+        <div>
+          <label style="font-size:.85rem;color:var(--muted);display:block;margin-bottom:.3rem">Library ID</label>
+          <input id="va-lib" type="text" placeholder="למשל: 123456"
+            value="${esc(existing.libraryId || '')}"
+            style="width:100%;box-sizing:border-box;padding:.5rem .7rem;border:1.5px solid var(--border);border-radius:8px;font-size:.9rem;font-family:inherit">
+        </div>
+        <div>
+          <label style="font-size:.85rem;color:var(--muted);display:block;margin-bottom:.3rem">Video ID (GUID)</label>
+          <input id="va-vid" type="text" placeholder="למשל: a1b2c3d4-e5f6-..."
+            value="${esc(existing.videoId || '')}"
+            style="width:100%;box-sizing:border-box;padding:.5rem .7rem;border:1.5px solid var(--border);border-radius:8px;font-size:.9rem;font-family:inherit">
+        </div>
+        <div>
+          <label style="font-size:.85rem;color:var(--muted);display:block;margin-bottom:.3rem">כותרת (אופציונלי)</label>
+          <input id="va-title" type="text" placeholder="פתרון לשאלה..."
+            value="${esc(existing.title || '')}"
+            style="width:100%;box-sizing:border-box;padding:.5rem .7rem;border:1.5px solid var(--border);border-radius:8px;font-size:.9rem;font-family:inherit">
+        </div>
+        <div id="va-err" style="color:#ef4444;font-size:.85rem;display:none"></div>
+        <div style="display:flex;gap:.6rem;justify-content:flex-end;flex-wrap:wrap">
+          ${existing.videoId ? `<button class="btn" style="color:#ef4444;border-color:#ef4444" onclick="detachQuestionVideo('${esc(entityId)}')">🗑 הסר סרטון</button>` : ''}
+          <button class="btn" onclick="document.getElementById('video-attach-modal').remove()">ביטול</button>
+          <button class="btn btn-primary" onclick="saveVideoAttach('${esc(entityId)}')">שמור</button>
+        </div>
+      </div>
+    </div>`;
+
+  overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
+  document.body.appendChild(overlay);
+  document.getElementById('va-lib')?.focus();
+}
+
+/** Admin: persist a video mapping to Firestore. */
+async function saveVideoAttach(entityId) {
+  const libraryId = (document.getElementById('va-lib')?.value || '').trim();
+  const videoId   = (document.getElementById('va-vid')?.value || '').trim();
+  const title     = (document.getElementById('va-title')?.value || '').trim();
+  const errEl     = document.getElementById('va-err');
+
+  if (!libraryId || !videoId) {
+    errEl.textContent = 'Library ID ו-Video ID הם שדות חובה';
+    errEl.style.display = 'block';
+    return;
+  }
+  if (!/^\d+$/.test(libraryId)) {
+    errEl.textContent = 'Library ID חייב להיות מספר';
+    errEl.style.display = 'block';
+    return;
+  }
+  // Video ID must be a GUID-like string
+  if (!/^[a-zA-Z0-9\-]{8,}$/.test(videoId)) {
+    errEl.textContent = 'Video ID לא תקין — יש להזין את ה-GUID מ-Bunny';
+    errEl.style.display = 'block';
+    return;
+  }
+
+  const btn = document.querySelector('#video-attach-modal .btn-primary');
+  if (btn) { btn.disabled = true; btn.textContent = 'שומר...'; }
+  try {
+    await db.collection('question_videos').doc(entityId).set({
+      libraryId,
+      videoId,
+      title: title || '',
+      updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+    });
+    toast('✅ הסרטון נשמר בהצלחה', 'info');
+    document.getElementById('video-attach-modal')?.remove();
+    renderExam(); // reload to show the new play button
+  } catch (e) {
+    if (errEl) { errEl.textContent = 'שגיאה בשמירה: ' + e.message; errEl.style.display = 'block'; }
+    if (btn) { btn.disabled = false; btn.textContent = 'שמור'; }
+  }
+}
+
+/** Admin: delete a video mapping from Firestore. */
+async function detachQuestionVideo(entityId) {
+  if (!confirm('להסיר את הסרטון מהשאלה?')) return;
+  try {
+    await db.collection('question_videos').doc(entityId).delete();
+    toast('סרטון הוסר', 'info');
+    document.getElementById('video-attach-modal')?.remove();
+    renderExam();
+  } catch (e) {
+    toast('שגיאה בהסרת הסרטון: ' + e.message, 'error');
   }
 }
