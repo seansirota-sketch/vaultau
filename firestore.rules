@@ -101,7 +101,24 @@ service cloud.firestore {
 
     // enforce userId matches authenticated user to prevent forged reports.
     match /reports/{reportId} {
-      allow create: if isLoggedIn() && request.resource.data.userId == request.auth.uid;
+      allow create: if isLoggedIn()
+        && request.resource.data.userId == request.auth.uid
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.status == 'open'
+        && request.resource.data.category in ['contact', 'bug', 'video_bug']
+        && request.resource.data.message is string
+        && request.resource.data.message.size() > 0
+        && request.resource.data.message.size() <= 2000
+        && request.resource.data.keys().hasOnly([
+          'category', 'type', 'typeLabel', 'message',
+          'examId', 'examTitle', 'courseId',
+          'entityId', 'entityLabel',
+          'videoLibraryId', 'videoId', 'videoTitle',
+          'userId', 'userEmail',
+          'createdAt', 'status',
+          'adminResponseText', 'adminResponseAt',
+          'userLastReadAt', 'adminDeletedAt', 'userDeletedAt', 'bothDeletedAt'
+        ]);
       allow read, list: if isAdmin() || (isLoggedIn() && resource.data.userId == request.auth.uid);
       allow update: if isAdmin() || (
         isLoggedIn()
