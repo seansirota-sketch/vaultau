@@ -4134,8 +4134,18 @@ function openVideoModalFromBtn(btn) {
   openVideoModal(libraryId, videoId, title, entityId, entityLabel);
 }
 
-function openVideoModal(libraryId, videoId, title, entityId = '', entityLabel = '') {
+let _videoModalEscHandler = null;
+
+function closeVideoModal() {
   document.getElementById('video-modal')?.remove();
+  if (_videoModalEscHandler) {
+    document.removeEventListener('keydown', _videoModalEscHandler);
+    _videoModalEscHandler = null;
+  }
+}
+
+function openVideoModal(libraryId, videoId, title, entityId = '', entityLabel = '') {
+  closeVideoModal();
   // Validate IDs — only allow alphanumeric + hyphens (no injection)
   const safeLib = String(libraryId).replace(/[^a-zA-Z0-9\-]/g, '');
   const safeVid = String(videoId).replace(/[^a-zA-Z0-9\-]/g, '');
@@ -4163,7 +4173,7 @@ function openVideoModal(libraryId, videoId, title, entityId = '', entityLabel = 
             data-entity-label="${esc(entityLabel)}"
             onclick="openVideoReportFromModalBtn(this)"
             title="דווח על טעות בסרטון">⚠</button>
-          <button class="video-modal-close" onclick="document.getElementById('video-modal').remove()" aria-label="סגור">✕</button>
+          <button class="video-modal-close" onclick="closeVideoModal()" aria-label="סגור">✕</button>
         </div>
       </div>
       <div class="video-modal-player">
@@ -4177,11 +4187,11 @@ function openVideoModal(libraryId, videoId, title, entityId = '', entityLabel = 
       </div>
     </div>`;
 
-  overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
-  const escHandler = e => {
-    if (e.key === 'Escape') { overlay.remove(); document.removeEventListener('keydown', escHandler); }
+  overlay.addEventListener('click', e => { if (e.target === overlay) closeVideoModal(); });
+  _videoModalEscHandler = e => {
+    if (e.key === 'Escape') closeVideoModal();
   };
-  document.addEventListener('keydown', escHandler);
+  document.addEventListener('keydown', _videoModalEscHandler);
   document.body.appendChild(overlay);
 }
 
