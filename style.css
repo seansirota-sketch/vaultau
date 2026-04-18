@@ -1963,14 +1963,19 @@ mjx-container { direction: ltr; }
 
 /* Video play button in question card */
 .qv-video-btn {
-  background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%) !important;
-  color: #fff !important; border-color: transparent !important;
-  font-weight: 700; font-size: .78rem;
-  padding: .2rem .6rem !important;
-  border-radius: 6px;
-  white-space: nowrap;
+  color: #6366f1 !important;
+  background: rgba(99,102,241,.08) !important;
+  border-color: rgba(99,102,241,.28) !important;
+  padding: .28rem .38rem !important;
+  border-radius: 7px;
+  transition: background .18s, color .18s, box-shadow .18s;
 }
-.qv-video-btn:hover { opacity: .88; }
+.qv-video-btn:hover {
+  background: rgba(99,102,241,.18) !important;
+  color: #4f46e5 !important;
+  box-shadow: 0 0 0 3px rgba(99,102,241,.15);
+}
+.qv-video-btn svg { display: block; }
 
 /* Admin attach button */
 .qv-video-admin-btn {
