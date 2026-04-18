@@ -1966,6 +1966,23 @@ mjx-container { direction: ltr; }
   border-color: rgba(129,140,248,.62);
   color: #eef2ff;
 }
+.video-modal-report {
+  background: rgba(245,158,11,.14);
+  border: 1px solid rgba(245,158,11,.35);
+  color: #fde68a;
+  cursor: pointer;
+  font-size: .92rem;
+  font-weight: 700;
+  padding: .22rem .45rem;
+  border-radius: 6px;
+  line-height: 1;
+  transition: background .15s, color .15s, border-color .15s;
+}
+.video-modal-report:hover {
+  background: rgba(245,158,11,.25);
+  border-color: rgba(245,158,11,.55);
+  color: #fef3c7;
+}
 .video-modal-close {
   background: rgba(255,255,255,.08); border: none; cursor: pointer;
   color: #cbd5e1; font-size: 1rem; font-weight: 700;

@@ -2915,7 +2915,7 @@ function renderQuestionCard(q, qi, starred, userVotes = {}, videoMap = {}, isAdm
           <div class="qv-actions">
             <button class="qv-btn" onclick="copyById('${sCopyId}',event)" title="העתק LaTeX">${copySVG}</button>
             ${sAllowAI ? `<button class="qv-btn" onclick="openGeminiModal('${s.id}','sub')" title="צור סעיף דומה">✨</button>` : ''}
-            ${videoMap[s.id] ? `<button class="qv-btn qv-video-btn" data-lib="${esc(videoMap[s.id].libraryId)}" data-vid="${esc(videoMap[s.id].videoId)}" data-title="${esc(videoMap[s.id].title || 'פתרון מוצג')}" onclick="openVideoModalFromBtn(this)" title="צפה בסרטון פתרון">${videoSVG}</button>` : ''}
+            ${videoMap[s.id] ? `<button class="qv-btn qv-video-btn" data-lib="${esc(videoMap[s.id].libraryId)}" data-vid="${esc(videoMap[s.id].videoId)}" data-title="${esc(videoMap[s.id].title || 'פתרון מוצג')}" data-entity-id="${esc(s.id)}" data-entity-label="${esc('שאלה ' + (qi + 1) + ' ' + rawLabel)}" onclick="openVideoModalFromBtn(this)" title="צפה בסרטון פתרון">${videoSVG}</button>` : ''}
           </div>
         </div>
         <div class="qv-part-text"></div>
@@ -2939,7 +2939,7 @@ function renderQuestionCard(q, qi, starred, userVotes = {}, videoMap = {}, isAdm
           onclick="toggleStar('${q.id}')" title="סמן שאלה">${starSVG(isStarredQ)}</button>
         <button class="qv-btn" onclick="copyById('${qCopyId}',event)" title="העתק LaTeX">${copySVG}</button>
         ${q.allowAIGen === true ? `<button class="qv-btn" onclick="openGeminiModal('${q.id}','question')" title="צור שאלה דומה">✨</button>` : ''}
-        ${videoMap[q.id] ? `<button class="qv-btn qv-video-btn" data-lib="${esc(videoMap[q.id].libraryId)}" data-vid="${esc(videoMap[q.id].videoId)}" data-title="${esc(videoMap[q.id].title || 'פתרון מוצג')}" onclick="openVideoModalFromBtn(this)" title="צפה בסרטון פתרון">${videoSVG}</button>` : ''}
+        ${videoMap[q.id] ? `<button class="qv-btn qv-video-btn" data-lib="${esc(videoMap[q.id].libraryId)}" data-vid="${esc(videoMap[q.id].videoId)}" data-title="${esc(videoMap[q.id].title || 'פתרון מוצג')}" data-entity-id="${esc(q.id)}" data-entity-label="${esc('שאלה ' + (qi + 1))}" onclick="openVideoModalFromBtn(this)" title="צפה בסרטון פתרון">${videoSVG}</button>` : ''}
       </div>
     </div>
     <div class="qv-text"></div>
@@ -4129,10 +4129,12 @@ function openVideoModalFromBtn(btn) {
   const libraryId = btn?.dataset?.lib || '';
   const videoId = btn?.dataset?.vid || '';
   const title = btn?.dataset?.title || 'סרטון פתרון';
-  openVideoModal(libraryId, videoId, title);
+  const entityId = btn?.dataset?.entityId || '';
+  const entityLabel = btn?.dataset?.entityLabel || '';
+  openVideoModal(libraryId, videoId, title, entityId, entityLabel);
 }
 
-function openVideoModal(libraryId, videoId, title) {
+function openVideoModal(libraryId, videoId, title, entityId = '', entityLabel = '') {
   document.getElementById('video-modal')?.remove();
   // Validate IDs — only allow alphanumeric + hyphens (no injection)
   const safeLib = String(libraryId).replace(/[^a-zA-Z0-9\-]/g, '');
@@ -4153,6 +4155,14 @@ function openVideoModal(libraryId, videoId, title) {
         <span class="video-modal-title">${esc(title || 'סרטון פתרון')}</span>
         <div class="video-modal-actions">
           <a class="video-modal-open" href="${directPlayUrl}" target="_blank" rel="noopener noreferrer" title="פתח בנגן Bunny">⤢</a>
+          <button class="video-modal-report"
+            data-video-library-id="${esc(safeLib)}"
+            data-video-id="${esc(safeVid)}"
+            data-video-title="${esc(title || 'סרטון פתרון')}"
+            data-entity-id="${esc(entityId)}"
+            data-entity-label="${esc(entityLabel)}"
+            onclick="openVideoReportFromModalBtn(this)"
+            title="דווח על טעות בסרטון">⚠</button>
           <button class="video-modal-close" onclick="document.getElementById('video-modal').remove()" aria-label="סגור">✕</button>
         </div>
       </div>
@@ -4173,6 +4183,113 @@ function openVideoModal(libraryId, videoId, title) {
   };
   document.addEventListener('keydown', escHandler);
   document.body.appendChild(overlay);
+}
+
+function openVideoReportFromModalBtn(btn) {
+  openVideoIssueReportModal({
+    videoLibraryId: btn?.dataset?.videoLibraryId || '',
+    videoId: btn?.dataset?.videoId || '',
+    videoTitle: btn?.dataset?.videoTitle || 'סרטון פתרון',
+    entityId: btn?.dataset?.entityId || '',
+    entityLabel: btn?.dataset?.entityLabel || '',
+  });
+}
+
+function openVideoIssueReportModal(ctx = {}) {
+  document.getElementById('video-report-modal')?.remove();
+  const examTitle = document.querySelector('.ev-banner-title')?.textContent?.trim() || '';
+
+  const modal = document.createElement('div');
+  modal.id = 'video-report-modal';
+  modal.className = 'modal-overlay';
+  modal.dataset.videoLibraryId = ctx.videoLibraryId || '';
+  modal.dataset.videoId = ctx.videoId || '';
+  modal.dataset.videoTitle = ctx.videoTitle || 'סרטון פתרון';
+  modal.dataset.entityId = ctx.entityId || '';
+  modal.dataset.entityLabel = ctx.entityLabel || '';
+  modal.dataset.examId = STATE.examId || '';
+  modal.dataset.examTitle = examTitle;
+  modal.dataset.courseId = STATE.courseId || '';
+
+  modal.innerHTML = `
+    <div class="modal-card" style="max-width:500px">
+      <div class="modal-header">
+        <h3 style="margin:0;font-size:1.05rem">⚠ דווח על טעות בסרטון</h3>
+        <button class="modal-close" onclick="closeVideoIssueReportModal()">✕</button>
+      </div>
+      <div style="padding:1.15rem;display:flex;flex-direction:column;gap:.9rem">
+        <div style="background:var(--bg2,#f9fafb);border-radius:8px;padding:.65rem .9rem;font-size:.84rem;color:var(--muted);border:1px solid var(--border)">
+          סרטון: <strong>${esc(ctx.videoTitle || 'סרטון פתרון')}</strong><br>
+          ${ctx.entityLabel ? `מיקום: <strong>${esc(ctx.entityLabel)}</strong>` : ''}
+        </div>
+        <div class="form-group" style="margin:0">
+          <label>תיאור הבעיה</label>
+          <textarea id="video-report-message" rows="4" dir="rtl"
+            placeholder="מה הבעיה בסרטון? (אפשר לציין גם זמן בסרטון, למשל 02:15)"
+            style="width:100%;border:1.5px solid var(--border);border-radius:8px;padding:.75rem;font-family:inherit;font-size:.9rem;resize:vertical;box-sizing:border-box;color:var(--text)"></textarea>
+        </div>
+        <div id="video-report-err" style="color:var(--danger);font-size:.83rem;display:none"></div>
+        <div style="display:flex;justify-content:flex-end;gap:.7rem">
+          <button class="btn btn-secondary" onclick="closeVideoIssueReportModal()">ביטול</button>
+          <button class="btn btn-primary" id="video-report-submit-btn" onclick="submitVideoIssueReport()">שלח דיווח</button>
+        </div>
+      </div>
+    </div>`;
+
+  document.body.appendChild(modal);
+  modal.addEventListener('click', e => { if (e.target === modal) closeVideoIssueReportModal(); });
+}
+
+async function submitVideoIssueReport() {
+  const modal = document.getElementById('video-report-modal');
+  const msgEl = document.getElementById('video-report-message');
+  const errEl = document.getElementById('video-report-err');
+  const btn = document.getElementById('video-report-submit-btn');
+  const message = (msgEl?.value || '').trim();
+
+  if (!message) {
+    if (errEl) { errEl.textContent = 'אנא תאר את הבעיה בסרטון'; errEl.style.display = 'block'; }
+    return;
+  }
+  if (!modal) return;
+
+  if (errEl) errEl.style.display = 'none';
+  if (btn) { btn.disabled = true; btn.textContent = 'שולח...'; }
+  try {
+    await db.collection('reports').add({
+      category: 'video_bug',
+      type: 'video_issue',
+      message,
+      courseId: modal.dataset.courseId || '',
+      examId: modal.dataset.examId || '',
+      examTitle: modal.dataset.examTitle || '',
+      entityId: modal.dataset.entityId || '',
+      entityLabel: modal.dataset.entityLabel || '',
+      videoLibraryId: modal.dataset.videoLibraryId || '',
+      videoId: modal.dataset.videoId || '',
+      videoTitle: modal.dataset.videoTitle || '',
+      userId: STATE.fireUser?.uid || '',
+      userEmail: STATE.fireUser?.email || '',
+      createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+      status: 'open',
+      adminResponseText: '',
+      adminResponseAt: null,
+      userLastReadAt: null,
+      adminDeletedAt: null,
+      userDeletedAt: null,
+      bothDeletedAt: null,
+    });
+    _ga('submit_feedback', { feedback_type: 'video_report' });
+    closeVideoIssueReportModal();
+    toast('הדיווח נשלח — תודה! 🙏', 'info');
+  } catch (e) {
+    if (btn) { btn.disabled = false; btn.textContent = 'שלח דיווח'; }
+    if (errEl) { errEl.textContent = 'שגיאה בשליחה — נסה שוב'; errEl.style.display = 'block'; }
+  }
+}
+
+function closeVideoIssueReportModal() {
+  document.getElementById('video-report-modal')?.remove();
 }
 
 /** Admin: open modal to attach or update a Bunny video for a question / sub-question. */
