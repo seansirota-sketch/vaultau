@@ -79,6 +79,12 @@ service cloud.firestore {
       allow delete: if isAdmin();
     }
 
+    // Video explanations — any logged-in user can read, only admins can write.
+    match /question_videos/{questionId} {
+      allow read: if isLoggedIn();
+      allow write: if isAdmin();
+    }
+
     // block delete — prevent cache wiping; create/update needed client-side.
     match /ai_questions_cache/{docId} {
       allow read: if isLoggedIn();
