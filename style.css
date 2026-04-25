@@ -1146,42 +1146,23 @@ mjx-container { direction: ltr; }
   left: 1.25rem;
   transform: translateY(-50%);
   display: flex;
-  flex-direction: column;
+  flex-direction: row;
   gap: .4rem;
-  align-items: stretch;
+  align-items: center;
   z-index: 1;
 }
-.ev-status-btn {
-  width: auto;
-  height: auto;
-  border-radius: 8px;
-  padding: .35rem .7rem;
-  display: inline-flex;
-  align-items: center;
-  gap: .35rem;
-  font-size: .82rem;
-  font-weight: 600;
-  white-space: nowrap;
+.ev-banner-status .inprogress-toggle-btn,
+.ev-banner-status .done-toggle-btn {
   margin-left: 0;
-}
-.ev-status-btn .ev-status-icon {
-  font-size: .95rem;
-  line-height: 1;
-}
-.ev-status-btn .ev-status-label {
-  line-height: 1;
 }
 @media (max-width: 600px) {
   .ev-banner { padding: 1rem 1rem .9rem; }
   .ev-banner-status {
     position: static;
     transform: none;
-    flex-direction: row;
     justify-content: center;
     margin-bottom: .7rem;
-    flex-wrap: wrap;
   }
-  .ev-status-btn { font-size: .76rem; padding: .3rem .55rem; }
 }
 .ev-banner-title {
   font-size: 1.35rem; font-weight: 800; color: #0f1923;

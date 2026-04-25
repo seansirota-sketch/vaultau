@@ -2679,13 +2679,11 @@ function _refreshExamBannerStatus(examId) {
 
   ipBtn.classList.toggle('inprogress-active', isIP);
   ipBtn.title = isIP ? 'בטל בתהליך' : 'סמן כבתהליך';
-  const ipIcon = ipBtn.querySelector('.ev-status-icon');
-  if (ipIcon) ipIcon.textContent = isIP ? '⏳' : '◑';
+  ipBtn.textContent = isIP ? '⏳' : '◑';
 
   doneBtn.classList.toggle('done-active', isDone);
   doneBtn.title = isDone ? 'בטל סימון בוצע' : 'סמן כבוצע';
-  const doneIcon = doneBtn.querySelector('.ev-status-icon');
-  if (doneIcon) doneIcon.textContent = isDone ? '✓' : '○';
+  doneBtn.textContent = isDone ? '✓' : '○';
 }
 
 async function toggleInProgressFromExam(examId) {
@@ -2862,19 +2860,17 @@ async function renderExam() {
 
         <div class="ev-banner">
           <div class="ev-banner-status" id="ev-banner-status">
-            <button class="inprogress-toggle-btn ev-status-btn ${STATE.inProgressExams.includes(exam.id) ? 'inprogress-active' : ''}"
+            <button class="inprogress-toggle-btn ${STATE.inProgressExams.includes(exam.id) ? 'inprogress-active' : ''}"
               id="ev-inprogress-btn"
               onclick="toggleInProgressFromExam('${exam.id}')"
               title="${STATE.inProgressExams.includes(exam.id) ? 'בטל בתהליך' : 'סמן כבתהליך'}">
-              <span class="ev-status-icon">${STATE.inProgressExams.includes(exam.id) ? '⏳' : '◑'}</span>
-              <span class="ev-status-label">מבחן בתהליך</span>
+              ${STATE.inProgressExams.includes(exam.id) ? '⏳' : '◑'}
             </button>
-            <button class="done-toggle-btn ev-status-btn ${STATE.doneExams.includes(exam.id) ? 'done-active' : ''}"
+            <button class="done-toggle-btn ${STATE.doneExams.includes(exam.id) ? 'done-active' : ''}"
               id="ev-done-btn"
               onclick="toggleDoneFromExam('${exam.id}')"
               title="${STATE.doneExams.includes(exam.id) ? 'בטל סימון בוצע' : 'סמן כבוצע'}">
-              <span class="ev-status-icon">${STATE.doneExams.includes(exam.id) ? '✓' : '○'}</span>
-              <span class="ev-status-label">סמן כבוצע</span>
+              ${STATE.doneExams.includes(exam.id) ? '✓' : '○'}
             </button>
           </div>
           <div class="ev-banner-text">
