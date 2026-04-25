@@ -683,6 +683,8 @@ body {
 .adm-section { display: none; }
 .adm-section.active { display: block; animation: fadeIn .18s ease; }
 #sec-add-exam.active { min-width: calc(100vw - var(--sidebar-w) - 5rem); }
+#sec-broadcast.active { min-width: calc(100vw - var(--sidebar-w) - 5rem); }
+#sec-broadcast.active .ac { max-width: 760px; }
 @keyframes fadeIn { from { opacity:0; transform:translateY(4px); } to { opacity:1; transform:translateY(0); } }
 
 /* ── Section header ── */
