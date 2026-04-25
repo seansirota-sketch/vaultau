@@ -1137,6 +1137,32 @@ mjx-container { direction: ltr; }
 .ev-banner {
   background: #fff; border-bottom: 1px solid #dde1e7;
   padding: 1.35rem 1.5rem 1.2rem; text-align: center;
+  position: relative;
+}
+.ev-banner-text { width: 100%; }
+.ev-banner-status {
+  position: absolute;
+  top: 50%;
+  left: 1.25rem;
+  transform: translateY(-50%);
+  display: flex;
+  flex-direction: row;
+  gap: .4rem;
+  align-items: center;
+  z-index: 1;
+}
+.ev-banner-status .inprogress-toggle-btn,
+.ev-banner-status .done-toggle-btn {
+  margin-left: 0;
+}
+@media (max-width: 600px) {
+  .ev-banner { padding: 1rem 1rem .9rem; }
+  .ev-banner-status {
+    position: static;
+    transform: none;
+    justify-content: center;
+    margin-bottom: .7rem;
+  }
 }
 .ev-banner-title {
   font-size: 1.35rem; font-weight: 800; color: #0f1923;
