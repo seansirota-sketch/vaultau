@@ -5147,6 +5147,8 @@ function resetBroadcastForm() {
   if (err) { err.textContent = ''; err.style.display = 'none'; }
   const allRadio = document.querySelector('input[name="bc-audience"][value="all"]');
   if (allRadio) allRadio.checked = true;
+  const regRadio = document.querySelector('input[name="bc-priority"][value="regular"]');
+  if (regRadio) regRadio.checked = true;
   onBroadcastAudienceChange();
 }
 
@@ -5161,6 +5163,7 @@ async function sendBroadcast() {
   const title = (document.getElementById('bc-title')?.value || '').trim();
   const body  = (document.getElementById('bc-body')?.value  || '').trim();
   const audience = document.querySelector('input[name="bc-audience"]:checked')?.value || 'all';
+  const priority = document.querySelector('input[name="bc-priority"]:checked')?.value || 'regular';
   const courseId = (document.getElementById('bc-course')?.value || '').trim();
   const btn = document.getElementById('bc-send-btn');
   const err = document.getElementById('bc-error');
@@ -5187,6 +5190,7 @@ async function sendBroadcast() {
       audience,                                  // 'all' | 'course'
       courseId: audience === 'course' ? courseId : null,
       courseName,
+      priority,                                  // 'regular' | 'urgent'
       active: true,
       createdAt: firebase.firestore.FieldValue.serverTimestamp(),
       createdBy: adminUser?.email || null,
@@ -5221,6 +5225,9 @@ async function renderBroadcastList() {
       const audienceLabel = x.audience === 'course'
         ? `קורס: ${esc(x.courseName || x.courseId || '')}`
         : 'כל המשתמשים';
+      const priorityBadge = x.priority === 'urgent'
+        ? '<span style="background:#fef3c7;color:#92400e;padding:.1rem .5rem;border-radius:6px;font-size:.7rem;font-weight:700">⚠️ דחופה</span>'
+        : '<span style="background:#e0e7ff;color:#3730a3;padding:.1rem .5rem;border-radius:6px;font-size:.7rem;font-weight:700">📥 תיבת הודעות</span>';
       const activeBadge = x.active === false
         ? '<span style="background:#fee2e2;color:#991b1b;padding:.1rem .5rem;border-radius:6px;font-size:.7rem;font-weight:700">לא פעיל</span>'
         : '<span style="background:#dcfce7;color:#166534;padding:.1rem .5rem;border-radius:6px;font-size:.7rem;font-weight:700">פעיל</span>';
@@ -5229,6 +5236,7 @@ async function renderBroadcastList() {
           <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:.75rem;margin-bottom:.4rem">
             <div style="display:flex;align-items:center;gap:.5rem;flex-wrap:wrap">
               <strong style="font-size:.95rem">${esc(x.title || '')}</strong>
+              ${priorityBadge}
               ${activeBadge}
             </div>
             <div style="display:flex;gap:.4rem;flex-shrink:0">

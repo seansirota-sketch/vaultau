@@ -512,6 +512,7 @@ let STATE = {
 let _userInboxUnsub = null;
 let _userInboxReports = [];
 let _userInboxUnread = 0;
+let _userInboxBroadcasts = [];
 
 function _tsToMillis(ts) {
   return ts?.toMillis?.() || 0;
@@ -524,6 +525,12 @@ function _hasAdminResponse(report) {
 function _isUnreadAdminResponse(report) {
   if (!_hasAdminResponse(report)) return false;
   return _tsToMillis(report.adminResponseAt) > _tsToMillis(report.userLastReadAt);
+}
+
+function _isUnreadBroadcast(b) {
+  const read = STATE.userData?.readBroadcasts;
+  if (Array.isArray(read) && read.includes(b.id)) return false;
+  return true;
 }
 
 function _updateInboxBadge() {
@@ -539,7 +546,9 @@ function _updateInboxBadge() {
 }
 
 function _recomputeInboxUnread() {
-  _userInboxUnread = _userInboxReports.filter(_isUnreadAdminResponse).length;
+  const reportsUnread = _userInboxReports.filter(_isUnreadAdminResponse).length;
+  const broadcastsUnread = _userInboxBroadcasts.filter(_isUnreadBroadcast).length;
+  _userInboxUnread = reportsUnread + broadcastsUnread;
   _updateInboxBadge();
 }
 
@@ -549,6 +558,7 @@ function _stopUserInboxListener() {
     _userInboxUnsub = null;
   }
   _userInboxReports = [];
+  _userInboxBroadcasts = [];
   _userInboxUnread = 0;
   _updateInboxBadge();
 }
@@ -584,15 +594,30 @@ function _formatInboxDate(ts) {
 
 async function _markInboxAsRead() {
   const unread = _userInboxReports.filter(_isUnreadAdminResponse);
-  if (!unread.length) return;
-
-  const batch = db.batch();
-  unread.forEach(r => {
-    batch.update(db.collection('reports').doc(r.id), {
-      userLastReadAt: firebase.firestore.FieldValue.serverTimestamp(),
+  if (unread.length) {
+    const batch = db.batch();
+    unread.forEach(r => {
+      batch.update(db.collection('reports').doc(r.id), {
+        userLastReadAt: firebase.firestore.FieldValue.serverTimestamp(),
+      });
     });
-  });
-  await batch.commit();
+    try { await batch.commit(); } catch (e) { console.warn('mark reports read failed:', e.message); }
+  }
+
+  // Mark broadcasts as read on user doc
+  const unreadBroadcasts = _userInboxBroadcasts.filter(_isUnreadBroadcast);
+  if (unreadBroadcasts.length) {
+    const uid = STATE.fireUser?.uid;
+    if (uid) {
+      const ud = STATE.userData || {};
+      const existing = Array.isArray(ud.readBroadcasts) ? ud.readBroadcasts.slice() : [];
+      unreadBroadcasts.forEach(b => { if (!existing.includes(b.id)) existing.push(b.id); });
+      const trimmed = existing.slice(-200);
+      STATE.userData = { ...ud, readBroadcasts: trimmed };
+      try { await saveUserData(uid, { readBroadcasts: trimmed }); }
+      catch (e) { console.warn('mark broadcasts read failed:', e.message); }
+    }
+  }
 
   _userInboxUnread = 0;
   _updateInboxBadge();
@@ -628,9 +653,63 @@ function openUserInboxModal() {
   modal.id = 'user-inbox-modal';
   modal.className = 'modal-overlay';
 
-  const rows = _userInboxReports
+  // Build a unified, date-sorted list of inbox items (admin replies + broadcasts).
+  const reportItems = _userInboxReports
     .filter(_hasAdminResponse)
-    .sort((a, b) => _tsToMillis(b.adminResponseAt) - _tsToMillis(a.adminResponseAt));
+    .map(r => ({
+      kind: 'report',
+      id: r.id,
+      ts: _tsToMillis(r.adminResponseAt),
+      unread: _isUnreadAdminResponse(r),
+      data: r,
+    }));
+  const broadcastItems = _userInboxBroadcasts.map(b => ({
+    kind: 'broadcast',
+    id: b.id,
+    ts: _tsToMillis(b.createdAt),
+    unread: _isUnreadBroadcast(b),
+    data: b,
+  }));
+  const rows = [...reportItems, ...broadcastItems].sort((a, b) => b.ts - a.ts);
+
+  const renderRow = (it) => {
+    const unreadBadge = it.unread ? '<span class="user-inbox-unread-dot">חדש</span>' : '';
+    if (it.kind === 'broadcast') {
+      const b = it.data;
+      const audienceLabel = b.audience === 'course'
+        ? `📣 הודעה למשתתפי ${esc(b.courseName || 'הקורס')}`
+        : '📣 הודעה כללית';
+      const dateStr = b.createdAt ? _formatInboxDate(b.createdAt) : '';
+      return `
+        <div class="user-inbox-item">
+          <div class="user-inbox-item-head">
+            <span>${audienceLabel}</span>
+            ${unreadBadge}
+            <span style="margin-right:auto;color:var(--muted);font-size:.76rem">${dateStr}</span>
+          </div>
+          <div style="font-weight:700;font-size:.92rem;color:var(--text)">${esc(b.title || '')}</div>
+          <div class="user-inbox-reply">${esc(b.body || '')}</div>
+          <div style="display:flex;justify-content:flex-end">
+            <button class="btn btn-secondary btn-sm" onclick="userDeleteInboxBroadcast('${esc(b.id)}')">הסר מהתיבה שלי</button>
+          </div>
+        </div>`;
+    }
+    const r = it.data;
+    const category = r.category === 'bug' ? '⚠ תקלה' : '✉ פנייה';
+    return `
+      <div class="user-inbox-item">
+        <div class="user-inbox-item-head">
+          <span>${category}</span>
+          ${unreadBadge}
+          <span style="margin-right:auto;color:var(--muted);font-size:.76rem">${_formatInboxDate(r.adminResponseAt)}</span>
+        </div>
+        <div class="user-inbox-orig">הפנייה שלך: ${esc(r.message || '')}</div>
+        <div class="user-inbox-reply">${esc(r.adminResponseText || '')}</div>
+        <div style="display:flex;justify-content:flex-end">
+          <button class="btn btn-secondary btn-sm" onclick="userDeleteInboxMessage('${esc(r.id)}')">הסר מהתיבה שלי</button>
+        </div>
+      </div>`;
+  };
 
   modal.innerHTML = `
     <div class="modal-card user-inbox-card">
@@ -639,23 +718,7 @@ function openUserInboxModal() {
         <button class="modal-close" onclick="closeUserInboxModal()">✕</button>
       </div>
       <div class="user-inbox-body">
-        ${rows.length ? rows.map(r => {
-          const unread = _isUnreadAdminResponse(r);
-          const category = r.category === 'bug' ? '⚠ תקלה' : '✉ פנייה';
-          return `
-            <div class="user-inbox-item">
-              <div class="user-inbox-item-head">
-                <span>${category}</span>
-                ${unread ? '<span class="user-inbox-unread-dot">חדש</span>' : ''}
-                <span style="margin-right:auto;color:var(--muted);font-size:.76rem">${_formatInboxDate(r.adminResponseAt)}</span>
-              </div>
-              <div class="user-inbox-orig">הפנייה שלך: ${esc(r.message || '')}</div>
-              <div class="user-inbox-reply">${esc(r.adminResponseText || '')}</div>
-              <div style="display:flex;justify-content:flex-end">
-                <button class="btn btn-secondary btn-sm" onclick="userDeleteInboxMessage('${esc(r.id)}')">הסר מהתיבה שלי</button>
-              </div>
-            </div>`;
-        }).join('') : '<div class="empty" style="padding:2rem 1rem"><span class="ei">📭</span><h3>אין הודעות חדשות</h3><p>כאן יופיעו תגובות מהמנהל לפניות שלך</p></div>'}
+        ${rows.length ? rows.map(renderRow).join('') : '<div class="empty" style="padding:2rem 1rem"><span class="ei">📭</span><h3>אין הודעות חדשות</h3><p>כאן יופיעו תגובות מהמנהל לפניות שלך</p></div>'}
       </div>
       <div style="padding:0 1.25rem 1.1rem;display:flex;justify-content:flex-end">
         <button class="btn btn-secondary" onclick="closeUserInboxModal()">סגור</button>
@@ -668,6 +731,25 @@ function openUserInboxModal() {
 
   _markInboxAsRead().catch(err => console.warn('Failed to mark inbox read:', err.message));
 }
+
+async function userDeleteInboxBroadcast(broadcastId) {
+  try {
+    const uid = STATE.fireUser?.uid;
+    if (!uid) return;
+    const ud = STATE.userData || {};
+    const dismissed = Array.isArray(ud.dismissedBroadcasts) ? ud.dismissedBroadcasts.slice() : [];
+    if (!dismissed.includes(broadcastId)) dismissed.push(broadcastId);
+    const trimmed = dismissed.slice(-200);
+    STATE.userData = { ...ud, dismissedBroadcasts: trimmed };
+    await saveUserData(uid, { dismissedBroadcasts: trimmed });
+    _userInboxBroadcasts = _userInboxBroadcasts.filter(b => b.id !== broadcastId);
+    _recomputeInboxUnread();
+    openUserInboxModal();
+  } catch (err) {
+    toast('שגיאה במחיקה: ' + err.message, 'error');
+  }
+}
+window.userDeleteInboxBroadcast = userDeleteInboxBroadcast;
 
 /* ── ANALYTICS ─────────────────────────────────────────────── */
 const SESSION_TIMEOUT_MS  = 4 * 60 * 60 * 1000;  // 4 hours
@@ -3321,9 +3403,13 @@ async function checkAndShowBroadcasts() {
 
     const snap = await db.collection('broadcasts')
       .orderBy('createdAt', 'desc')
-      .limit(20)
+      .limit(30)
       .get();
-    if (snap.empty) return;
+    if (snap.empty) {
+      _userInboxBroadcasts = [];
+      _recomputeInboxUnread();
+      return;
+    }
 
     const eligible = [];
     snap.forEach(doc => {
@@ -3335,9 +3421,15 @@ async function checkAndShowBroadcasts() {
       }
       eligible.push({ id: doc.id, ...x });
     });
-    if (!eligible.length) return;
-    // Show the most recent eligible broadcast
-    showBroadcastModal(eligible[0]);
+
+    // Split by priority. Urgent → modal. Regular → inbox.
+    const urgent  = eligible.filter(b => b.priority === 'urgent');
+    const regular = eligible.filter(b => b.priority !== 'urgent');
+
+    _userInboxBroadcasts = regular;
+    _recomputeInboxUnread();
+
+    if (urgent.length) showBroadcastModal(urgent[0]);
   } catch (e) {
     console.warn('checkAndShowBroadcasts error:', e);
   }

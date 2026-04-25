@@ -88,7 +88,7 @@ const ALLOWED_USER_FIELDS = [
   'completedExams', 'doneExams', 'inProgressExams',
   'copyCount', 'lastCopyReset', 'createdAt', 'savedCourses', 'aiQuestions',
   'analyticsConsent', 'consentDate', 'faculty', 'studyYear',
-  'dismissedBroadcasts'
+  'dismissedBroadcasts', 'readBroadcasts'
 ];
 
 async function saveUserData(uid, data) {
