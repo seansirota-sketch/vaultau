@@ -2668,7 +2668,35 @@ async function toggleInProgress(examId) {
   }
 }
 
-/* ── Starred tab ─────────────────────────────────────────── */
+/* ── Exam-page wrappers: same toggles + refresh banner buttons ── */
+function _refreshExamBannerStatus(examId) {
+  const ipBtn   = document.getElementById('ev-inprogress-btn');
+  const doneBtn = document.getElementById('ev-done-btn');
+  if (!ipBtn || !doneBtn) return;
+
+  const isIP   = STATE.inProgressExams.includes(examId);
+  const isDone = STATE.doneExams.includes(examId);
+
+  ipBtn.classList.toggle('inprogress-active', isIP);
+  ipBtn.title = isIP ? 'בטל בתהליך' : 'סמן כבתהליך';
+  const ipIcon = ipBtn.querySelector('.ev-status-icon');
+  if (ipIcon) ipIcon.textContent = isIP ? '⏳' : '◑';
+
+  doneBtn.classList.toggle('done-active', isDone);
+  doneBtn.title = isDone ? 'בטל סימון בוצע' : 'סמן כבוצע';
+  const doneIcon = doneBtn.querySelector('.ev-status-icon');
+  if (doneIcon) doneIcon.textContent = isDone ? '✓' : '○';
+}
+
+async function toggleInProgressFromExam(examId) {
+  await toggleInProgress(examId);
+  _refreshExamBannerStatus(examId);
+}
+
+async function toggleDoneFromExam(examId) {
+  await toggleDone(examId);
+  _refreshExamBannerStatus(examId);
+}
 function renderStarredTab(exams, starred) {
   const tc    = document.getElementById('tab-content');
   const items = [];
@@ -2833,8 +2861,26 @@ async function renderExam() {
         </div>
 
         <div class="ev-banner">
-          <h1 class="ev-banner-title">${esc(examTitle)}</h1>
-          ${metaLine ? `<p class="ev-banner-meta">${esc(metaLine)}</p>` : ''}
+          <div class="ev-banner-status" id="ev-banner-status">
+            <button class="inprogress-toggle-btn ev-status-btn ${STATE.inProgressExams.includes(exam.id) ? 'inprogress-active' : ''}"
+              id="ev-inprogress-btn"
+              onclick="toggleInProgressFromExam('${exam.id}')"
+              title="${STATE.inProgressExams.includes(exam.id) ? 'בטל בתהליך' : 'סמן כבתהליך'}">
+              <span class="ev-status-icon">${STATE.inProgressExams.includes(exam.id) ? '⏳' : '◑'}</span>
+              <span class="ev-status-label">מבחן בתהליך</span>
+            </button>
+            <button class="done-toggle-btn ev-status-btn ${STATE.doneExams.includes(exam.id) ? 'done-active' : ''}"
+              id="ev-done-btn"
+              onclick="toggleDoneFromExam('${exam.id}')"
+              title="${STATE.doneExams.includes(exam.id) ? 'בטל סימון בוצע' : 'סמן כבוצע'}">
+              <span class="ev-status-icon">${STATE.doneExams.includes(exam.id) ? '✓' : '○'}</span>
+              <span class="ev-status-label">סמן כבוצע</span>
+            </button>
+          </div>
+          <div class="ev-banner-text">
+            <h1 class="ev-banner-title">${esc(examTitle)}</h1>
+            ${metaLine ? `<p class="ev-banner-meta">${esc(metaLine)}</p>` : ''}
+          </div>
         </div>
 
         <div class="ev-body" id="ev-questions-body">
