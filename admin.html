@@ -172,6 +172,10 @@
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2a4 4 0 0 1 4 4c0 1.95-2 3-2 8h-4c0-5-2-6.05-2-8a4 4 0 0 1 4-4z"/><line x1="10" y1="17" x2="14" y2="17"/><line x1="10" y1="20" x2="14" y2="20"/><line x1="11" y1="23" x2="13" y2="23"/></svg>
           ניטור AI
         </a>
+        <a id="nav-broadcast" onclick="showSection('broadcast')">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 11l18-8v18l-18-8z"/><path d="M11.6 16.8a3 3 0 1 1-5.8-1.6"/></svg>
+          הודעות שידור
+        </a>
         <a id="nav-legal" onclick="showSection('legal'); renderLegalSection()">
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
           תנאי שימוש
@@ -685,6 +689,112 @@
           <div class="ac" style="margin-bottom:0">
             <div class="ac-title">👥 משתמשים מובילים (היום)</div>
             <div id="ai-top-users" style="padding:1rem"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── BROADCAST MESSAGES ─────────────────────────────── -->
+      <div class="adm-section" id="sec-broadcast">
+        <div class="sec-header">
+          <h2 class="sec-title">📣 הודעות שידור</h2>
+          <button class="btn btn-secondary btn-sm" onclick="renderBroadcastList()">🔄 רענן</button>
+        </div>
+
+        <div class="ac">
+          <div class="ac-title">שליחת הודעה חדשה</div>
+          <div style="padding:1.25rem;display:flex;flex-direction:column;gap:1rem">
+            <div class="form-group" style="margin:0">
+              <label>כותרת</label>
+              <input id="bc-title" type="text" maxlength="120" placeholder="עדכון חשוב למשתמשים">
+            </div>
+            <div class="form-group" style="margin:0">
+              <label>תוכן ההודעה</label>
+              <textarea id="bc-body" rows="5" maxlength="2000"
+                placeholder="תוכן ההודעה שיוצג למשתמשים..."
+                style="width:100%;border:1.5px solid var(--border);border-radius:8px;
+                       padding:.75rem;font-family:inherit;font-size:.9rem;resize:vertical;
+                       box-sizing:border-box;line-height:1.6"></textarea>
+            </div>
+
+            <div class="form-group" style="margin:0">
+              <label style="font-weight:600;display:block;margin-bottom:.55rem">סוג ההודעה</label>
+              <div class="bc-audience-grid">
+                <label class="bc-audience-card">
+                  <input type="radio" name="bc-priority" value="regular" checked>
+                  <div class="bc-audience-body">
+                    <div class="bc-audience-icon">📥</div>
+                    <div class="bc-audience-text">
+                      <div class="bc-audience-title">הודעה רגילה</div>
+                      <div class="bc-audience-desc">תופיע בתיבת ההודעות של המשתמש (כמו תשובה לדיווח)</div>
+                    </div>
+                  </div>
+                </label>
+                <label class="bc-audience-card">
+                  <input type="radio" name="bc-priority" value="urgent">
+                  <div class="bc-audience-body">
+                    <div class="bc-audience-icon">⚠️</div>
+                    <div class="bc-audience-text">
+                      <div class="bc-audience-title">הודעה דחופה</div>
+                      <div class="bc-audience-desc">תופיע כחלון קופץ מיד כשהמשתמש נכנס לאתר</div>
+                    </div>
+                  </div>
+                </label>
+              </div>
+            </div>
+
+            <div class="form-group" style="margin:0">
+              <label style="font-weight:600;display:block;margin-bottom:.55rem">קהל יעד</label>
+              <div class="bc-audience-grid">
+                <label class="bc-audience-card">
+                  <input type="radio" name="bc-audience" value="all" checked
+                    onchange="onBroadcastAudienceChange()">
+                  <div class="bc-audience-body">
+                    <div class="bc-audience-icon">👥</div>
+                    <div class="bc-audience-text">
+                      <div class="bc-audience-title">כל המשתמשים</div>
+                      <div class="bc-audience-desc">ההודעה תוצג לכל משתמש רשום</div>
+                    </div>
+                  </div>
+                </label>
+                <label class="bc-audience-card">
+                  <input type="radio" name="bc-audience" value="course"
+                    onchange="onBroadcastAudienceChange()">
+                  <div class="bc-audience-body">
+                    <div class="bc-audience-icon">🎓</div>
+                    <div class="bc-audience-text">
+                      <div class="bc-audience-title">משתתפי קורס מסוים</div>
+                      <div class="bc-audience-desc">רק למשתמשים שהוסיפו את הקורס לאזור האישי</div>
+                    </div>
+                  </div>
+                </label>
+              </div>
+            </div>
+
+            <div class="form-group" id="bc-course-wrap" style="margin:0;display:none">
+              <label>בחר קורס</label>
+              <select id="bc-course">
+                <option value="">-- בחר קורס --</option>
+              </select>
+              <p style="font-size:.78rem;color:var(--muted);margin:.4rem 0 0">
+                ההודעה תוצג רק למשתמשים שהקורס הזה מופיע אצלם ב"הקורסים שלי".
+              </p>
+            </div>
+
+            <div id="bc-error" class="form-error"></div>
+
+            <div style="display:flex;justify-content:flex-end;gap:.6rem">
+              <button class="btn btn-secondary" onclick="resetBroadcastForm()">איפוס</button>
+              <button id="bc-send-btn" class="btn btn-primary" onclick="sendBroadcast()">
+                📣 שלח הודעה
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div class="ac">
+          <div class="ac-title">הודעות שנשלחו</div>
+          <div id="bc-list" style="padding:1rem 1.25rem">
+            <div style="color:var(--muted);font-size:.85rem">לחץ על רענן לטעינת הרשימה</div>
           </div>
         </div>
       </div>

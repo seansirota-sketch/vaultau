@@ -202,6 +202,13 @@ service cloud.firestore {
       allow write: if isAdmin();
     }
 
+    // Broadcast messages from admin to users.
+    // Any logged-in user can read; only admins can create/update/delete.
+    match /broadcasts/{broadcastId} {
+      allow read: if isLoggedIn();
+      allow write: if isAdmin();
+    }
+
     // CATCH-ALL: deny everything not explicitly matched above.
     // Any new collection MUST get its own explicit rule above.
     match /{document=**} {
