@@ -658,6 +658,7 @@ function _applySectionUI(name) {
   if (name === 'survey')      renderSurveyManager();
   if (name === 'reports')     renderReportsSection();
   if (name === 'ai-monitor')  renderAIMonitor();
+  if (name === 'broadcast')   renderBroadcastSection();
 }
 
 // Public — called from nav clicks; pushes history entry
@@ -672,7 +673,7 @@ async function populateAllSelects() {
     const opts = courses.map(c =>
       `<option value="${c.id}">${esc(c.name)} (${esc(c.code)})</option>`
     ).join('');
-    ['ae-course', 'manage-filter', 'an-filter', 'bulk-course'].forEach(id => {
+    ['ae-course', 'manage-filter', 'an-filter', 'bulk-course', 'bc-course'].forEach(id => {
       const el = document.getElementById(id);
       if (el) el.innerHTML =
         (id === 'manage-filter' || id === 'an-filter' ? '<option value="">כל הקורסים</option>' :
@@ -5113,4 +5114,167 @@ async function detachQuestionVideoAdmin(entityId) {
       }
     }
   }
+
+/* ══════════════════════════════════════════════════════════
+   BROADCAST MESSAGES
+   Admins can compose a message and target either ALL users
+   or only users who saved a specific course in their personal
+   area (savedCourses array). Stored in `broadcasts` collection.
+══════════════════════════════════════════════════════════ */
+
+async function renderBroadcastSection() {
+  // Populate course dropdown using existing helper
+  try { await populateAllSelects(); } catch (_e) {}
+  // Make sure form starts in clean state
+  resetBroadcastForm();
+  renderBroadcastList();
+}
+
+function onBroadcastAudienceChange() {
+  const v = document.querySelector('input[name="bc-audience"]:checked')?.value || 'all';
+  const wrap = document.getElementById('bc-course-wrap');
+  if (wrap) wrap.style.display = (v === 'course') ? '' : 'none';
+}
+
+function resetBroadcastForm() {
+  const t = document.getElementById('bc-title');
+  const b = document.getElementById('bc-body');
+  const c = document.getElementById('bc-course');
+  const err = document.getElementById('bc-error');
+  if (t) t.value = '';
+  if (b) b.value = '';
+  if (c) c.value = '';
+  if (err) { err.textContent = ''; err.style.display = 'none'; }
+  const allRadio = document.querySelector('input[name="bc-audience"][value="all"]');
+  if (allRadio) allRadio.checked = true;
+  onBroadcastAudienceChange();
+}
+
+function _bcShowError(msg) {
+  const err = document.getElementById('bc-error');
+  if (!err) return;
+  err.textContent = msg;
+  err.style.display = 'block';
+}
+
+async function sendBroadcast() {
+  const title = (document.getElementById('bc-title')?.value || '').trim();
+  const body  = (document.getElementById('bc-body')?.value  || '').trim();
+  const audience = document.querySelector('input[name="bc-audience"]:checked')?.value || 'all';
+  const courseId = (document.getElementById('bc-course')?.value || '').trim();
+  const btn = document.getElementById('bc-send-btn');
+  const err = document.getElementById('bc-error');
+  if (err) { err.textContent = ''; err.style.display = 'none'; }
+
+  if (!title) return _bcShowError('יש להזין כותרת');
+  if (!body)  return _bcShowError('יש להזין תוכן הודעה');
+  if (audience === 'course' && !courseId) return _bcShowError('יש לבחור קורס');
+
+  if (!confirm('לשלוח את ההודעה? לא ניתן לערוך אותה לאחר השליחה.')) return;
+
+  if (btn) { btn.disabled = true; btn.textContent = 'שולח...'; }
+  try {
+    let courseName = null;
+    if (audience === 'course') {
+      try {
+        const courses = await fetchCourses();
+        courseName = courses.find(c => c.id === courseId)?.name || null;
+      } catch (_e) {}
+    }
+    await db.collection('broadcasts').add({
+      title,
+      body,
+      audience,                                  // 'all' | 'course'
+      courseId: audience === 'course' ? courseId : null,
+      courseName,
+      active: true,
+      createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+      createdBy: adminUser?.email || null,
+    });
+    toast('ההודעה נשלחה בהצלחה', 'success');
+    resetBroadcastForm();
+    renderBroadcastList();
+  } catch (e) {
+    console.error('sendBroadcast error', e);
+    _bcShowError('שגיאה בשליחת ההודעה: ' + (e.message || e));
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = '📣 שלח הודעה'; }
+  }
+}
+
+async function renderBroadcastList() {
+  const list = document.getElementById('bc-list');
+  if (!list) return;
+  list.innerHTML = '<div style="color:var(--muted);font-size:.85rem">טוען...</div>';
+  try {
+    const snap = await db.collection('broadcasts')
+      .orderBy('createdAt', 'desc')
+      .limit(50)
+      .get();
+    if (snap.empty) {
+      list.innerHTML = '<div style="color:var(--muted);font-size:.85rem">לא נשלחו הודעות עדיין</div>';
+      return;
+    }
+    const rows = snap.docs.map(d => {
+      const x = d.data();
+      const when = x.createdAt?.toDate ? x.createdAt.toDate().toLocaleString('he-IL') : '—';
+      const audienceLabel = x.audience === 'course'
+        ? `קורס: ${esc(x.courseName || x.courseId || '')}`
+        : 'כל המשתמשים';
+      const activeBadge = x.active === false
+        ? '<span style="background:#fee2e2;color:#991b1b;padding:.1rem .5rem;border-radius:6px;font-size:.7rem;font-weight:700">לא פעיל</span>'
+        : '<span style="background:#dcfce7;color:#166534;padding:.1rem .5rem;border-radius:6px;font-size:.7rem;font-weight:700">פעיל</span>';
+      return `
+        <div style="border:1px solid var(--border);border-radius:10px;padding:.85rem 1rem;margin-bottom:.75rem;background:#fff">
+          <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:.75rem;margin-bottom:.4rem">
+            <div style="display:flex;align-items:center;gap:.5rem;flex-wrap:wrap">
+              <strong style="font-size:.95rem">${esc(x.title || '')}</strong>
+              ${activeBadge}
+            </div>
+            <div style="display:flex;gap:.4rem;flex-shrink:0">
+              <button class="btn btn-secondary btn-sm" onclick="toggleBroadcastActive('${d.id}', ${x.active === false ? 'true' : 'false'})">
+                ${x.active === false ? 'הפעל' : 'השבת'}
+              </button>
+              <button class="btn btn-danger btn-sm" onclick="deleteBroadcast('${d.id}')">מחק</button>
+            </div>
+          </div>
+          <div style="font-size:.85rem;color:#374151;white-space:pre-wrap;margin-bottom:.5rem">${esc(x.body || '')}</div>
+          <div style="font-size:.72rem;color:var(--muted);display:flex;gap:.85rem;flex-wrap:wrap">
+            <span>👥 ${audienceLabel}</span>
+            <span>🕒 ${when}</span>
+            <span>✉️ ${esc(x.createdBy || '—')}</span>
+          </div>
+        </div>`;
+    }).join('');
+    list.innerHTML = rows;
+  } catch (e) {
+    console.error('renderBroadcastList error', e);
+    list.innerHTML = '<div style="color:#b91c1c;font-size:.85rem">שגיאה בטעינת רשימת ההודעות</div>';
+  }
+}
+
+async function toggleBroadcastActive(id, makeActive) {
+  try {
+    await db.collection('broadcasts').doc(id).update({ active: !!makeActive });
+    toast('עודכן', 'success');
+    renderBroadcastList();
+  } catch (e) {
+    console.error('toggleBroadcastActive error', e);
+    toast('שגיאה בעדכון', 'error');
+  }
+}
+
+async function deleteBroadcast(id) {
+  if (!confirm('למחוק את ההודעה לצמיתות?')) return;
+  try {
+    await db.collection('broadcasts').doc(id).delete();
+    toast('ההודעה נמחקה', 'success');
+    renderBroadcastList();
+  } catch (e) {
+    console.error('deleteBroadcast error', e);
+    toast('שגיאה במחיקה', 'error');
+  }
+}
+
+
 

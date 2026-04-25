@@ -456,6 +456,9 @@ async function initAppBootstrap() {
       _getOrCreateSession();
       _gaIdentify();
 
+      // ── 2.5 Broadcast messages ────────────────────────────
+      checkAndShowBroadcasts();
+
       // ── 3. Normal load ─────────────────────────────────────
       renderNavbar();
       _fetchInitialQuota();
@@ -3302,6 +3305,94 @@ function closeSurveyModal() {
   document.getElementById('survey-modal')?.remove();
   document.body.style.overflow = '';
 }
+
+/* ══════════════════════════════════════════════════════════
+   BROADCAST MESSAGES (admin → users)
+   - audience='all'    → show to every logged-in user
+   - audience='course' → only if courseId is in user's savedCourses
+   - dismissedBroadcasts[] persists per user so we don't repeat
+══════════════════════════════════════════════════════════ */
+
+async function checkAndShowBroadcasts() {
+  try {
+    const ud = STATE.userData || {};
+    const dismissed = Array.isArray(ud.dismissedBroadcasts) ? ud.dismissedBroadcasts : [];
+    const savedCourses = Array.isArray(ud.savedCourses) ? ud.savedCourses : [];
+
+    const snap = await db.collection('broadcasts')
+      .orderBy('createdAt', 'desc')
+      .limit(20)
+      .get();
+    if (snap.empty) return;
+
+    const eligible = [];
+    snap.forEach(doc => {
+      const x = doc.data();
+      if (x.active === false) return;
+      if (dismissed.includes(doc.id)) return;
+      if (x.audience === 'course') {
+        if (!x.courseId || !savedCourses.includes(x.courseId)) return;
+      }
+      eligible.push({ id: doc.id, ...x });
+    });
+    if (!eligible.length) return;
+    // Show the most recent eligible broadcast
+    showBroadcastModal(eligible[0]);
+  } catch (e) {
+    console.warn('checkAndShowBroadcasts error:', e);
+  }
+}
+
+function showBroadcastModal(bc) {
+  document.getElementById('broadcast-modal')?.remove();
+  const modal = document.createElement('div');
+  modal.id = 'broadcast-modal';
+  modal.className = 'modal-overlay';
+  modal.style.cssText = 'position:fixed;inset:0;background:rgba(15,23,42,.55);' +
+    'display:flex;align-items:center;justify-content:center;z-index:9999;padding:1rem';
+
+  const title = (bc.title || '').toString();
+  const body  = (bc.body  || '').toString();
+  const audienceLabel = bc.audience === 'course'
+    ? `הודעה למשתתפי ${bc.courseName || 'הקורס שלך'}`
+    : 'הודעה לכלל המשתמשים';
+
+  modal.innerHTML = `
+    <div style="background:#fff;border-radius:14px;max-width:520px;width:100%;
+                box-shadow:0 20px 50px rgba(0,0,0,.25);overflow:hidden;direction:rtl">
+      <div style="background:linear-gradient(135deg,#6366f1,#8b5cf6);color:#fff;
+                  padding:1.1rem 1.25rem">
+        <div style="font-size:.78rem;opacity:.9;margin-bottom:.25rem">📣 ${esc(audienceLabel)}</div>
+        <h2 style="margin:0;font-size:1.2rem;font-weight:800">${esc(title)}</h2>
+      </div>
+      <div style="padding:1.25rem;font-size:.95rem;color:#1f2937;line-height:1.65;
+                  white-space:pre-wrap;max-height:55vh;overflow-y:auto">${esc(body)}</div>
+      <div style="padding:.85rem 1.25rem;border-top:1px solid #e5e7eb;
+                  display:flex;justify-content:flex-end;gap:.5rem">
+        <button class="btn btn-primary" onclick="dismissBroadcast('${bc.id}')">הבנתי</button>
+      </div>
+    </div>`;
+  document.body.appendChild(modal);
+}
+
+async function dismissBroadcast(id) {
+  const modal = document.getElementById('broadcast-modal');
+  if (modal) modal.remove();
+  try {
+    const uid = STATE.fireUser?.uid;
+    if (!uid) return;
+    const ud = STATE.userData || {};
+    const dismissed = Array.isArray(ud.dismissedBroadcasts) ? ud.dismissedBroadcasts.slice() : [];
+    if (!dismissed.includes(id)) dismissed.push(id);
+    // Cap stored list to last 200 ids
+    const trimmed = dismissed.slice(-200);
+    STATE.userData = { ...ud, dismissedBroadcasts: trimmed };
+    await saveUserData(uid, { dismissedBroadcasts: trimmed });
+  } catch (e) {
+    console.warn('dismissBroadcast error:', e);
+  }
+}
+window.dismissBroadcast = dismissBroadcast;
 
 /* ══════════════════════════════════════════════════════════
    REPORT BUG MODAL (exam page)
