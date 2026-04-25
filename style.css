@@ -708,10 +708,10 @@ body {
 }
 .bc-audience-card input[type="radio"] {
   position: absolute;
-  inset-inline-start: .7rem;
-  top: .9rem;
-  margin: 0;
-  accent-color: #6366f1;
+  opacity: 0;
+  pointer-events: none;
+  width: 0;
+  height: 0;
 }
 .bc-audience-card:has(input[type="radio"]:checked) {
   border-color: #6366f1;
@@ -722,7 +722,6 @@ body {
   display: flex;
   align-items: flex-start;
   gap: .6rem;
-  padding-inline-start: 1.5rem;
 }
 .bc-audience-icon {
   font-size: 1.35rem;
