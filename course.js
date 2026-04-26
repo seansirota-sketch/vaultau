@@ -3036,10 +3036,12 @@ function renderQuestionCard(q, qi, starred, userVotes = {}, videoMap = {}, isAdm
       const sCopyId    = 'copy-s-' + s.id;
       COPY_MAP.set(sCopyId, sText);
       const sAllowAI = s.allowAIGen === true;
-      return `<div class="qv-part" id="si-${s.id}">
+      const sIsBonus = s.isBonus === true;
+      return `<div class="qv-part${sIsBonus ? ' qv-part-bonus' : ''}" id="si-${s.id}">
         <div class="qv-part-head">
-          <span class="qv-part-lbl">${rawLabel}</span>
+          <span class="qv-part-lbl">${sIsBonus ? '⭐ ' : ''}${rawLabel}</span>
           <div class="qv-actions">
+            ${sIsBonus ? `<span class="qv-bonus-badge" style="font-size:.7rem;padding:.15rem .5rem">⭐ סעיף בונוס</span>` : ''}
             <button class="qv-btn" onclick="copyById('${sCopyId}',event)" title="העתק LaTeX">${copySVG}</button>
             ${sAllowAI ? `<button class="qv-btn" onclick="openGeminiModal('${s.id}','sub')" title="צור סעיף דומה">✨</button>` : ''}
             ${videoMap[s.id] ? `<button class="qv-btn qv-video-btn" data-lib="${esc(videoMap[s.id].libraryId)}" data-vid="${esc(videoMap[s.id].videoId)}" data-title="${esc(videoMap[s.id].title || 'פתרון מוצג')}" data-entity-id="${esc(s.id)}" data-entity-label="${esc('שאלה ' + (qi + 1) + ' ' + rawLabel)}" onclick="openVideoModalFromBtn(this)" title="צפה בסרטון פתרון">${videoSVG}</button>` : ''}

@@ -1039,7 +1039,7 @@ async function startBulkUpload() {
         verified: false,
         questions: questions.map(q => ({
           id: q.id || genId(), text: q.text, isBonus: q.isBonus === true,
-          subs: (q.subs || []).map(s => ({ id: s.id || genId(), label: s.label, text: s.text }))
+          subs: (q.subs || []).map(s => ({ id: s.id || genId(), label: s.label, text: s.text, isBonus: s.isBonus === true }))
         })),
         createdAt: firebase.firestore.FieldValue.serverTimestamp(),
         updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
@@ -2633,10 +2633,14 @@ function renderSubsPreview(subs, qi) {
   return `<div class="sub-preview" id="static-subs-${qi}">
     <div style="font-size:.78rem;color:var(--muted);margin:.55rem 1.1rem .3rem;font-weight:600">סעיפים:</div>
     ${subs.map((s, si) => `
-    <div class="sub-preview-item" style="margin:0 1.1rem .5rem">
+    <div class="sub-preview-item${s.isBonus ? ' pq-bonus' : ''}" style="margin:0 1.1rem .5rem">
       <div class="sub-preview-top">
-        <span class="sub-preview-lbl">${esc(s.label || ('(' + (heLetters[si] || si + 1) + ')'))}</span>
+        <span class="sub-preview-lbl">${s.isBonus ? '⭐ ' : ''}${esc(s.label || ('(' + (heLetters[si] || si + 1) + ')'))}</span>
         <div class="sub-preview-actions">
+          <label class="bonus-chk-label" style="font-size:.72rem;white-space:nowrap" title="סמן סעיף כבונוס">
+            <input type="checkbox" ${s.isBonus === true ? 'checked' : ''}
+              onchange="toggleSubBonus(${qi},${si},this.checked)"> בונוס
+          </label>
           <label class="bonus-chk-label" style="font-size:.72rem;white-space:nowrap" title="אפשר יצירת AI לסעיף זה">
             <input type="checkbox" ${s.allowAIGen === true ? 'checked' : ''}
               onchange="parsedQuestions[${qi}].subs[${si}].allowAIGen=this.checked"> ✨
@@ -2687,6 +2691,13 @@ function removeIntro(qi) {
 
 function removeSub(qi, si)  { parsedQuestions[qi].subs.splice(si, 1); renderPreview(); }
 function removeQuestion(i)  { parsedQuestions.splice(i, 1); renderPreview(); }
+
+function toggleSubBonus(qi, si, checked) {
+  if (!parsedQuestions[qi]?.subs?.[si]) return;
+  parsedQuestions[qi].subs[si].isBonus = checked === true;
+  renderPreview();
+}
+window.toggleSubBonus = toggleSubBonus;
 
 function toggleBonus(i, checked) {
   parsedQuestions[i].isBonus = checked;
@@ -2929,6 +2940,7 @@ async function submitAddExam() {
             }).filter(([, url]) => !!url)
           ),
           allowAIGen: s.allowAIGen === true,
+          isBonus: s.isBonus === true,
         }))
       })),
       updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
