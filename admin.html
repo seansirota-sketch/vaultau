@@ -302,8 +302,11 @@
             <button id="parse-btn" class="btn btn-primary" onclick="runParser()">
               נתח עם AI
             </button>
+            <button class="btn btn-secondary" onclick="addManualQuestion()">
+              ➕ הוסף שאלה ידנית
+            </button>
             <button class="btn btn-secondary btn-sm" onclick="clearImport()">נקה</button>
-            <small style="color:var(--muted)">AI יזהה שאלות וסעיפים אוטומטית</small>
+            <small style="color:var(--muted)">AI יזהה שאלות וסעיפים אוטומטית · או הוסף שאלה ריקה ידנית</small>
           </div>
         </div>
 
@@ -315,6 +318,11 @@
               <small style="color:var(--muted);font-weight:400">ערוך ישירות בתאים</small>
             </div>
             <div class="preview-grid" id="preview-grid"></div>
+            <div style="padding:.75rem 1.25rem 1.25rem;display:flex;justify-content:center">
+              <button class="btn btn-secondary" onclick="addManualQuestion()">
+                ➕ הוסף שאלה ידנית
+              </button>
+            </div>
           </div>
         </div>
 
