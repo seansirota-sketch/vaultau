@@ -2774,10 +2774,19 @@ async function submitAddExam() {
   if (!courseId) { err.textContent = 'נא לבחור קורס'; err.classList.add('show'); return; }
   if (!title)    { err.textContent = 'נא להזין כותרת'; err.classList.add('show'); return; }
 
-  // Sync textarea edits back
+  // Sync textarea edits back.
+  // Note: when a question has no intro and no subs, the template renders a
+  // hidden input `qt-${i}` (always empty) and the actual text lives in the
+  // `qbody-${i}` textarea. Prefer the visible textarea over the hidden input
+  // so we don't wipe out manually-typed content.
   parsedQuestions.forEach((q, i) => {
-    const ta = document.getElementById(`qt-${i}`);
-    if (ta) q.text = ta.value;
+    const body = document.getElementById(`qbody-${i}`);
+    if (body && body.tagName === 'TEXTAREA') {
+      q.text = body.value;
+    } else {
+      const ta = document.getElementById(`qt-${i}`);
+      if (ta && ta.tagName === 'TEXTAREA') q.text = ta.value;
+    }
     q.subs.forEach((s, si) => {
       const sta = document.getElementById(`st-${i}-${si}`);
       if (sta) s.text = sta.value;
