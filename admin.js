@@ -2715,6 +2715,29 @@ function clearImport() {
   setProgress(0);
 }
 
+/* Add an empty question manually (no PDF / no text needed) */
+function addManualQuestion() {
+  const newIndex = parsedQuestions.length + 1;
+  parsedQuestions.push({
+    id: genId(),
+    index: newIndex,
+    text: '',
+    isBonus: false,
+    subs: [],
+    inlineImages: {},
+  });
+  renderPreview();
+  setTimeout(() => {
+    const i = parsedQuestions.length - 1;
+    const card = document.getElementById('pqc-' + i);
+    if (card) card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    const ta = document.getElementById('qbody-' + i);
+    if (ta) ta.focus();
+  }, 60);
+  toast('נוספה שאלה ריקה — מלא את התוכן', 'success');
+}
+window.addManualQuestion = addManualQuestion;
+
 function onTitleChange() {
   const title = document.getElementById('ae-title')?.value || '';
   const meta  = inferExamMeta(title);
