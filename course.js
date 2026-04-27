@@ -2525,13 +2525,25 @@ function renderExamsTab(course, exams, years, sems, moeds, lecturers) {
 
 function applyFilters(fromUser = false) {
   const exams = STATE.exams[STATE.courseId] || [];
-  const fy = document.getElementById('f-y')?.value || '';
-  const fs = document.getElementById('f-s')?.value || '';
-  const fm = document.getElementById('f-m')?.value || '';
-  const fl = document.getElementById('f-l')?.value || '';
+  const fyEl = document.getElementById('f-y');
+  const fsEl = document.getElementById('f-s');
+  const fmEl = document.getElementById('f-m');
+  const flEl = document.getElementById('f-l');
 
-  // Persist current filter values so they survive exam navigation
-  if (STATE.courseId) {
+  // If the filter UI isn't mounted (e.g. called from the exam page after
+  // toggling done/in-progress), fall back to the saved values so we don't
+  // wipe them with empty DOM reads.
+  const saved = STATE.savedFilters[STATE.courseId] || {};
+  const uiMounted = !!(fyEl || fsEl || fmEl || flEl);
+  const fy = uiMounted ? (fyEl?.value || '') : (saved.fy || '');
+  const fs = uiMounted ? (fsEl?.value || '') : (saved.fs || '');
+  const fm = uiMounted ? (fmEl?.value || '') : (saved.fm || '');
+  const fl = uiMounted ? (flEl?.value || '') : (saved.fl || '');
+
+  // Persist current filter values so they survive exam navigation.
+  // Only write when the UI is mounted — otherwise we'd just rewrite
+  // the same saved values (or worse, blank them out).
+  if (STATE.courseId && uiMounted) {
     STATE.savedFilters[STATE.courseId] = { fy, fs, fm, fl };
   }
 
