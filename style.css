@@ -2171,6 +2171,15 @@ mjx-container { direction: ltr; }
 }
 
 /* ══ Videos tab — collapsed list of question videos in a course ══ */
+.vt-toolbar {
+  display: flex;
+  justify-content: flex-end;
+  margin: .25rem 0 .55rem;
+}
+.vt-toggle-all {
+  font-size: .85rem;
+  padding: .35rem .85rem;
+}
 .vt-list {
   display: flex;
   flex-direction: column;

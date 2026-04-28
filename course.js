@@ -2947,10 +2947,15 @@ async function renderVideosTab(exams) {
     return;
   }
 
-  // Sort entries by examLabel then question number
+  // Sort entries: year DESC, then semester+moed ASC (AA before AB), then question number ASC
   const entries = [...qIdsWithVideo].map(qid => qIndex[qid]).filter(Boolean);
   entries.sort((a, b) => {
-    if (a.examLabel !== b.examLabel) return a.examLabel.localeCompare(b.examLabel);
+    const ya = Number(a.exam.year) || 0;
+    const yb = Number(b.exam.year) || 0;
+    if (ya !== yb) return yb - ya;
+    const sa = (_heToLat(a.exam.semester) || '') + (_heToLat(a.exam.moed) || '');
+    const sb = (_heToLat(b.exam.semester) || '') + (_heToLat(b.exam.moed) || '');
+    if (sa !== sb) return sa.localeCompare(sb);
     return a.qi - b.qi;
   });
 
@@ -2970,7 +2975,21 @@ async function renderVideosTab(exams) {
     </details>`;
   }).join('');
 
-  tc.innerHTML = `<div class="vt-list">${html}</div>`;
+  tc.innerHTML = `
+    <div class="vt-toolbar">
+      <button class="btn vt-toggle-all" id="vt-toggle-all" data-state="collapsed">פתח הכל</button>
+    </div>
+    <div class="vt-list">${html}</div>`;
+
+  const toggleAllBtn = document.getElementById('vt-toggle-all');
+  if (toggleAllBtn) {
+    toggleAllBtn.addEventListener('click', () => {
+      const expand = toggleAllBtn.dataset.state !== 'expanded';
+      tc.querySelectorAll('details.vt-item').forEach(d => { d.open = expand; });
+      toggleAllBtn.dataset.state = expand ? 'expanded' : 'collapsed';
+      toggleAllBtn.textContent = expand ? 'סגור הכל' : 'פתח הכל';
+    });
+  }
 
   // Lazy-render the question card on first open
   tc.querySelectorAll('details.vt-item').forEach(d => {
