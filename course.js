@@ -2458,12 +2458,16 @@ async function renderCourse() {
             ✨ שאלות שנוצרו
             ${aiQCount ? `<span class="badge" style="background:#ede9fe;color:#6d28d9;border:1px solid #c4b5fd">${aiQCount}</span>` : ''}
           </button>
+          <button class="tab-btn ${STATE.tab === 'videos' ? 'active' : ''}" onclick="setTab('videos')">
+            🎬 סרטונים
+          </button>
         </div>
         <div id="tab-content"></div>
       </div>`;
 
     if (STATE.tab === 'ai-questions') renderAIQuestionsTab();
     else if (STATE.tab === 'starred') renderStarredTab(exams, starred);
+    else if (STATE.tab === 'videos') renderVideosTab(exams);
     else renderExamsTab(course, exams, years, semesters, moeds, lecturers);
 
   } catch (e) {
@@ -2878,6 +2882,109 @@ function renderStarredTab(exams, starred) {
   });
 
   if (window.MathJax) MathJax.typesetPromise([tc]);
+}
+
+/* ══════════════════════════════════════════════════════════
+   VIDEOS TAB — list all questions/sub-parts that have videos
+══════════════════════════════════════════════════════════ */
+
+async function renderVideosTab(exams) {
+  const tc = document.getElementById('tab-content');
+  if (!tc) return;
+  tc.innerHTML = '<div class="container"><div class="spinner" style="margin:2rem auto"></div></div>';
+
+  // Build (entityId -> meta) map of every question + sub in this course
+  const meta = {}; // id -> { examLabel, qNum, subLabel|null }
+  const allIds = [];
+  exams.forEach(exam => {
+    const examLabel = [exam.year, _heToLat(exam.semester), _heToLat(exam.moed)].filter(Boolean).join('');
+    (exam.questions || []).forEach((q, qi) => {
+      const qNum = qi + 1;
+      meta[q.id] = { examLabel, qNum, subLabel: null };
+      allIds.push(q.id);
+      const subs = q.subs || q.parts || [];
+      subs.forEach((s, si) => {
+        const lbl = s.letter || s.label || String.fromCharCode(0x05D0 + si);
+        // Strip any wrapping parens from labels like "(א)"
+        const cleanLbl = String(lbl).replace(/[()]/g, '').trim();
+        meta[s.id] = { examLabel, qNum, subLabel: cleanLbl };
+        allIds.push(s.id);
+      });
+    });
+  });
+
+  if (!allIds.length) {
+    tc.innerHTML = '<div class="empty"><span class="ei">🎬</span><h3>אין שאלות בקורס</h3></div>';
+    return;
+  }
+
+  // Fetch question_videos in chunks of 30
+  const videos = []; // { id, libraryId, videoId, title, ...meta }
+  try {
+    const chunks = [];
+    for (let i = 0; i < allIds.length; i += 30) chunks.push(allIds.slice(i, i + 30));
+    await Promise.all(chunks.map(async chunk => {
+      try {
+        const snap = await db.collection('question_videos')
+          .where(firebase.firestore.FieldPath.documentId(), 'in', chunk).get();
+        snap.forEach(doc => {
+          const data = doc.data() || {};
+          if (!data.libraryId || !data.videoId) return;
+          const m = meta[doc.id];
+          if (!m) return;
+          videos.push({ id: doc.id, ...data, ...m });
+        });
+      } catch (e) { console.warn('renderVideosTab chunk error:', e); }
+    }));
+  } catch (e) {
+    tc.innerHTML = `<div class="empty"><span class="ei">⚠️</span><h3>שגיאת טעינה</h3><p>${esc(e.message)}</p></div>`;
+    return;
+  }
+
+  if (!videos.length) {
+    tc.innerHTML = '<div class="empty"><span class="ei">🎬</span><h3>אין סרטונים בקורס זה עדיין</h3><p>סרטוני פתרון יוצגו כאן כשיתווספו</p></div>';
+    return;
+  }
+
+  // Sort by examLabel then question number then sub label
+  videos.sort((a, b) => {
+    if (a.examLabel !== b.examLabel) return a.examLabel.localeCompare(b.examLabel);
+    if (a.qNum !== b.qNum) return a.qNum - b.qNum;
+    return (a.subLabel || '').localeCompare(b.subLabel || '');
+  });
+
+  const html = videos.map((v, idx) => {
+    const titleParts = [v.examLabel, 'שאלה ' + v.qNum];
+    if (v.subLabel) titleParts.push('סעיף ' + v.subLabel);
+    const title = titleParts.join(' ');
+    const safeLib = String(v.libraryId).replace(/[^a-zA-Z0-9\-]/g, '');
+    const safeVid = String(v.videoId).replace(/[^a-zA-Z0-9\-]/g, '');
+    return `<details class="vt-item" data-lib="${esc(safeLib)}" data-vid="${esc(safeVid)}" data-idx="${idx}">
+      <summary class="vt-summary">
+        <span class="vt-title">${esc(title)}</span>
+        ${v.title ? `<span class="vt-subtitle">${esc(v.title)}</span>` : ''}
+        <span class="vt-chev">▾</span>
+      </summary>
+      <div class="vt-body"></div>
+    </details>`;
+  }).join('');
+
+  tc.innerHTML = `<div class="vt-list">${html}</div>`;
+
+  // Lazy-mount the iframe on first open
+  tc.querySelectorAll('details.vt-item').forEach(d => {
+    d.addEventListener('toggle', () => {
+      if (!d.open) return;
+      const body = d.querySelector('.vt-body');
+      if (!body || body.dataset.loaded === '1') return;
+      const lib = d.dataset.lib;
+      const vid = d.dataset.vid;
+      if (!lib || !vid) return;
+      const embedUrl = `https://player.mediadelivery.net/embed/${lib}/${vid}?autoplay=false&preload=true&showSpeed=true&playsinline=true&rememberPosition=false`;
+      body.innerHTML = `<div class="vt-player"><iframe src="${embedUrl}" loading="lazy" allow="accelerometer; gyroscope; autoplay; encrypted-media; picture-in-picture" allowfullscreen></iframe></div>`;
+      body.dataset.loaded = '1';
+    });
+  });
 }
 
 /* ══════════════════════════════════════════════════════════
