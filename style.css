@@ -2221,7 +2221,13 @@ mjx-container { direction: ltr; }
 .vt-item[open] .vt-chev { transform: rotate(180deg); }
 .vt-body {
   border-top: 1px solid #eef2f7;
-  background: #0b0f17;
+  background: #fff;
+  padding: .9rem 1rem 1.1rem;
+}
+.vt-body .qv-card {
+  margin: 0;
+  box-shadow: none;
+  border: none;
 }
 .vt-player {
   position: relative;

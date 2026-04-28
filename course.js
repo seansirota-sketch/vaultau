@@ -2893,21 +2893,17 @@ async function renderVideosTab(exams) {
   if (!tc) return;
   tc.innerHTML = '<div class="container"><div class="spinner" style="margin:2rem auto"></div></div>';
 
-  // Build (entityId -> meta) map of every question + sub in this course
-  const meta = {}; // id -> { examLabel, qNum, subLabel|null }
+  // Collect every question id + sub id, plus a parent map from sub-id -> question.
   const allIds = [];
+  const qIndex = {}; // questionId -> { exam, q, qi, examLabel }
+  const subToQid = {}; // subId -> questionId
   exams.forEach(exam => {
     const examLabel = [exam.year, _heToLat(exam.semester), _heToLat(exam.moed)].filter(Boolean).join('');
     (exam.questions || []).forEach((q, qi) => {
-      const qNum = qi + 1;
-      meta[q.id] = { examLabel, qNum, subLabel: null };
+      qIndex[q.id] = { exam, q, qi, examLabel };
       allIds.push(q.id);
-      const subs = q.subs || q.parts || [];
-      subs.forEach((s, si) => {
-        const lbl = s.letter || s.label || String.fromCharCode(0x05D0 + si);
-        // Strip any wrapping parens from labels like "(א)"
-        const cleanLbl = String(lbl).replace(/[()]/g, '').trim();
-        meta[s.id] = { examLabel, qNum, subLabel: cleanLbl };
+      (q.subs || q.parts || []).forEach(s => {
+        subToQid[s.id] = q.id;
         allIds.push(s.id);
       });
     });
@@ -2918,8 +2914,8 @@ async function renderVideosTab(exams) {
     return;
   }
 
-  // Fetch question_videos in chunks of 30
-  const videos = []; // { id, libraryId, videoId, title, ...meta }
+  // Fetch question_videos in chunks of 30 (Firestore "in" limit)
+  const videoMap = {}; // entityId -> { libraryId, videoId, title }
   try {
     const chunks = [];
     for (let i = 0; i < allIds.length; i += 30) chunks.push(allIds.slice(i, i + 30));
@@ -2930,9 +2926,7 @@ async function renderVideosTab(exams) {
         snap.forEach(doc => {
           const data = doc.data() || {};
           if (!data.libraryId || !data.videoId) return;
-          const m = meta[doc.id];
-          if (!m) return;
-          videos.push({ id: doc.id, ...data, ...m });
+          videoMap[doc.id] = data;
         });
       } catch (e) { console.warn('renderVideosTab chunk error:', e); }
     }));
@@ -2941,28 +2935,35 @@ async function renderVideosTab(exams) {
     return;
   }
 
-  if (!videos.length) {
+  // Group videos by parent question id
+  const qIdsWithVideo = new Set();
+  Object.keys(videoMap).forEach(id => {
+    if (qIndex[id]) qIdsWithVideo.add(id);
+    else if (subToQid[id]) qIdsWithVideo.add(subToQid[id]);
+  });
+
+  if (!qIdsWithVideo.size) {
     tc.innerHTML = '<div class="empty"><span class="ei">🎬</span><h3>אין סרטונים בקורס זה עדיין</h3><p>סרטוני פתרון יוצגו כאן כשיתווספו</p></div>';
     return;
   }
 
-  // Sort by examLabel then question number then sub label
-  videos.sort((a, b) => {
+  // Sort entries by examLabel then question number
+  const entries = [...qIdsWithVideo].map(qid => qIndex[qid]).filter(Boolean);
+  entries.sort((a, b) => {
     if (a.examLabel !== b.examLabel) return a.examLabel.localeCompare(b.examLabel);
-    if (a.qNum !== b.qNum) return a.qNum - b.qNum;
-    return (a.subLabel || '').localeCompare(b.subLabel || '');
+    return a.qi - b.qi;
   });
 
-  const html = videos.map((v, idx) => {
-    const titleParts = [v.examLabel, 'שאלה ' + v.qNum];
-    if (v.subLabel) titleParts.push('סעיף ' + v.subLabel);
-    const title = titleParts.join(' ');
-    const safeLib = String(v.libraryId).replace(/[^a-zA-Z0-9\-]/g, '');
-    const safeVid = String(v.videoId).replace(/[^a-zA-Z0-9\-]/g, '');
-    return `<details class="vt-item" data-lib="${esc(safeLib)}" data-vid="${esc(safeVid)}" data-idx="${idx}">
+  const starred   = STATE.userData?.starredQuestions || [];
+  const userVotes = STATE.userData?.difficultyVotes  || {};
+  const isAdmin   = STATE.userData?.role === 'admin';
+
+  const html = entries.map((entry, idx) => {
+    const { q, qi, examLabel } = entry;
+    const title = `${examLabel} שאלה ${qi + 1}`;
+    return `<details class="vt-item" data-qid="${esc(q.id)}" data-idx="${idx}">
       <summary class="vt-summary">
         <span class="vt-title">${esc(title)}</span>
-        ${v.title ? `<span class="vt-subtitle">${esc(v.title)}</span>` : ''}
         <span class="vt-chev">▾</span>
       </summary>
       <div class="vt-body"></div>
@@ -2971,17 +2972,28 @@ async function renderVideosTab(exams) {
 
   tc.innerHTML = `<div class="vt-list">${html}</div>`;
 
-  // Lazy-mount the iframe on first open
+  // Lazy-render the question card on first open
   tc.querySelectorAll('details.vt-item').forEach(d => {
     d.addEventListener('toggle', () => {
       if (!d.open) return;
       const body = d.querySelector('.vt-body');
       if (!body || body.dataset.loaded === '1') return;
-      const lib = d.dataset.lib;
-      const vid = d.dataset.vid;
-      if (!lib || !vid) return;
-      const embedUrl = `https://player.mediadelivery.net/embed/${lib}/${vid}?autoplay=false&preload=true&showSpeed=true&playsinline=true&rememberPosition=false`;
-      body.innerHTML = `<div class="vt-player"><iframe src="${embedUrl}" loading="lazy" allow="accelerometer; gyroscope; autoplay; encrypted-media; picture-in-picture" allowfullscreen></iframe></div>`;
+      const idx = Number(d.dataset.idx);
+      const entry = entries[idx];
+      if (!entry) return;
+      const { q, qi } = entry;
+      body.innerHTML = renderQuestionCard(q, qi, starred, userVotes, videoMap, isAdmin);
+
+      // Set HTML content for question/subs (same pattern as renderExam)
+      const subs = q.subs || q.parts || [];
+      const textEl = body.querySelector(`#qc-${q.id} .qv-text`);
+      if (textEl) textEl.innerHTML = formatMathText(q.text || '', q.inlineImages || null);
+      subs.forEach(s => {
+        const subEl = body.querySelector(`#si-${s.id} .qv-part-text`);
+        if (subEl) subEl.innerHTML = formatMathText(s.text || '', s.inlineImages || null);
+      });
+      if (window.MathJax) MathJax.typesetPromise([body]);
+
       body.dataset.loaded = '1';
     });
   });
