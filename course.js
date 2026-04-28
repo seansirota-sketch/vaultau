@@ -2454,12 +2454,12 @@ async function renderCourse() {
             ⭐ שאלות מסומנות
             ${starCount ? `<span class="badge b-orange">${starCount}</span>` : ''}
           </button>
+          <button class="tab-btn ${STATE.tab === 'videos' ? 'active' : ''}" onclick="setTab('videos')">
+            🎬 סרטונים
+          </button>
           <button class="tab-btn ${STATE.tab === 'ai-questions' ? 'active' : ''}" onclick="setTab('ai-questions')">
             ✨ שאלות שנוצרו
             ${aiQCount ? `<span class="badge" style="background:#ede9fe;color:#6d28d9;border:1px solid #c4b5fd">${aiQCount}</span>` : ''}
-          </button>
-          <button class="tab-btn ${STATE.tab === 'videos' ? 'active' : ''}" onclick="setTab('videos')">
-            🎬 סרטונים
           </button>
         </div>
         <div id="tab-content"></div>
