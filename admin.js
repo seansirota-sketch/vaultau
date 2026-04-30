@@ -589,7 +589,20 @@ document.addEventListener('DOMContentLoaded', () => {
   auth.onAuthStateChanged(async (user) => {
     if (user) {
       const userDoc = await db.collection('users').doc(user.uid).get();
-      if (userDoc.exists && userDoc.data()?.role === 'admin') {
+      const userData = userDoc.exists ? userDoc.data() : null;
+
+      // ── Forced password change gate ─────────────────────────
+      // If an admin flagged this account, block admin panel access
+      // and bounce to the main app where the change-password UI lives.
+      if (userData?.mustChangePassword === true) {
+        try { sessionStorage.setItem('vaultau_forced_pw_redirect', '1'); } catch (_) {}
+        // Don't sign out — keep the session so course.js can clear the flag
+        // after they set a new password.
+        location.href = '/index.html';
+        return;
+      }
+
+      if (userData?.role === 'admin') {
         adminUser = { ...user, role: 'admin' };
         // Stamp initial history state so Back works from first section
         if (!history.state?.section) {
@@ -655,6 +668,7 @@ function _applySectionUI(name) {
   if (name === 'add-exam')    populateAllSelects();
   if (name === 'analytics')   renderAnalytics();
   if (name === 'users')       renderUserStats();
+  if (name === 'manage-users') renderManageUsers();
   if (name === 'survey')      renderSurveyManager();
   if (name === 'reports')     renderReportsSection();
   if (name === 'ai-monitor')  renderAIMonitor();
@@ -3073,6 +3087,17 @@ async function renderUserStats() {
 
     const ghostCount = allDocs.length - rows.length;
 
+    // Build map of duplicate doc IDs per kept row, so deletion can sweep ghosts too
+    const dupIdsByKept = new Map(); // keptDocId -> [otherDocIds]
+    for (const kept of rows) {
+      const email = (kept.email || '').toLowerCase().trim();
+      if (!email) { dupIdsByKept.set(kept._docId, []); continue; }
+      const others = allDocs
+        .filter(d => (d.email || '').toLowerCase().trim() === email && d._docId !== kept._docId)
+        .map(d => d._docId);
+      dupIdsByKept.set(kept._docId, others);
+    }
+
     // ── Sort options ──────────────────────────────────────────
     // Default: email alphabetical (already sorted above)
     // Build table HTML
@@ -3120,6 +3145,8 @@ async function renderUserStats() {
       // Role dropdown — admin can promote/demote between student/instructor/admin
       const currentRole = u.role || 'student';
       const docId       = u._docId || uid;
+      const dupIds      = (dupIdsByKept.get(u._docId) || []).join(',');
+      const deleteBtn   = `<button class="btn btn-sm" onclick="deleteUserDoc('${esc(uid)}','${esc(u.email || '')}','${esc(docId)}','${esc(u.email || u.uid || u._docId || '')}','${esc(dupIds)}')" title="מחק משתמש (Firestore + Auth)" style="padding:.2rem .5rem;font-size:.8rem;background:#fef2f2;color:#991b1b;border:1px solid #fca5a5">🗑️</button>`;
       const roleSelect = `
         <select onchange="updateUserRole('${esc(docId)}', this.value, this)"
                 data-prev="${esc(currentRole)}"
@@ -3130,7 +3157,22 @@ async function renderUserStats() {
           <option value="admin"      ${currentRole==='admin'      ? 'selected':''}>אדמין</option>
         </select>`;
 
-      return `<tr style="transition:background .15s" onmouseover="this.style.background='#f8fafc'" onmouseout="this.style.background=''">
+      // Consent value as a stable token for filtering
+      const consentTok = consent === true ? 'yes' : (consent === false ? 'no' : 'pending');
+
+      return `<tr class="user-row" style="transition:background .15s"
+        data-email="${esc((u.email || '').toLowerCase())}"
+        data-name="${esc((u.displayName || '').toLowerCase())}"
+        data-uid="${esc((u.uid || u._docId || '').toLowerCase())}"
+        data-role="${esc(currentRole)}"
+        data-consent="${consentTok}"
+        data-accepted="${accepted ? 'yes' : 'no'}"
+        data-copies="${copies}"
+        data-done="${done}"
+        data-progress="${inProgress}"
+        data-starred="${starred}"
+        data-ai="${aiCount}"
+        onmouseover="this.style.background='#f8fafc'" onmouseout="this.style.background=''">
         <td style="font-size:.82rem;min-width:200px">
           ${emailCell}
         </td>
@@ -3166,7 +3208,6 @@ async function renderUserStats() {
             ? `<span class="badge" style="background:#f5f3ff;color:#5b21b6;border:1px solid #c4b5fd;font-weight:600">🤖 ${aiCount}</span>`
             : `<span style="color:var(--light);font-size:.8rem">0</span>`}
         </td>
-        <td style="text-align:center">${roleSelect}</td>
         <td style="text-align:center">${logBtn}</td>
       </tr>`;
     }).join('');
@@ -3197,6 +3238,47 @@ async function renderUserStats() {
           </div>`).join('')}
       </div>
 
+      <!-- Filter bar -->
+      <div id="users-filter-bar" style="display:flex;flex-wrap:wrap;gap:.5rem;align-items:center;
+           background:#fff;border:1px solid var(--border);border-radius:10px;padding:.6rem .8rem;margin-bottom:.8rem">
+        <input id="uf-search" type="search" placeholder="🔍 חיפוש לפי אימייל / שם / UID"
+          oninput="_applyUsersFilter()"
+          style="flex:1;min-width:220px;font-size:.82rem;padding:.35rem .55rem;border:1px solid #cbd5e1;border-radius:6px">
+        <select id="uf-role" onchange="_applyUsersFilter()"
+          style="font-size:.78rem;padding:.3rem .45rem;border:1px solid #cbd5e1;border-radius:6px;background:#fff;cursor:pointer">
+          <option value="">תפקיד: הכול</option>
+          <option value="student">סטודנט</option>
+          <option value="instructor">מרצה</option>
+          <option value="admin">אדמין</option>
+        </select>
+        <select id="uf-consent" onchange="_applyUsersFilter()"
+          style="font-size:.78rem;padding:.3rem .45rem;border:1px solid #cbd5e1;border-radius:6px;background:#fff;cursor:pointer">
+          <option value="">הסכמה: הכול</option>
+          <option value="yes">✓ אישר</option>
+          <option value="no">✗ לא</option>
+          <option value="pending">⏳ טרם</option>
+        </select>
+        <select id="uf-accepted" onchange="_applyUsersFilter()"
+          style="font-size:.78rem;padding:.3rem .45rem;border:1px solid #cbd5e1;border-radius:6px;background:#fff;cursor:pointer">
+          <option value="">תנאים: הכול</option>
+          <option value="yes">✓ אישר</option>
+          <option value="no">✗ טרם</option>
+        </select>
+        <select id="uf-activity" onchange="_applyUsersFilter()"
+          style="font-size:.78rem;padding:.3rem .45rem;border:1px solid #cbd5e1;border-radius:6px;background:#fff;cursor:pointer"
+          title="סנן לפי פעילות">
+          <option value="">פעילות: הכול</option>
+          <option value="copies">עם העתקות</option>
+          <option value="done">עם מבחנים מושלמים</option>
+          <option value="progress">עם מבחנים בתהליך</option>
+          <option value="starred">עם כוכביות</option>
+          <option value="ai">עם שאלות AI</option>
+        </select>
+        <button type="button" class="btn btn-sm btn-secondary"
+          onclick="_resetUsersFilter()" style="padding:.3rem .65rem;font-size:.75rem">נקה מסננים</button>
+        <span id="uf-count" style="font-size:.72rem;color:var(--muted);margin-right:auto"></span>
+      </div>
+
       <!-- Table -->
       <div style="overflow-x:auto">
         <table class="tbl" style="min-width:680px">
@@ -3211,7 +3293,6 @@ async function renderUserStats() {
               <th style="text-align:center">📜 הצהרה</th>
               <th style="text-align:center" title="הסכמה לשימוש בנתוני שימוש למחקר">🔬 הסכמה למעקב</th>
               <th style="text-align:center" title="שאלות AI שנשמרו על ידי המשתמש">🤖 שאלות AI</th>
-              <th style="text-align:center" title="תפקיד המשתמש במערכת">👤 תפקיד</th>
               <th style="text-align:center" title="יומן פעילות">📋 יומן</th>
             </tr>
           </thead>
@@ -3266,6 +3347,275 @@ function _fmtPayload(payload) {
   if (payload.fromCache !== undefined) parts.push(payload.fromCache ? 'מהמטמון' : 'מהמודל');
   if (payload.rating !== undefined) parts.push(`דירוג: ${payload.rating}`);
   return parts.join(' · ');
+}
+
+function _applyUsersFilter() {
+  const q   = (document.getElementById('uf-search')?.value || '').trim().toLowerCase();
+  const role = document.getElementById('uf-role')?.value || '';
+  const consent = document.getElementById('uf-consent')?.value || '';
+  const accepted = document.getElementById('uf-accepted')?.value || '';
+  const activity = document.getElementById('uf-activity')?.value || '';
+  const rows = document.querySelectorAll('tr.user-row');
+  let visible = 0;
+  rows.forEach(tr => {
+    const ds = tr.dataset;
+    let show = true;
+    if (q) {
+      const hay = (ds.email || '') + ' ' + (ds.name || '') + ' ' + (ds.uid || '');
+      if (!hay.includes(q)) show = false;
+    }
+    if (show && role && ds.role !== role) show = false;
+    if (show && consent && ds.consent !== consent) show = false;
+    if (show && accepted && ds.accepted !== accepted) show = false;
+    if (show && activity) {
+      const map = { copies:'copies', done:'done', progress:'progress', starred:'starred', ai:'ai' };
+      const key = map[activity];
+      if (key && Number(ds[key] || 0) <= 0) show = false;
+    }
+    tr.style.display = show ? '' : 'none';
+    if (show) visible++;
+  });
+  const cnt = document.getElementById('uf-count');
+  if (cnt) cnt.textContent = `${visible} / ${rows.length} מוצגים`;
+}
+
+function _resetUsersFilter() {
+  ['uf-search','uf-role','uf-consent','uf-accepted','uf-activity'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.value = '';
+  });
+  _applyUsersFilter();
+}
+
+async function deleteUserDoc(uid, email, docId, label, dupIdsCsv) {
+  const dupIds = (dupIdsCsv || '').split(',').map(s => s.trim()).filter(Boolean);
+  const extraDocIds = [docId, ...dupIds].filter(Boolean);
+  const total = extraDocIds.length;
+
+  const msg = `למחוק לצמיתות את המשתמש "${label}"?\n\n` +
+              `הפעולה תמחק:\n` +
+              `· כל המסמכים של המשתמש ב-Firestore (${total} מסמך/ים כולל כפילויות)\n` +
+              `· תת-קולקציות (ai_tasks, user_grades וכו')\n` +
+              `· חשבון Firebase Authentication — המשתמש לא יוכל להתחבר עוד.\n\n` +
+              `אם ירצה להשתמש שוב, יהיה עליו להירשם מחדש.\n\nלהמשיך?`;
+  if (!confirm(msg)) return;
+  if (!confirm(`אישור סופי: למחוק לצמיתות את "${label}"?`)) return;
+
+  try {
+    const idToken = await firebase.auth().currentUser?.getIdToken();
+    if (!idToken) { alert('יש להתחבר מחדש'); return; }
+
+    const res = await fetch('/.netlify/functions/delete-user', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${idToken}`,
+      },
+      body: JSON.stringify({ uid: uid || '', email: email || '', extraDocIds }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      throw new Error(data.error || `HTTP ${res.status}`);
+    }
+    const parts = [];
+    parts.push(`נמחקו ${data.firestoreDeleted || 0} מסמכי Firestore`);
+    parts.push(data.authDeleted ? 'חשבון Auth נמחק' : 'חשבון Auth לא נמצא/לא נמחק');
+    if (data.authError) parts.push(`⚠️ Auth: ${data.authError}`);
+    if ((data.docDeleteErrors || []).length) parts.push(`⚠️ שגיאות ב-${data.docDeleteErrors.length} מסמכים`);
+    toast?.(parts.join(' · '));
+    renderUserStats();
+  } catch (e) {
+    console.error('deleteUserDoc error:', e);
+    alert('שגיאה במחיקה: ' + (e.message || e));
+  }
+}
+
+/* ============================================================
+   ניהול משתמשים — slim management table
+   ============================================================ */
+async function renderManageUsers() {
+  const wrap = document.getElementById('manage-users-table-wrap');
+  if (!wrap) return;
+  wrap.innerHTML = `<div style="text-align:center;padding:2rem"><div class="spinner" style="margin:0 auto"></div><p style="color:var(--muted);margin-top:.8rem;font-size:.85rem">טוען משתמשים...</p></div>`;
+
+  try {
+    const snap = await db.collection('users').get();
+    if (snap.empty) {
+      wrap.innerHTML = `<div style="text-align:center;padding:2rem;color:var(--light)">אין משתמשים במערכת</div>`;
+      return;
+    }
+    const allDocs = snap.docs.map(d => ({ _docId: d.id, ...d.data() }));
+
+    // Deduplicate by email — same logic as renderUserStats
+    const scoreDoc = d =>
+      (d.starredQuestions || []).length +
+      (d.completedExams || d.doneExams || []).length * 2 +
+      (d.copyCount || 0) / 10 +
+      (d.acceptedTerms ? 5 : 0) +
+      (d.displayName ? 3 : 0);
+    const byEmail = new Map();
+    const noEmail = [];
+    for (const doc of allDocs) {
+      const em = (doc.email || '').toLowerCase().trim();
+      if (!em) {
+        if (doc.uid || doc.displayName) noEmail.push(doc);
+        continue;
+      }
+      if (!byEmail.has(em) || scoreDoc(doc) > scoreDoc(byEmail.get(em))) byEmail.set(em, doc);
+    }
+    const rows = [
+      ...[...byEmail.values()].sort((a, b) => (a.email || '').localeCompare(b.email || '')),
+      ...noEmail.sort((a, b) => (a.uid || a._docId || '').localeCompare(b.uid || b._docId || '')),
+    ];
+
+    // Map of duplicate IDs sharing email (for cascading deletion)
+    const dupIdsByKept = new Map();
+    for (const kept of rows) {
+      const em = (kept.email || '').toLowerCase().trim();
+      if (!em) { dupIdsByKept.set(kept._docId, []); continue; }
+      dupIdsByKept.set(kept._docId, allDocs
+        .filter(d => (d.email || '').toLowerCase().trim() === em && d._docId !== kept._docId)
+        .map(d => d._docId));
+    }
+
+    const tableRows = rows.map(u => {
+      const uid = u.uid || u._docId || '';
+      const docId = u._docId || uid;
+      const identifier = u.email || uid || '—';
+      const isUid = !u.email;
+      const emailCell = isUid
+        ? `<span style="font-family:monospace;font-size:.72rem;color:var(--muted);background:#f1f5f9;padding:2px 5px;border-radius:4px;border:1px solid #e2e8f0" title="אין אימייל — מוצג UID">${esc(identifier)}</span>`
+        : `<span style="font-weight:500">${esc(identifier)}</span>`;
+      const accepted = u.acceptedTerms === true;
+      const consent = u.analyticsConsent;
+      const consentBadge = consent === true
+        ? `<span class="consent-badge consent-badge-yes">✓ מאושר</span>`
+        : consent === false
+          ? `<span class="consent-badge consent-badge-no">✗ לא</span>`
+          : `<span class="consent-badge consent-badge-pending">⏳ טרם</span>`;
+
+      const currentRole = u.role || 'student';
+      const dupIds = (dupIdsByKept.get(u._docId) || []).join(',');
+
+      const roleSelect = `
+        <select onchange="updateUserRole('${esc(docId)}', this.value, this)"
+                data-prev="${esc(currentRole)}"
+                style="font-size:.78rem;padding:.2rem .35rem;border:1px solid #cbd5e1;border-radius:5px;background:#fff;cursor:pointer">
+          <option value="student"    ${currentRole==='student'    ? 'selected':''}>סטודנט</option>
+          <option value="instructor" ${currentRole==='instructor' ? 'selected':''}>מרצה</option>
+          <option value="admin"      ${currentRole==='admin'      ? 'selected':''}>אדמין</option>
+        </select>`;
+
+      const deleteBtn = `<button class="btn btn-sm" onclick="deleteUserDoc('${esc(uid)}','${esc(u.email || '')}','${esc(docId)}','${esc(u.email || uid || docId)}','${esc(dupIds)}')" title="מחק משתמש (Firestore + Auth)" style="padding:.25rem .55rem;font-size:.85rem;background:#fef2f2;color:#991b1b;border:1px solid #fca5a5">🗑️</button>`;
+
+      const resetBtn = (u.email || uid)
+        ? `<button class="btn btn-sm" onclick="forcePasswordReset('${esc(u.email || '')}','${esc(uid)}')" title="כפה החלפת סיסמה בכניסה הבאה" style="padding:.25rem .55rem;font-size:.85rem;background:#fff7ed;color:#9a3412;border:1px solid #fdba74">🔑</button>`
+        : `<button class="btn btn-sm" disabled title="חסר מזהה משתמש" style="padding:.25rem .55rem;font-size:.85rem;opacity:.35;cursor:not-allowed">🔑</button>`;
+
+      return `<tr class="mu-row" style="transition:background .15s"
+        data-search="${esc(((u.email || '') + ' ' + (uid || '')).toLowerCase())}"
+        data-role="${esc(currentRole)}"
+        onmouseover="this.style.background='#f8fafc'" onmouseout="this.style.background=''">
+        <td style="font-size:.85rem">${emailCell}<br><span style="font-family:monospace;font-size:.7rem;color:var(--muted)">${esc(uid)}</span></td>
+        <td style="text-align:center">
+          ${accepted
+            ? `<span class="badge" style="background:#dcfce7;color:#166534;border:1px solid #86efac">✓ אישר</span>`
+            : `<span class="badge" style="background:#fef2f2;color:#991b1b;border:1px solid #fca5a5">✗ טרם</span>`}
+        </td>
+        <td style="text-align:center">${consentBadge}</td>
+        <td style="text-align:center">${roleSelect}</td>
+        <td style="text-align:center">${resetBtn}</td>
+        <td style="text-align:center">${deleteBtn}</td>
+      </tr>`;
+    }).join('');
+
+    wrap.innerHTML = `
+      <!-- Filter bar -->
+      <div style="display:flex;flex-wrap:wrap;gap:.5rem;align-items:center;background:#fff;border:1px solid var(--border);border-radius:10px;padding:.6rem .8rem;margin-bottom:.8rem">
+        <input id="mu-search" type="search" placeholder="🔍 חיפוש לפי אימייל / UID"
+          oninput="_applyManageUsersFilter()"
+          style="flex:1;min-width:220px;font-size:.82rem;padding:.35rem .55rem;border:1px solid #cbd5e1;border-radius:6px">
+        <select id="mu-role" onchange="_applyManageUsersFilter()"
+          style="font-size:.78rem;padding:.3rem .45rem;border:1px solid #cbd5e1;border-radius:6px;background:#fff;cursor:pointer">
+          <option value="">תפקיד: הכול</option>
+          <option value="student">סטודנט</option>
+          <option value="instructor">מרצה</option>
+          <option value="admin">אדמין</option>
+        </select>
+        <span id="mu-count" style="font-size:.72rem;color:var(--muted);margin-right:auto"></span>
+      </div>
+
+      <div style="overflow-x:auto">
+        <table class="tbl" style="min-width:560px">
+          <thead>
+            <tr>
+              <th>אימייל / UID</th>
+              <th style="text-align:center">📜 הצהרה</th>
+              <th style="text-align:center">🔬 הסכמה למעקב</th>
+              <th style="text-align:center">👤 תפקיד</th>
+              <th style="text-align:center" title="כפה איפוס סיסמה">🔑 איפוס סיסמה</th>
+              <th style="text-align:center" title="מחק משתמש לצמיתות">🗑️ מחיקה</th>
+            </tr>
+          </thead>
+          <tbody>${tableRows}</tbody>
+        </table>
+        <p style="font-size:.75rem;color:var(--light);margin-top:.6rem">
+          ${rows.length} משתמשים · עודכן ${new Date().toLocaleTimeString('he-IL')}
+        </p>
+      </div>`;
+
+    _applyManageUsersFilter();
+  } catch (e) {
+    wrap.innerHTML = `<div class="form-error show">שגיאה בטעינת משתמשים: ${esc(e.message)}</div>`;
+    console.error('renderManageUsers error:', e);
+  }
+}
+
+function _applyManageUsersFilter() {
+  const q = (document.getElementById('mu-search')?.value || '').trim().toLowerCase();
+  const role = document.getElementById('mu-role')?.value || '';
+  const rows = document.querySelectorAll('tr.mu-row');
+  let visible = 0;
+  rows.forEach(tr => {
+    let show = true;
+    if (q && !(tr.dataset.search || '').includes(q)) show = false;
+    if (show && role && tr.dataset.role !== role) show = false;
+    tr.style.display = show ? '' : 'none';
+    if (show) visible++;
+  });
+  const cnt = document.getElementById('mu-count');
+  if (cnt) cnt.textContent = `${visible} / ${rows.length} מוצגים`;
+}
+
+async function forcePasswordReset(email, uid) {
+  if (!email && !uid) { alert('חסר מזהה משתמש'); return; }
+  const label = email || uid;
+  const msg = `לכפות איפוס סיסמה עבור ${label}?\n\n` +
+              `· כל הסשנים הפעילים של המשתמש יבוטלו.\n` +
+              `· בכניסה הבאה, המשתמש ייאלץ להגדיר סיסמה חדשה לפני שיוכל להמשיך.\n` +
+              `· לא יישלח מייל.\n\n` +
+              `להמשיך?`;
+  if (!confirm(msg)) return;
+
+  try {
+    const idToken = await firebase.auth().currentUser?.getIdToken();
+    if (!idToken) { alert('יש להתחבר מחדש'); return; }
+
+    const res = await fetch('/.netlify/functions/force-password-reset', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${idToken}`,
+      },
+      body: JSON.stringify({ email: email || '', uid: uid || '' }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+    toast?.('המשתמש יידרש להגדיר סיסמה חדשה בכניסה הבאה');
+  } catch (e) {
+    console.error('forcePasswordReset error:', e);
+    alert('שגיאה באיפוס: ' + (e.message || e));
+  }
 }
 
 async function updateUserRole(docId, newRole, selectEl) {

@@ -155,6 +155,10 @@
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
           קורסים
         </a>
+        <a id="nav-manage-users" onclick="showSection('manage-users')">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><line x1="19" y1="8" x2="19" y2="14"/><line x1="22" y1="11" x2="16" y2="11"/></svg>
+          ניהול משתמשים
+        </a>
         <a id="nav-users" onclick="showSection('users')">
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
           מעקב משתמשים
@@ -489,7 +493,19 @@
         </div>
 
       </div>
-
+      <!-- ── MANAGE USERS ─────────────────────────── -->
+      <div class="adm-section" id="sec-manage-users">
+        <div class="sec-header">
+          <h2 class="sec-title">ניהול משתמשים</h2>
+          <button class="btn btn-secondary btn-sm" onclick="renderManageUsers()">🔄 רענן</button>
+        </div>
+        <div class="ac">
+          <div class="ac-title">רשימת משתמשים — תפקידים, איפוס סיסמה ומחיקה</div>
+          <div id="manage-users-table-wrap">
+            <div style="text-align:center;padding:2rem;color:var(--light)">לחץ על רענן לטעינת הנתונים</div>
+          </div>
+        </div>
+      </div>
       <!-- ── USERS ──────────────────────────────────────── -->
       <div class="adm-section" id="sec-users">
         <div class="sec-header">
