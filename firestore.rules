@@ -43,6 +43,10 @@ service cloud.firestore {
         && request.auth.uid == userId
         && request.resource.data.role == 'student';
 
+      // Admins can delete user documents from the admin panel (מעקב משתמשים).
+      // Note: this only removes the Firestore profile, NOT the Firebase Auth account.
+      allow delete: if isAdmin();
+
       // AI task results written by background function (Admin SDK).
       match /ai_tasks/{taskId} {
         allow read: if isLoggedIn() && request.auth.uid == userId;

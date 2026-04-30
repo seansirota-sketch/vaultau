@@ -351,6 +351,132 @@ function needsConsentGate(userData) {
   return !userData?.acceptedTerms || userData?.analyticsConsent === undefined;
 }
 
+/* ============================================================
+   Admin-forced password change (no email flow)
+   Triggered when users/{uid}.mustChangePassword === true.
+   ============================================================ */
+function renderForcedPasswordChange() {
+  const displayName = esc(STATE.fireUser?.displayName || STATE.userData?.displayName || '');
+  document.getElementById('app').innerHTML = `
+    <div class="auth-wrap">
+      <div class="auth-card">
+        <div class="auth-logo">
+          <span class="icon">🔑</span>
+          <h1>VaultAU</h1>
+          <p>מנהל המערכת דורש ממך להגדיר סיסמה חדשה${displayName ? ', ' + displayName : ''}</p>
+        </div>
+        <p style="color:var(--fg);font-size:.92rem;text-align:center;line-height:1.6;margin-bottom:1.2rem">
+          לפני שתוכל להמשיך, עליך להגדיר סיסמה חדשה ובטוחה לחשבון שלך.
+        </p>
+        <div id="fpc-err" class="form-error"></div>
+        <div class="form-group">
+          <label>סיסמה נוכחית</label>
+          <div class="pass-wrap">
+            <input id="fpc-current" type="password" placeholder="הסיסמה שהתחברת איתה">
+            <button type="button" class="pass-eye" onclick="togglePassVis('fpc-current','fpc-eye0')"
+              id="fpc-eye0" aria-label="הצג סיסמה">${_eyeIcon(false)}</button>
+          </div>
+        </div>
+        <div class="form-group">
+          <label>סיסמה חדשה</label>
+          <div class="pass-wrap">
+            <input id="fpc-new" type="password" placeholder="לפחות 6 תווים">
+            <button type="button" class="pass-eye" onclick="togglePassVis('fpc-new','fpc-eye1')"
+              id="fpc-eye1" aria-label="הצג סיסמה">${_eyeIcon(false)}</button>
+          </div>
+        </div>
+        <div class="form-group">
+          <label>אימות סיסמה</label>
+          <div class="pass-wrap">
+            <input id="fpc-new2" type="password" placeholder="הזן שוב את הסיסמה">
+            <button type="button" class="pass-eye" onclick="togglePassVis('fpc-new2','fpc-eye2')"
+              id="fpc-eye2" aria-label="הצג סיסמה">${_eyeIcon(false)}</button>
+          </div>
+        </div>
+        <button id="fpc-btn" class="btn btn-primary" style="width:100%;justify-content:center"
+          onclick="doForcedPasswordChange()">שמור והמשך ←</button>
+        <button type="button" class="btn btn-secondary" style="width:100%;justify-content:center;margin-top:.6rem"
+          onclick="auth.signOut()">יציאה</button>
+      </div>
+    </div>
+  `;
+  document.getElementById('fpc-new2')?.addEventListener('keydown', e => {
+    if (e.key === 'Enter') doForcedPasswordChange();
+  });
+  document.getElementById('fpc-current')?.focus();
+}
+
+async function doForcedPasswordChange() {
+  const currentPwd = document.getElementById('fpc-current').value;
+  const pass  = document.getElementById('fpc-new').value;
+  const pass2 = document.getElementById('fpc-new2').value;
+  const errEl = document.getElementById('fpc-err');
+  errEl.classList.remove('show');
+  errEl.textContent = '';
+
+  if (!currentPwd || !pass || !pass2) {
+    errEl.textContent = 'נא למלא את כל השדות';
+    errEl.classList.add('show');
+    return;
+  }
+  if (pass.length < 6) {
+    errEl.textContent = 'סיסמה חייבת להכיל לפחות 6 תווים';
+    errEl.classList.add('show');
+    return;
+  }
+  if (pass !== pass2) {
+    errEl.textContent = 'הסיסמאות לא תואמות';
+    errEl.classList.add('show');
+    return;
+  }
+  if (pass === currentPwd) {
+    errEl.textContent = 'הסיסמה החדשה חייבת להיות שונה מהנוכחית';
+    errEl.classList.add('show');
+    return;
+  }
+
+  const btn = document.getElementById('fpc-btn');
+  if (btn) { btn.disabled = true; btn.textContent = 'שומר...'; }
+
+  try {
+    const user = auth.currentUser;
+    // Re-authenticate to satisfy Firebase's recent-login requirement
+    const cred = firebase.auth.EmailAuthProvider.credential(user.email, currentPwd);
+    await user.reauthenticateWithCredential(cred);
+    await user.updatePassword(pass);
+
+    // Clear the flag
+    await db.collection('users').doc(user.uid).update({
+      mustChangePassword: false,
+      passwordChangedAt: firebase.firestore.FieldValue.serverTimestamp(),
+    });
+    if (STATE.userData) STATE.userData.mustChangePassword = false;
+
+    // Continue normal flow
+    if (needsConsentGate(STATE.userData)) {
+      renderConsentModal();
+      return;
+    }
+    checkAndShowSurvey();
+    renderNavbar();
+    _fetchInitialQuota();
+    _cleanupOrphanedCache();
+    history.replaceState({ page: 'home', courseId: null, examId: null }, '');
+    renderPage();
+  } catch (e) {
+    const messages = {
+      'auth/wrong-password':        'הסיסמה הנוכחית שגויה',
+      'auth/invalid-credential':    'הסיסמה הנוכחית שגויה',
+      'auth/weak-password':         'הסיסמה חלשה מדי — נסה סיסמה חזקה יותר',
+      'auth/too-many-requests':     'יותר מדי ניסיונות — נסה שוב מאוחר יותר',
+      'auth/requires-recent-login': 'תוקף הסשן פג — התחבר מחדש ונסה שוב',
+    };
+    errEl.textContent = messages[e.code] || ('שגיאה: ' + e.message);
+    errEl.classList.add('show');
+    if (btn) { btn.disabled = false; btn.textContent = 'שמור והמשך ←'; }
+  }
+}
+
 function renderLtiFallback(message) {
   const safeMessage = esc(message || 'LTI launch could not be completed.');
   document.getElementById('app').innerHTML = `
@@ -439,6 +565,14 @@ async function initAppBootstrap() {
       const hasPasswordProvider = user.providerData.some(p => p.providerId === 'password');
       if (_ltiBootstrapResult.attempted && _ltiBootstrapResult.success && !hasPasswordProvider) {
         renderLtiFirstTimePasswordSetup();
+        return;
+      }
+
+      // ── 0.5 Admin-forced password change ───────────────────
+      // Show forced reset UI if an admin flagged this user via מעקב/ניהול משתמשים.
+      // Only applies to users with a password provider — LTI-only users above.
+      if (STATE.userData?.mustChangePassword === true && hasPasswordProvider) {
+        renderForcedPasswordChange();
         return;
       }
 
@@ -2457,7 +2591,9 @@ async function renderCourse() {
       Array.isArray(e.lecturers) ? e.lecturers : (e.lecturer ? [e.lecturer] : [])
     ).filter(Boolean))];
     const starCount = countStarred(exams, starred);
-    const aiQCount  = (STATE.userData?.aiQuestions || []).filter(q => q.courseId === STATE.courseId).length;
+
+    // If user landed on the now-removed AI tab, fall back to exams
+    if (STATE.tab === 'ai-questions') STATE.tab = 'exams';
 
     page.innerHTML = `
       <div class="container">
@@ -2481,16 +2617,11 @@ async function renderCourse() {
           <button class="tab-btn ${STATE.tab === 'videos' ? 'active' : ''}" onclick="setTab('videos')">
             🎬 סרטונים
           </button>
-          <button class="tab-btn ${STATE.tab === 'ai-questions' ? 'active' : ''}" onclick="setTab('ai-questions')">
-            ✨ שאלות שנוצרו
-            ${aiQCount ? `<span class="badge" style="background:#ede9fe;color:#6d28d9;border:1px solid #c4b5fd">${aiQCount}</span>` : ''}
-          </button>
         </div>
         <div id="tab-content"></div>
       </div>`;
 
-    if (STATE.tab === 'ai-questions') renderAIQuestionsTab();
-    else if (STATE.tab === 'starred') renderStarredTab(exams, starred);
+    if (STATE.tab === 'starred') renderStarredTab(exams, starred);
     else if (STATE.tab === 'videos') renderVideosTab(exams);
     else renderExamsTab(course, exams, years, semesters, moeds, lecturers);
 
@@ -3177,6 +3308,8 @@ function renderQuestionCard(q, qi, starred, userVotes = {}, videoMap = {}, isAdm
   const qImage     = safeUrl(q.imageUrl || '');
   const qAlign     = normalizeImageAlign(q.imageAlign || 'center');
   const qCopyId    = 'copy-q-' + q.id;
+  const _role      = STATE.userData?.role;
+  const canGenerate = _role === 'instructor' || _role === 'admin';
 
   // Top copy button copies the full question: stem + all sub-parts
   const fullQText = hasSubs
@@ -3217,7 +3350,7 @@ function renderQuestionCard(q, qi, starred, userVotes = {}, videoMap = {}, isAdm
           <div class="qv-actions">
             ${sIsBonus ? `<span class="qv-bonus-badge" style="font-size:.7rem;padding:.15rem .5rem">⭐ סעיף בונוס</span>` : ''}
             <button class="qv-btn" onclick="copyById('${sCopyId}',event)" title="העתק LaTeX">${copySVG}</button>
-            ${sAllowAI ? `<button class="qv-btn" onclick="openGeminiModal('${s.id}','sub')" title="צור סעיף דומה">✨</button>` : ''}
+            ${sAllowAI && canGenerate ? `<button class="qv-btn" onclick="openGeminiModal('${s.id}','sub')" title="צור סעיף דומה">✨</button>` : ''}
             ${videoMap[s.id] ? `<button class="qv-btn qv-video-btn" data-lib="${esc(videoMap[s.id].libraryId)}" data-vid="${esc(videoMap[s.id].videoId)}" data-title="${esc(videoMap[s.id].title || 'פתרון מוצג')}" data-entity-id="${esc(s.id)}" data-entity-label="${esc('שאלה ' + (qi + 1) + ' ' + rawLabel)}" onclick="openVideoModalFromBtn(this)" title="צפה בסרטון פתרון">${videoSVG}</button>` : ''}
           </div>
         </div>
@@ -3241,7 +3374,7 @@ function renderQuestionCard(q, qi, starred, userVotes = {}, videoMap = {}, isAdm
         <button class="qv-btn ${isStarredQ ? 'on' : ''}" id="qb-${q.id}"
           onclick="toggleStar('${q.id}')" title="סמן שאלה">${starSVG(isStarredQ)}</button>
         <button class="qv-btn" onclick="copyById('${qCopyId}',event)" title="העתק LaTeX">${copySVG}</button>
-        ${q.allowAIGen === true ? `<button class="qv-btn" onclick="openGeminiModal('${q.id}','question')" title="צור שאלה דומה">✨</button>` : ''}
+        ${q.allowAIGen === true && canGenerate ? `<button class="qv-btn" onclick="openGeminiModal('${q.id}','question')" title="צור שאלה דומה">✨</button>` : ''}
         ${videoMap[q.id] ? `<button class="qv-btn qv-video-btn" data-lib="${esc(videoMap[q.id].libraryId)}" data-vid="${esc(videoMap[q.id].videoId)}" data-title="${esc(videoMap[q.id].title || 'פתרון מוצג')}" data-entity-id="${esc(q.id)}" data-entity-label="${esc('שאלה ' + (qi + 1))}" onclick="openVideoModalFromBtn(this)" title="צפה בסרטון פתרון">${videoSVG}</button>` : ''}
       </div>
     </div>
@@ -3809,6 +3942,11 @@ function _stopGeminiLoading() {
 function openGeminiModal(qOrSubId, type) {
   const uid = STATE.fireUser?.uid;
   if (!uid) { toast('יש להתחבר כדי להשתמש בתכונה זו', 'error'); return; }
+  const _role = STATE.userData?.role;
+  if (_role !== 'instructor' && _role !== 'admin') {
+    toast('התכונה זמינה למרצים ומנהלי מערכת בלבד', 'error');
+    return;
+  }
 
   // Resolve the source text
   let sourceText = '';
