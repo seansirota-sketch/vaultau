@@ -1866,10 +1866,11 @@ function requireSurveyDone() {
 function renderPage() {
   if (!requireTermsAccepted()) return;
   if (!requireSurveyDone())   return;
-  if (STATE.page === 'home')          renderHome();
-  else if (STATE.page === 'course')   renderCourse();
-  else if (STATE.page === 'exam')     renderExam();
-  else if (STATE.page === 'privacy')  renderPrivacy();
+  if (STATE.page === 'home')           renderHome();
+  else if (STATE.page === 'course')    renderCourse();
+  else if (STATE.page === 'exam')      renderExam();
+  else if (STATE.page === 'privacy')   renderPrivacy();
+  else if (STATE.page === 'my-exams')  renderLecturerExams();
 }
 
 async function goHome() {
@@ -2286,6 +2287,16 @@ function _renderCourseCards() {
       <div class="cm">${analyticsEnabled ? 'לחץ לפתיחת הדשבורד' : 'אין קורסים שמורים'}</div>
     </div>` : '';
 
+  // Lecturer-only "My Exams" card
+  const myExamsCard = (role === 'instructor' || role === 'admin') ? `
+    <div class="course-card analytics-card" onclick="goLecturerExams()"
+      title="המבחנים ששויכו אליך">
+      <span class="ci">📝</span>
+      <div class="cn">המבחנים שלי</div>
+      <div class="cc">${role === 'admin' ? 'כל המבחנים' : 'מבחנים ששויכו'}</div>
+      <div class="cm">לחץ לצפייה</div>
+    </div>` : '';
+
   const contactCard = `
     <div class="course-card" onclick="openContactModal()">
       <span class="ci">✉️</span>
@@ -2296,7 +2307,7 @@ function _renderCourseCards() {
 
   // Bottom row: analytics (instructor/admin) + contact
   const extras = document.getElementById('home-extras-row');
-  if (extras) extras.innerHTML = analyticsCard + contactCard;
+  if (extras) extras.innerHTML = analyticsCard + myExamsCard + contactCard;
 
   if (!visible.length) {
     grid.innerHTML = `
@@ -2326,6 +2337,190 @@ function goLecturerAnalytics() {
   if (role !== 'instructor' && role !== 'admin') return;
   try { sessionStorage.setItem('vaultau:research-scope', role === 'instructor' ? 'mine' : 'all'); } catch (_) {}
   location.href = 'research.html?from=courses';
+}
+
+/* ── LECTURER: MY EXAMS ───────────────────────────────────── */
+
+function goLecturerExams() {
+  const role = STATE.userData?.role;
+  if (role !== 'instructor' && role !== 'admin') return;
+  STATE.page = 'my-exams';
+  STATE.lecturerExamsCourseFilter = '';
+  history.pushState({ page: 'my-exams' }, '');
+  renderLecturerExams();
+}
+
+async function _fetchLecturerAssignedExams() {
+  const role = STATE.userData?.role;
+  const uid = STATE.fireUser?.uid;
+  if (!uid) return [];
+  // Admin → all exams. Instructor → only those where assignedLecturers contains uid.
+  let snap;
+  try {
+    if (role === 'admin') {
+      snap = await db.collection('exams').get();
+    } else {
+      snap = await db.collection('exams')
+        .where('assignedLecturers', 'array-contains', uid)
+        .get();
+    }
+  } catch (e) {
+    console.error('fetch lecturer exams failed:', e);
+    return [];
+  }
+  return snap.docs.map(d => ({ id: d.id, ...d.data() }));
+}
+
+async function renderLecturerExams() {
+  const role = STATE.userData?.role;
+  if (role !== 'instructor' && role !== 'admin') {
+    STATE.page = 'home';
+    renderHome();
+    return;
+  }
+  const page = document.getElementById('app');
+  page.innerHTML = `
+    <div class="container">
+      <div class="breadcrumb">
+        <a onclick="goHome()">🏠 ראשי</a><span>›</span><span>המבחנים שלי</span>
+      </div>
+      <div class="page-header">
+        <div>
+          <h1 class="page-title">📝 המבחנים שלי</h1>
+          <p class="page-sub">המבחנים ש${role === 'admin' ? 'במערכת' : 'שויכו אליך'}</p>
+        </div>
+      </div>
+      <div id="my-exams-content"><div class="spinner" style="margin:2rem auto"></div></div>
+    </div>`;
+
+  const [exams, courses] = await Promise.all([
+    _fetchLecturerAssignedExams(),
+    (STATE.courses && STATE.courses.length) ? Promise.resolve(STATE.courses) : fetchCourses().then(c => { STATE.courses = c; return c; })
+  ]);
+
+  const courseById = Object.fromEntries((courses || []).map(c => [c.id, c]));
+  // Only show courses that actually appear in this lecturer's exams
+  const courseOpts = [...new Set(exams.map(e => e.courseId).filter(Boolean))]
+    .map(cid => ({ id: cid, name: courseById[cid]?.name || cid, code: courseById[cid]?.code || '' }))
+    .sort((a, b) => a.name.localeCompare(b.name, 'he'));
+
+  const wrap = document.getElementById('my-exams-content');
+  if (!wrap) return;
+
+  if (!exams.length) {
+    wrap.innerHTML = `
+      <div class="empty" style="padding:2.5rem;text-align:center">
+        <span class="ei">📭</span>
+        <h3>אין מבחנים ששויכו אליך</h3>
+        <p style="color:var(--muted);font-size:.9rem">פנה למנהל כדי לשייך אליך מבחנים</p>
+      </div>`;
+    return;
+  }
+
+  wrap.innerHTML = `
+    <div class="filters-bar" style="margin-bottom:1rem">
+      <div class="form-group" style="min-width:240px">
+        <label>קורס</label>
+        <select id="my-exams-course-filter" onchange="_applyLecturerExamsFilter()">
+          <option value="">כל הקורסים</option>
+          ${courseOpts.map(c => `<option value="${esc(c.id)}">${esc(c.name)}${c.code ? ' (' + esc(c.code) + ')' : ''}</option>`).join('')}
+        </select>
+      </div>
+    </div>
+    <div id="my-exams-list" style="display:flex;flex-direction:column;gap:.7rem">
+      ${exams.map(e => _lecturerExamRowHtml(e, courseById[e.courseId])).join('')}
+    </div>`;
+
+  // Cache for filter
+  STATE._lecturerExamsCache = exams;
+  STATE._lecturerExamsCourseById = courseById;
+}
+
+function _lecturerExamRowHtml(exam, course) {
+  const hidden = exam.hiddenFromStudents === true;
+  const courseLabel = course ? `${course.name}${course.code ? ' (' + course.code + ')' : ''}` : (exam.courseId || '');
+  const meta = [exam.year, exam.semester, exam.moed].filter(Boolean).join(' · ');
+  const isAdmin = STATE.userData?.role === 'admin';
+  return `
+    <div class="ac" data-course="${esc(exam.courseId || '')}"
+      style="padding:.9rem 1.1rem;display:flex;align-items:center;gap:.8rem;flex-wrap:wrap;
+             ${hidden ? 'opacity:.7;background:#fef9c3' : ''}">
+      <div style="flex:1;min-width:200px">
+        <div style="font-weight:700;font-size:.98rem;display:flex;align-items:center;gap:.5rem;flex-wrap:wrap">
+          ${esc(exam.title || exam.id)}
+          ${hidden ? '<span class="badge" style="background:#fde68a;color:#92400e;border:1px solid #fbbf24">מוסתר</span>' : ''}
+        </div>
+        <div style="font-size:.8rem;color:var(--muted);margin-top:.2rem">${esc(courseLabel)}${meta ? ' · ' + esc(meta) : ''}</div>
+      </div>
+      <div style="display:flex;gap:.4rem;flex-wrap:wrap">
+        <button class="btn btn-sm btn-secondary" onclick="goExam('${esc(exam.courseId)}','${esc(exam.id)}')" title="פתח מבחן">📖 פתח</button>
+        <button class="btn btn-sm" onclick="toggleExamHidden('${esc(exam.id)}')"
+          title="${hidden ? 'הצג לסטודנטים' : 'הסתר מסטודנטים'}"
+          style="background:${hidden ? '#dcfce7' : '#fef3c7'};color:${hidden ? '#166534' : '#92400e'};border:1px solid ${hidden ? '#86efac' : '#fcd34d'}">
+          ${hidden ? '👁️ הצג' : '🙈 הסתר'}
+        </button>
+        ${isAdmin ? '' : `<button class="btn btn-sm" onclick="requestExamDeletion('${esc(exam.id)}','${esc((exam.title || '').replace(/'/g, "\\'"))}','${esc(exam.courseId || '')}')"
+          title="שלח בקשת מחיקה למנהל"
+          style="background:#fee2e2;color:#b91c1c;border:1px solid #fca5a5">🗑️ בקש מחיקה</button>`}
+      </div>
+    </div>`;
+}
+
+function _applyLecturerExamsFilter() {
+  const cid = document.getElementById('my-exams-course-filter')?.value || '';
+  document.querySelectorAll('#my-exams-list > .ac').forEach(row => {
+    row.style.display = (!cid || row.dataset.course === cid) ? '' : 'none';
+  });
+}
+
+async function toggleExamHidden(examId) {
+  const exam = (STATE._lecturerExamsCache || []).find(e => e.id === examId);
+  if (!exam) return;
+  const willHide = !(exam.hiddenFromStudents === true);
+  const msg = willHide
+    ? `להסתיר את המבחן "${exam.title}" מהסטודנטים?\n\nהסטודנטים לא יראו את המבחן בקורס.`
+    : `להציג שוב את המבחן "${exam.title}" לסטודנטים?`;
+  if (!confirm(msg)) return;
+  try {
+    await db.collection('exams').doc(examId).update({ hiddenFromStudents: willHide });
+    exam.hiddenFromStudents = willHide;
+    renderLecturerExams();
+    toast(willHide ? 'המבחן הוסתר מהסטודנטים' : 'המבחן נראה שוב לסטודנטים', 'info');
+  } catch (e) {
+    console.error('toggleExamHidden:', e);
+    alert('שגיאה: ' + (e.message || e));
+  }
+}
+
+async function requestExamDeletion(examId, examTitle, courseId) {
+  const reason = prompt(
+    `שלח בקשה למנהל למחוק את המבחן "${examTitle}".\n\nסיבה (לא חובה):`,
+    ''
+  );
+  if (reason === null) return; // cancelled
+  try {
+    await db.collection('reports').add({
+      category:  'lecturer_delete_request',
+      examId:    examId,
+      examTitle: examTitle || '',
+      courseId:  courseId || '',
+      message:   (reason || '').trim() || '(ללא סיבה)',
+      userId:    STATE.fireUser?.uid   || '',
+      userEmail: STATE.fireUser?.email || '',
+      createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+      status:    'open',
+      adminResponseText: '',
+      adminResponseAt: null,
+      userLastReadAt: null,
+      adminDeletedAt: null,
+      userDeletedAt: null,
+      bothDeletedAt: null,
+    });
+    toast('בקשת המחיקה נשלחה למנהל', 'info');
+  } catch (e) {
+    console.error('requestExamDeletion:', e);
+    alert('שגיאה בשליחת הבקשה: ' + (e.message || e));
+  }
 }
 
 /* ── COURSE PICKER MODAL ──────────────────────────────────── */

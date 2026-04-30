@@ -272,6 +272,19 @@
               <button type="button" class="btn btn-secondary btn-sm" onclick="addLecturer()">+ הוסף</button>
             </div>
           </div>
+          <div class="form-group">
+            <label>שיוך מרצים למבחן זה (גישה ל"המבחנים שלי")</label>
+            <div id="assigned-lecturers-list" class="lecturers-list"></div>
+            <div class="lecturer-add-row">
+              <select id="ae-assigned-lecturer-select" style="flex:1;min-width:0">
+                <option value="">— בחר מרצה רשום —</option>
+              </select>
+              <button type="button" class="btn btn-secondary btn-sm" onclick="addAssignedLecturer()">+ שייך</button>
+            </div>
+            <div style="font-size:.75rem;color:var(--muted);margin-top:.3rem">
+              רק משתמשים בעלי תפקיד <strong>instructor</strong> יוצגו ברשימה.
+            </div>
+          </div>
           <div id="ae-error" class="form-error"></div>
           <div id="meta-autofill-banner"></div>
         </div>
