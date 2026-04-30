@@ -23,7 +23,7 @@ const GEMINI_URL     = `https://generativelanguage.googleapis.com/v1beta/models/
 const CLAUDE_MODEL   = 'claude-sonnet-4-20250514';
 const FIREBASE_PROJECT = 'eaxmbank';
 const FIRESTORE_BASE   = `https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT}/databases/(default)/documents`;
-const ROLE_ALLOWED     = new Set(['student', 'instructor', 'admin']);
+const ROLE_ALLOWED     = new Set(['instructor', 'admin']);
 
 const MAX_PROMPT_LENGTH   = 8000;   // characters
 const MAX_RETRIES         = 1;
@@ -169,7 +169,7 @@ export default async (request, _context) => {
         errorMessage: `Forbidden role: ${role || 'unknown'}`,
       }).catch(() => {});
 
-      return jsonResponse(403, { error: 'Forbidden: recognized role required (student/instructor/admin)' });
+      return jsonResponse(403, { error: 'Forbidden: only instructors or admins may use this feature' });
     }
 
     // ── 2. Parse & validate input ───────────────────────────
@@ -184,20 +184,11 @@ export default async (request, _context) => {
 
     const sanitizedPrompt = sanitizePrompt(prompt);
 
-    // ── 3. Check user quota ─────────────────────────────────
-    const quota = featureEnabled('FEATURE_RATE_LIMIT', true)
-      ? await checkQuota(uid, idToken)
-      : { used: 0, remaining: Infinity, limit: Infinity, resetAt: '' };
-
-    if (quota.remaining <= 0) {
-      const msg = quota.reason === 'weekly'
-        ? `מכסת השאלות השבועית (${QUOTA_WEEKLY}) מוצתה. נסה שוב ביום ראשון.`
-        : `מכסת השאלות היומית (${QUOTA_DAILY}) מוצתה. נסה שוב מחר.`;
-      return jsonResponse(429, {
-        error: msg,
-        quota: { used: quota.used, limit: quota.limit, resetAt: quota.resetAt }
-      });
-    }
+    // ── 3. Quota check skipped ──────────────────────────────
+    // Only instructors/admins can reach this point, and they have
+    // unlimited usage by policy. Keep a stub object so downstream
+    // code that reads `quota.*` still works.
+    const quota = { used: 0, remaining: Infinity, limit: Infinity, resetAt: '' };
 
     // ── 4. Start streaming IMMEDIATELY, then call AI inside ──
     //    This prevents Netlify's edge-function timeout by sending
@@ -250,14 +241,14 @@ export default async (request, _context) => {
       // ── Post-stream: log usage + increment quota ──────────
       const latencyMs = Date.now() - startTime;
       logUsage(uid, idToken, { api: apiUsed, latencyMs, cached: false, promptLength: sanitizedPrompt.length, responseLength: fullText.length, inputTokens, outputTokens, status, errorMessage }).catch(() => {});
-      if (status === 'success') incrementQuota(uid, idToken).catch(() => {});
+      // Quota tracking removed: only instructors/admins can use this endpoint and they have unlimited usage.
     })();
 
     return new Response(readable, {
       status: 200,
       headers: { ...corsHeaders(), 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', 'Connection': 'keep-alive',
-        'X-Quota-Remaining': String(quota.remaining - 1),
-        'X-Quota-Limit':     String(quota.limit),
+        'X-Quota-Remaining': 'unlimited',
+        'X-Quota-Limit':     'unlimited',
       },
     });
 
