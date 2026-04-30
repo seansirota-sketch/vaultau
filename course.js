@@ -81,25 +81,11 @@ const _isLocalDev = location.hostname === 'localhost' || location.hostname === '
 /* ── AI Generate – state tracking (quota removed: instructor/admin only, unlimited) */
 let _aiGenerateInProgress = false;   // prevent concurrent requests
 let _aiStreamAbort = null;           // AbortController for active stream
-// Stubs kept so legacy references do not throw; remain null so badges & limits stay hidden.
-let _aiQuotaRemaining = null;
-let _aiQuotaLimit = null;
 
-// Quota badges are intentionally hidden — staff have unlimited usage.
-function _updateQuotaBadge() {
-  const badge = document.getElementById('gemini-quota-badge');
-  if (badge) badge.style.display = 'none';
-  _updateNavbarQuotaBadge();
-}
-
-/** Update the navbar quota badge (kept hidden — unlimited usage) */
-function _updateNavbarQuotaBadge() {
-  const badge = document.getElementById('navbar-quota-badge');
-  if (badge) { badge.textContent = ''; badge.style.display = 'none'; }
-}
-
-/** Quota fetch removed — instructors/admins have unlimited usage. */
-async function _fetchInitialQuota() { /* no-op */ }
+function _updateQuotaBadge() { /* no-op — quota removed */ }
+function _updateNavbarQuotaBadge() { /* no-op — quota removed */ }
+async function _fetchInitialQuota() { /* no-op — quota removed */ }
+async function _persistQuotaToFirestore() { /* no-op — quota removed */ }
 
 /** One-shot cleanup: delete orphaned cache docs from old key format (no difficulty suffix) */
 async function _cleanupOrphanedCache() {
@@ -126,27 +112,8 @@ async function _cleanupOrphanedCache() {
   }
 }
 
-/** Persist quota usage to Firestore so it survives page refresh (local dev + production fallback) */
-async function _persistQuotaToFirestore() {
-  const uid = STATE.fireUser?.uid;
-  if (!uid) return;
-  try {
-    const today = new Date().toISOString().slice(0, 10);
-    const ref = db.collection('user_quotas').doc(uid);
-    const snap = await ref.get();
-    let currentDaily = 0;
-    if (snap.exists && snap.data().date_key === today) {
-      currentDaily = snap.data().requests_today || 0;
-    }
-    await ref.set({
-      date_key: today,
-      requests_today: currentDaily + 1,
-      last_request: new Date().toISOString(),
-    }, { merge: true });
-  } catch (e) {
-    console.warn('Failed to persist quota:', e.message);
-  }
-}
+/** Persist quota usage — removed (no quota any more) */
+// (function body removed)
 
 let _geminiKey = null;
 async function _loadGeminiKey() {
@@ -1742,7 +1709,6 @@ function renderNavbar() {
           <div class="av">${displayName[0].toUpperCase()}</div>
           <span>${esc(displayName)}</span>
         </div>
-        <span id="navbar-quota-badge" style="font-size:.72rem;padding:2px 8px;border-radius:12px;background:rgba(255,255,255,.2);color:#fff;white-space:nowrap;cursor:default" title="מכסת יצירת שאלות יומית"></span>
       </div>
       <span class="navbar-brand" onclick="goHome()">
         <span class="ni">📚</span> VaultAU
@@ -4216,7 +4182,6 @@ function openGeminiModal(qOrSubId, type) {
             <button class="qv-btn" id="gemini-rate-up" onclick="_rateQuestion('up')" style="font-size:1rem;padding:2px 6px">👍</button>
             <button class="qv-btn" id="gemini-rate-down" onclick="_rateQuestion('down')" style="font-size:1rem;padding:2px 6px">👎</button>
           </div>
-          <span id="gemini-quota-badge" style="font-size:.75rem;padding:2px 8px;border-radius:12px;background:rgba(99,102,241,.12);color:#6366f1;white-space:nowrap">${_aiQuotaRemaining !== null && _aiQuotaLimit !== null ? `${_aiQuotaRemaining}/${_aiQuotaLimit}` : ''}</span>
         </div>
       </div>
       <!-- Difficulty selector -->
@@ -4350,12 +4315,6 @@ async function _callGeminiAPI(sourceText, isRegenerate = false) {
     return;
   }
 
-  // Client-side quota pre-check (avoids round-trip if quota is known exhausted)
-  if (_aiQuotaRemaining !== null && _aiQuotaRemaining <= 0) {
-    _showGeminiError('מכסת השאלות היומית מוצתה. נסה שוב מחר.');
-    return;
-  }
-
   _aiGenerateInProgress = true;
 
   // Show loading
@@ -4393,29 +4352,15 @@ async function _callGeminiAPI(sourceText, isRegenerate = false) {
     _logEvent('ai_question_generated', { courseCode: STATE.courseCode || STATE.courseId, examId: STATE.examLabel || STATE.examId || '', questionId: _questionRef(overlay?.dataset?.qOrSubId), fromCache: false });
     _ga('use_ai', { course_code: _cc(), exam_id: _eid(), question_id: _questionRef(overlay?.dataset?.qOrSubId), action: isRegenerate ? 'regenerate' : 'generate', from_cache: false });
 
-    // Decrement local quota counter and persist to Firestore
-    if (_isLocalDev && _aiQuotaRemaining !== null && _aiQuotaRemaining > 0) {
-      _aiQuotaRemaining--;
-      _persistQuotaToFirestore();
-    }
-    _updateQuotaBadge();
-    _updateNavbarQuotaBadge();
-
   } catch (e) {
     _stopGeminiLoading();
     // Don't show error if user intentionally closed the modal
     if (e.name === 'AbortError') {
-      // Quota already decremented by closeGeminiModal — just exit
       return;
     }
     _showGeminiError(e.message);
     // Log client-side error to Firestore so admin AI monitor can see it
     _logClientAIError(e.message).catch(() => {});
-    // Decrement quota on error too — the server already consumed the request
-    if (_aiQuotaRemaining !== null && _aiQuotaRemaining > 0) _aiQuotaRemaining--;
-    _updateQuotaBadge();
-    _updateNavbarQuotaBadge();
-    _persistQuotaToFirestore();
   } finally {
     _aiGenerateInProgress = false;
     _aiStreamAbort = null;
@@ -4466,20 +4411,10 @@ async function _callGeminiStream(prompt, bodyEl) {
 
   if (!res.ok) {
     const errData = await res.json().catch(() => ({}));
-    // Surface quota info on 429
-    if (res.status === 429 && errData.quota) {
-      _aiQuotaRemaining = 0;
-      _aiQuotaLimit = errData.quota.limit;
-    }
     throw new Error(errData?.error || `Server error: ${res.status}`);
   }
 
-  // Read quota headers from SSE response (server now returns 'unlimited' for staff)
-  const qr = res.headers.get('X-Quota-Remaining');
-  const ql = res.headers.get('X-Quota-Limit');
-  if (qr !== null && qr !== 'unlimited') _aiQuotaRemaining = parseInt(qr, 10);
-  if (ql !== null && ql !== 'unlimited') _aiQuotaLimit = parseInt(ql, 10);
-  _updateQuotaBadge();
+  // Read quota headers from SSE response (server returns 'unlimited' for staff — ignored)
 
   // Collect full response in background — spinner stays visible until done
   let fullText = '';
@@ -4572,16 +4507,9 @@ function _showGeminiError(msg) {
   const body = document.getElementById('gemini-body');
   if (!body) return;
 
-  // Add quota info if available
-  let quotaHtml = '';
-  if (_aiQuotaRemaining !== null && _aiQuotaLimit !== null) {
-    quotaHtml = `<p style="font-size:.8rem;color:#9ca3af;margin-top:.5rem">מכסה: ${_aiQuotaLimit - (_aiQuotaRemaining || 0)}/${_aiQuotaLimit} שאלות היום</p>`;
-  }
-
   body.innerHTML = `<div style="text-align:center;padding:1.5rem;color:#dc2626">
     <p style="font-weight:600">שגיאה ביצירת שאלה</p>
     <p style="font-size:.85rem;color:#6b7280;margin-top:.5rem">${esc(msg)}</p>
-    ${quotaHtml}
     <button class="btn-gemini" style="margin-top:1rem" onclick="_geminiRegenerate()">נסה שוב</button>
   </div>`;
 }
@@ -4696,13 +4624,6 @@ async function _geminiSave() {
 
 function closeGeminiModal() {
   _stopGeminiLoading();
-  // If generation is in progress, count it toward quota before aborting
-  if (_aiGenerateInProgress) {
-    if (_aiQuotaRemaining !== null && _aiQuotaRemaining > 0) _aiQuotaRemaining--;
-    _updateQuotaBadge();
-    _updateNavbarQuotaBadge();
-    _persistQuotaToFirestore();
-  }
   // Abort any in-flight stream and reset the generation lock
   if (_aiStreamAbort) { _aiStreamAbort.abort(); _aiStreamAbort = null; }
   _aiGenerateInProgress = false;
