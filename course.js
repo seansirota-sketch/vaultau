@@ -78,69 +78,28 @@ function toast(msg, type = '') {
 /* ── GEMINI – environment detection ────────────────────────── */
 const _isLocalDev = location.hostname === 'localhost' || location.hostname === '127.0.0.1';
 
-/* ── AI Generate – client-side quota & state tracking ──────── */
-const AI_DAILY_QUOTA = 10;           // must match QUOTA_DAILY in edge function
+/* ── AI Generate – state tracking (quota removed: instructor/admin only, unlimited) */
 let _aiGenerateInProgress = false;   // prevent concurrent requests
 let _aiStreamAbort = null;           // AbortController for active stream
-let _aiQuotaRemaining = null;        // populated from response headers
+// Stubs kept so legacy references do not throw; remain null so badges & limits stay hidden.
+let _aiQuotaRemaining = null;
 let _aiQuotaLimit = null;
 
+// Quota badges are intentionally hidden — staff have unlimited usage.
 function _updateQuotaBadge() {
   const badge = document.getElementById('gemini-quota-badge');
-  if (badge && _aiQuotaRemaining !== null && _aiQuotaLimit !== null) {
-    badge.textContent = `${_aiQuotaRemaining}/${_aiQuotaLimit}`;
-    const pct = _aiQuotaRemaining / _aiQuotaLimit;
-    if (pct <= 0) {
-      badge.style.background = 'rgba(239,68,68,.15)'; badge.style.color = '#ef4444';
-    } else if (pct <= 0.2) {
-      badge.style.background = 'rgba(245,158,11,.15)'; badge.style.color = '#f59e0b';
-    } else {
-      badge.style.background = 'rgba(99,102,241,.12)'; badge.style.color = '#6366f1';
-    }
-  }
+  if (badge) badge.style.display = 'none';
   _updateNavbarQuotaBadge();
 }
 
-/** Update the navbar quota badge (shown near username) */
+/** Update the navbar quota badge (kept hidden — unlimited usage) */
 function _updateNavbarQuotaBadge() {
   const badge = document.getElementById('navbar-quota-badge');
-  if (!badge) return;
-  if (_aiQuotaRemaining === null || _aiQuotaLimit === null) {
-    badge.textContent = '';
-    return;
-  }
-  badge.textContent = `✨ ${_aiQuotaRemaining}/${_aiQuotaLimit}`;
-  const pct = _aiQuotaRemaining / _aiQuotaLimit;
-  if (pct <= 0) {
-    badge.style.background = 'rgba(239,68,68,.25)'; badge.style.color = '#fca5a5';
-  } else if (pct <= 0.2) {
-    badge.style.background = 'rgba(245,158,11,.25)'; badge.style.color = '#fde68a';
-  } else {
-    badge.style.background = 'rgba(255,255,255,.2)'; badge.style.color = '#fff';
-  }
+  if (badge) { badge.textContent = ''; badge.style.display = 'none'; }
 }
 
-/** Fetch quota from Firestore on page load */
-async function _fetchInitialQuota() {
-  const uid = STATE.fireUser?.uid;
-  if (!uid) return;
-  try {
-    const today = new Date().toISOString().slice(0, 10);
-    const snap = await db.collection('user_quotas').doc(uid).get();
-    if (snap.exists) {
-      const data = snap.data();
-      const dailyUsed = (data.date_key === today) ? (data.requests_today || 0) : 0;
-      _aiQuotaLimit = AI_DAILY_QUOTA;
-      _aiQuotaRemaining = Math.max(0, AI_DAILY_QUOTA - dailyUsed);
-    } else {
-      _aiQuotaLimit = AI_DAILY_QUOTA;
-      _aiQuotaRemaining = AI_DAILY_QUOTA;
-    }
-    _updateNavbarQuotaBadge();
-  } catch (e) {
-    console.warn('Failed to fetch quota:', e.message);
-  }
-}
+/** Quota fetch removed — instructors/admins have unlimited usage. */
+async function _fetchInitialQuota() { /* no-op */ }
 
 /** One-shot cleanup: delete orphaned cache docs from old key format (no difficulty suffix) */
 async function _cleanupOrphanedCache() {
@@ -4515,11 +4474,11 @@ async function _callGeminiStream(prompt, bodyEl) {
     throw new Error(errData?.error || `Server error: ${res.status}`);
   }
 
-  // Read quota headers from SSE response
+  // Read quota headers from SSE response (server now returns 'unlimited' for staff)
   const qr = res.headers.get('X-Quota-Remaining');
   const ql = res.headers.get('X-Quota-Limit');
-  if (qr !== null) _aiQuotaRemaining = parseInt(qr, 10);
-  if (ql !== null) _aiQuotaLimit = parseInt(ql, 10);
+  if (qr !== null && qr !== 'unlimited') _aiQuotaRemaining = parseInt(qr, 10);
+  if (ql !== null && ql !== 'unlimited') _aiQuotaLimit = parseInt(ql, 10);
   _updateQuotaBadge();
 
   // Collect full response in background — spinner stays visible until done
