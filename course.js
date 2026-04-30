@@ -2305,9 +2305,9 @@ function _renderCourseCards() {
       <div class="cm">לחץ לפנייה</div>
     </div>`;
 
-  // Bottom row: analytics (instructor/admin) + contact
+  // Bottom row: My Exams (rightmost in RTL) + analytics + contact
   const extras = document.getElementById('home-extras-row');
-  if (extras) extras.innerHTML = analyticsCard + myExamsCard + contactCard;
+  if (extras) extras.innerHTML = myExamsCard + analyticsCard + contactCard;
 
   if (!visible.length) {
     grid.innerHTML = `

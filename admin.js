@@ -505,11 +505,16 @@ let _instructorOptionsCache = null; // [{ uid, email, displayName }]
 async function _loadInstructorOptions() {
   if (_instructorOptionsCache) return _instructorOptionsCache;
   try {
-    const snap = await db.collection('users').where('role', '==', 'instructor').get();
-    _instructorOptionsCache = snap.docs.map(d => {
-      const data = d.data() || {};
-      return { uid: d.id, email: data.email || '', displayName: data.displayName || '' };
-    }).sort((a, b) => (a.email || '').localeCompare(b.email || ''));
+    // Accept both canonical 'instructor' and legacy Hebrew 'מרצה' role values
+    const snap = await db.collection('users').where('role', 'in', ['instructor', 'מרצה']).get();
+    const seen = new Set();
+    _instructorOptionsCache = snap.docs
+      .map(d => {
+        const data = d.data() || {};
+        return { uid: d.id, email: data.email || '', displayName: data.displayName || '' };
+      })
+      .filter(u => { if (seen.has(u.uid)) return false; seen.add(u.uid); return true; })
+      .sort((a, b) => (a.email || '').localeCompare(b.email || ''));
   } catch (e) {
     console.warn('_loadInstructorOptions failed:', e.message);
     _instructorOptionsCache = [];
