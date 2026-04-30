@@ -2287,8 +2287,7 @@ function _renderCourseCards() {
       <div class="cm">${analyticsEnabled ? 'לחץ לפתיחת הדשבורד' : 'אין קורסים שמורים'}</div>
     </div>` : '';
 
-  // Lecturer-only "My Exams" card
-  const myExamsCard = (role === 'instructor' || role === 'admin') ? `
+  const myExamsCard = (role === 'instructor' || role === 'admin' || role === 'מרצה') ? `
     <div class="course-card analytics-card" onclick="goLecturerExams()"
       title="המבחנים ששויכו אליך">
       <span class="ci">📝</span>
@@ -2342,19 +2341,26 @@ function goLecturerAnalytics() {
 /* ── LECTURER: MY EXAMS ───────────────────────────────────── */
 
 function goLecturerExams() {
+  console.log('[goLecturerExams] clicked. role=', STATE?.userData?.role, 'uid=', STATE?.fireUser?.uid);
   const role = STATE.userData?.role;
-  if (role !== 'instructor' && role !== 'admin') return;
+  if (role !== 'instructor' && role !== 'admin' && role !== 'מרצה') {
+    console.warn('[goLecturerExams] blocked: role is not instructor/admin/מרצה — actual:', role);
+    alert('העמוד זמין רק למרצים / מנהל (role=' + role + ')');
+    return;
+  }
   STATE.page = 'my-exams';
   STATE.lecturerExamsCourseFilter = '';
-  history.pushState({ page: 'my-exams' }, '');
-  renderLecturerExams();
+  try { history.pushState({ page: 'my-exams' }, ''); } catch (e) { console.warn(e); }
+  renderLecturerExams().catch(err => {
+    console.error('[renderLecturerExams] failed:', err);
+    alert('שגיאה בטעינת המבחנים: ' + (err?.message || err));
+  });
 }
 
 async function _fetchLecturerAssignedExams() {
   const role = STATE.userData?.role;
   const uid = STATE.fireUser?.uid;
-  if (!uid) return [];
-  // Admin → all exams. Instructor → only those where assignedLecturers contains uid.
+  if (!uid) { console.warn('[_fetchLecturerAssignedExams] no uid'); return []; }
   let snap;
   try {
     if (role === 'admin') {
@@ -2366,6 +2372,7 @@ async function _fetchLecturerAssignedExams() {
     }
   } catch (e) {
     console.error('fetch lecturer exams failed:', e);
+    alert('שגיאה בקבלת מבחנים: ' + (e?.message || e));
     return [];
   }
   return snap.docs.map(d => ({ id: d.id, ...d.data() }));
@@ -2373,7 +2380,7 @@ async function _fetchLecturerAssignedExams() {
 
 async function renderLecturerExams() {
   const role = STATE.userData?.role;
-  if (role !== 'instructor' && role !== 'admin') {
+  if (role !== 'instructor' && role !== 'admin' && role !== 'מרצה') {
     STATE.page = 'home';
     renderHome();
     return;
