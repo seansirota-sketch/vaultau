@@ -2385,16 +2385,21 @@ async function renderLecturerExams() {
     renderHome();
     return;
   }
-  const page = document.getElementById('app');
-  page.innerHTML = `
+  const page = document.getElementById('page');
+  if (!page) {
+    // Navbar shell missing — render it first
+    renderNavbar();
+  }
+  const target = document.getElementById('page');
+  target.innerHTML = `
     <div class="container">
       <div class="breadcrumb">
-        <a onclick="goHome()">🏠 ראשי</a><span>›</span><span>המבחנים שלי</span>
+        <a onclick="goHome()" style="cursor:pointer">ראשי</a><span>›</span><span>המבחנים שלי</span>
       </div>
       <div class="page-header">
         <div>
-          <h1 class="page-title">📝 המבחנים שלי</h1>
-          <p class="page-sub">המבחנים ש${role === 'admin' ? 'במערכת' : 'שויכו אליך'}</p>
+          <h1 class="page-title">המבחנים שלי</h1>
+          <p class="page-sub">${role === 'admin' ? 'כל המבחנים במערכת' : 'מבחנים ששויכו אליך'}</p>
         </div>
       </div>
       <div id="my-exams-content"><div class="spinner" style="margin:2rem auto"></div></div>
@@ -2448,34 +2453,27 @@ function _lecturerExamRowHtml(exam, course) {
   const courseLabel = course ? `${course.name}${course.code ? ' (' + course.code + ')' : ''}` : (exam.courseId || '');
   const meta = [exam.year, exam.semester, exam.moed].filter(Boolean).join(' · ');
   const isAdmin = STATE.userData?.role === 'admin';
+  const safeTitle = (exam.title || '').replace(/'/g, "\\'");
   return `
-    <div class="ac" data-course="${esc(exam.courseId || '')}"
-      style="padding:.9rem 1.1rem;display:flex;align-items:center;gap:.8rem;flex-wrap:wrap;
-             ${hidden ? 'opacity:.7;background:#fef9c3' : ''}">
-      <div style="flex:1;min-width:200px">
-        <div style="font-weight:700;font-size:.98rem;display:flex;align-items:center;gap:.5rem;flex-wrap:wrap">
+    <div class="lec-exam-row${hidden ? ' is-hidden' : ''}" data-course="${esc(exam.courseId || '')}">
+      <div class="lec-exam-info">
+        <div class="lec-exam-title">
           ${esc(exam.title || exam.id)}
-          ${hidden ? '<span class="badge" style="background:#fde68a;color:#92400e;border:1px solid #fbbf24">מוסתר</span>' : ''}
+          ${hidden ? '<span class="lec-exam-flag">מוסתר מסטודנטים</span>' : ''}
         </div>
-        <div style="font-size:.8rem;color:var(--muted);margin-top:.2rem">${esc(courseLabel)}${meta ? ' · ' + esc(meta) : ''}</div>
+        <div class="lec-exam-meta">${esc(courseLabel)}${meta ? ' · ' + esc(meta) : ''}</div>
       </div>
-      <div style="display:flex;gap:.4rem;flex-wrap:wrap">
-        <button class="btn btn-sm btn-secondary" onclick="goExam('${esc(exam.courseId)}','${esc(exam.id)}')" title="פתח מבחן">📖 פתח</button>
-        <button class="btn btn-sm" onclick="toggleExamHidden('${esc(exam.id)}')"
-          title="${hidden ? 'הצג לסטודנטים' : 'הסתר מסטודנטים'}"
-          style="background:${hidden ? '#dcfce7' : '#fef3c7'};color:${hidden ? '#166534' : '#92400e'};border:1px solid ${hidden ? '#86efac' : '#fcd34d'}">
-          ${hidden ? '👁️ הצג' : '🙈 הסתר'}
-        </button>
-        ${isAdmin ? '' : `<button class="btn btn-sm" onclick="requestExamDeletion('${esc(exam.id)}','${esc((exam.title || '').replace(/'/g, "\\'"))}','${esc(exam.courseId || '')}')"
-          title="שלח בקשת מחיקה למנהל"
-          style="background:#fee2e2;color:#b91c1c;border:1px solid #fca5a5">🗑️ בקש מחיקה</button>`}
+      <div class="lec-exam-actions">
+        <button class="lec-btn lec-btn-primary" onclick="goExam('${esc(exam.courseId)}','${esc(exam.id)}')">פתח</button>
+        <button class="lec-btn lec-btn-ghost" onclick="toggleExamHidden('${esc(exam.id)}')">${hidden ? 'הצג' : 'הסתר'}</button>
+        ${isAdmin ? '' : `<button class="lec-btn lec-btn-danger" onclick="requestExamDeletion('${esc(exam.id)}','${esc(safeTitle)}','${esc(exam.courseId || '')}')">בקש מחיקה</button>`}
       </div>
     </div>`;
 }
 
 function _applyLecturerExamsFilter() {
   const cid = document.getElementById('my-exams-course-filter')?.value || '';
-  document.querySelectorAll('#my-exams-list > .ac').forEach(row => {
+  document.querySelectorAll('#my-exams-list > .lec-exam-row').forEach(row => {
     row.style.display = (!cid || row.dataset.course === cid) ? '' : 'none';
   });
 }
