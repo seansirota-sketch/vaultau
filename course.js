@@ -2080,7 +2080,7 @@ async function renderHome() {
       .map(d => ({ ...d.data(), id: d.id }))
       .sort((a, b) => (a.name || '').localeCompare(b.name || ''));
 
-    page.innerHTML = `<div class="container">
+    page.innerHTML = `<div class="container home-container">
       <div class="page-header">
         <div>
           <h1 class="page-title">הקורסים שלי</h1>
@@ -2091,6 +2091,7 @@ async function renderHome() {
         </button>
       </div>
       <div class="courses-grid" id="courses-grid"></div>
+      <div class="home-extras-row" id="home-extras-row"></div>
     </div>`;
 
     _renderCourseCards();
@@ -2138,6 +2139,19 @@ function _renderCourseCards() {
   const courses = STATE.courses || [];
   const visible = courses.filter(c => saved.includes(c.id));
 
+  const role = STATE.userData?.role;
+  const showAnalytics = role === 'instructor' || role === 'admin';
+  const analyticsEnabled = role === 'admin' || saved.length > 0;
+  const analyticsCard = showAnalytics ? `
+    <div class="course-card analytics-card${analyticsEnabled ? '' : ' disabled'}"
+      ${analyticsEnabled ? 'onclick="goLecturerAnalytics()"' : ''}
+      title="${analyticsEnabled ? 'פתח לוח ניתוח קורסים' : 'הוסף קורס כדי לפתוח ניתוח'}">
+      <span class="ci">📊</span>
+      <div class="cn">ניתוח קורסים</div>
+      <div class="cc">${role === 'admin' ? 'כל הקורסים' : 'הקורסים שלי'}</div>
+      <div class="cm">${analyticsEnabled ? 'לחץ לפתיחת הדשבורד' : 'אין קורסים שמורים'}</div>
+    </div>` : '';
+
   const contactCard = `
     <div class="course-card" onclick="openContactModal()">
       <span class="ci">✉️</span>
@@ -2146,6 +2160,10 @@ function _renderCourseCards() {
       <div class="cm">לחץ לפנייה</div>
     </div>`;
 
+  // Bottom row: analytics (instructor/admin) + contact
+  const extras = document.getElementById('home-extras-row');
+  if (extras) extras.innerHTML = analyticsCard + contactCard;
+
   if (!visible.length) {
     grid.innerHTML = `
       <div class="empty" style="grid-column:1/-1;padding:2.5rem;text-align:center">
@@ -2153,8 +2171,7 @@ function _renderCourseCards() {
         <h3>אין קורסים באזור האישי שלך</h3>
         <p>לחץ על <strong>+ הוסף קורס</strong> כדי לבחור קורסים מהמאגר</p>
         <button class="btn btn-primary" style="margin-top:1rem" onclick="openCoursePicker()">+ הוסף קורס</button>
-      </div>
-      ${contactCard}`;
+      </div>`;
     return;
   }
 
@@ -2167,7 +2184,14 @@ function _renderCourseCards() {
       <div class="cn">${esc(c.name)}</div>
       <div class="cc">${esc(c.code)}</div>
       <div class="cm">לחץ לצפייה במבחנים</div>
-    </div>`).join('') + contactCard;
+    </div>`).join('');
+}
+
+function goLecturerAnalytics() {
+  const role = STATE.userData?.role;
+  if (role !== 'instructor' && role !== 'admin') return;
+  try { sessionStorage.setItem('vaultau:research-scope', role === 'instructor' ? 'mine' : 'all'); } catch (_) {}
+  location.href = 'research.html?from=courses';
 }
 
 /* ── COURSE PICKER MODAL ──────────────────────────────────── */

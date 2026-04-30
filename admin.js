@@ -3117,6 +3117,19 @@ async function renderUserStats() {
         ? `<button class="btn btn-sm" onclick="openActivityLogModal('${esc(uid)}','${esc(u.email || '')}')" style="padding:.2rem .5rem;font-size:.8rem">📋</button>`
         : `<button class="btn btn-sm" disabled title="המשתמש לא הסכים למעקב" style="padding:.2rem .5rem;font-size:.8rem;opacity:.35;cursor:not-allowed">📋</button>`;
 
+      // Role dropdown — admin can promote/demote between student/instructor/admin
+      const currentRole = u.role || 'student';
+      const docId       = u._docId || uid;
+      const roleSelect = `
+        <select onchange="updateUserRole('${esc(docId)}', this.value, this)"
+                data-prev="${esc(currentRole)}"
+                style="font-size:.75rem;padding:.15rem .3rem;border:1px solid #cbd5e1;
+                       border-radius:5px;background:#fff;cursor:pointer">
+          <option value="student"    ${currentRole==='student'    ? 'selected':''}>סטודנט</option>
+          <option value="instructor" ${currentRole==='instructor' ? 'selected':''}>מרצה</option>
+          <option value="admin"      ${currentRole==='admin'      ? 'selected':''}>אדמין</option>
+        </select>`;
+
       return `<tr style="transition:background .15s" onmouseover="this.style.background='#f8fafc'" onmouseout="this.style.background=''">
         <td style="font-size:.82rem;min-width:200px">
           ${emailCell}
@@ -3153,6 +3166,7 @@ async function renderUserStats() {
             ? `<span class="badge" style="background:#f5f3ff;color:#5b21b6;border:1px solid #c4b5fd;font-weight:600">🤖 ${aiCount}</span>`
             : `<span style="color:var(--light);font-size:.8rem">0</span>`}
         </td>
+        <td style="text-align:center">${roleSelect}</td>
         <td style="text-align:center">${logBtn}</td>
       </tr>`;
     }).join('');
@@ -3197,6 +3211,7 @@ async function renderUserStats() {
               <th style="text-align:center">📜 הצהרה</th>
               <th style="text-align:center" title="הסכמה לשימוש בנתוני שימוש למחקר">🔬 הסכמה למעקב</th>
               <th style="text-align:center" title="שאלות AI שנשמרו על ידי המשתמש">🤖 שאלות AI</th>
+              <th style="text-align:center" title="תפקיד המשתמש במערכת">👤 תפקיד</th>
               <th style="text-align:center" title="יומן פעילות">📋 יומן</th>
             </tr>
           </thead>
@@ -3251,6 +3266,33 @@ function _fmtPayload(payload) {
   if (payload.fromCache !== undefined) parts.push(payload.fromCache ? 'מהמטמון' : 'מהמודל');
   if (payload.rating !== undefined) parts.push(`דירוג: ${payload.rating}`);
   return parts.join(' · ');
+}
+
+async function updateUserRole(docId, newRole, selectEl) {
+  const allowed = ['student', 'instructor', 'admin'];
+  if (!allowed.includes(newRole)) return;
+  const prev = selectEl?.dataset?.prev || 'student';
+  if (newRole === prev) return;
+
+  const labels = { student: 'סטודנט', instructor: 'מרצה', admin: 'אדמין' };
+  if (!confirm(`לשנות תפקיד ל-${labels[newRole]}?`)) {
+    if (selectEl) selectEl.value = prev;
+    return;
+  }
+
+  const wasDisabled = selectEl?.disabled;
+  if (selectEl) selectEl.disabled = true;
+  try {
+    await db.collection('users').doc(docId).update({ role: newRole });
+    if (selectEl) selectEl.dataset.prev = newRole;
+    toast?.(`התפקיד עודכן ל-${labels[newRole]}`);
+  } catch (e) {
+    console.error('updateUserRole error:', e);
+    alert('שגיאה בעדכון התפקיד: ' + (e.message || e));
+    if (selectEl) selectEl.value = prev;
+  } finally {
+    if (selectEl) selectEl.disabled = !!wasDisabled;
+  }
 }
 
 async function openActivityLogModal(uid, email) {

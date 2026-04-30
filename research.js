@@ -5,6 +5,18 @@
 
 'use strict';
 
+/* ── EMBED MODE ──────────────────────────────────────────── */
+// When loaded inside the SPA via iframe (research.html?embed=1),
+// hide the standalone topbar so the parent's navbar stays in charge.
+(function applyEmbedMode() {
+  try {
+    const params = new URLSearchParams(location.search);
+    if (params.get('embed') === '1') {
+      document.documentElement.classList.add('rp-embed');
+    }
+  } catch (_) {}
+})();
+
 /* ── UTILS (self-contained, no dependency on course.js) ──── */
 
 /** HTML entity-encode a value to prevent XSS. */
@@ -175,18 +187,24 @@ const STATE = {
 ═══════════════════════════════════════════════════════════ */
 firebase.auth().onAuthStateChanged(async user => {
   if (!user) {
+    try { sessionStorage.removeItem('vaultau:research-scope'); } catch (_) {}
     showAuthWall();
     return;
   }
   try {
     const snap = await db.collection('users').doc(user.uid).get();
-    const role = snap.exists ? snap.data().role : null;
+    const userData = snap.exists ? snap.data() : {};
+    const role = userData.role || null;
     if (role !== 'admin' && role !== 'instructor') {
       showAuthWall();
       return;
     }
     STATE.user = user;
     STATE.role = role;
+    STATE.savedCourses = Array.isArray(userData.savedCourses) ? userData.savedCourses : [];
+    STATE.scope = sessionStorage.getItem('vaultau:research-scope') === 'mine' && role === 'instructor'
+      ? 'mine'
+      : 'all';
     renderUserBadge(user, role);
     showApp();
     await initPanel();
@@ -211,7 +229,24 @@ function renderUserBadge(user, role) {
   const initial = (user.displayName || user.email || '?')[0].toUpperCase();
   document.getElementById('rp-user-avatar').textContent = esc(initial);
   document.getElementById('rp-user-name').textContent = name;
-  document.getElementById('rp-role-badge').textContent = role === 'admin' ? 'Admin' : 'מרצה';
+  const badge = document.getElementById('rp-role-badge');
+  badge.textContent = role === 'admin'
+    ? 'Admin'
+    : (STATE.scope === 'mine' ? 'מרצה · הקורסים שלי' : 'מרצה');
+
+  // Show appropriate back link:
+  // - Admins land here from /admin → "ניהול" link.
+  // - Instructors (or anyone with ?from=courses) → "הקורסים שלי".
+  const fromCourses = new URLSearchParams(location.search).get('from') === 'courses';
+  const backAdmin   = document.getElementById('rp-back-admin');
+  const backCourses = document.getElementById('rp-back-courses');
+  if (role === 'admin' && !fromCourses) {
+    if (backAdmin)   backAdmin.style.display   = '';
+    if (backCourses) backCourses.style.display = 'none';
+  } else {
+    if (backAdmin)   backAdmin.style.display   = 'none';
+    if (backCourses) backCourses.style.display = '';
+  }
 }
 
 /* ═══════════════════════════════════════════════════════════
@@ -273,6 +308,11 @@ async function loadCourseDropdown() {
 
     coursesSnap.forEach(doc => {
       const d = doc.data();
+      // Scoped view (instructor with scope='mine'): only show their saved courses
+      if (STATE.scope === 'mine') {
+        const allowed = STATE.savedCourses || [];
+        if (!allowed.includes(doc.id)) return;
+      }
       const hasData = coursesWithData.includes(d.code);
       const opt = document.createElement('option');
       opt.value = esc(d.code || doc.id);
