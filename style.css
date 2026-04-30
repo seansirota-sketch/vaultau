@@ -417,6 +417,40 @@ body {
 }
 .course-card:hover { box-shadow: 0 2px 12px rgba(0,0,0,.07); border-color: #d0d3d8; }
 .course-card:hover::after { transform: scaleX(1); }
+.analytics-card {
+  background: linear-gradient(135deg, #eef2ff 0%, #e0e7ff 100%);
+  border-color: #c7d2fe;
+}
+.analytics-card .ci { opacity: 1; }
+.analytics-card::after { background: #6366f1; }
+.analytics-card.disabled {
+  filter: grayscale(1);
+  opacity: .55;
+  cursor: not-allowed;
+  background: var(--card);
+  border-color: var(--border);
+}
+.analytics-card.disabled:hover { box-shadow: var(--shadow-xs); border-color: var(--border); }
+.analytics-card.disabled:hover::after { transform: scaleX(0); }
+
+/* Home page: keep extras (analytics + contact) pinned to bottom of viewport */
+.home-container {
+  display: flex;
+  flex-direction: column;
+  min-height: calc(100vh - 4rem);
+}
+.home-extras-row {
+  margin-top: auto;
+  padding-top: 2rem;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 1rem;
+}
+.home-extras-row > .course-card {
+  width: 220px;
+  box-sizing: border-box;
+}
 .ci { font-size: 2.2rem; margin-bottom: .6rem; display: block; opacity: .85; }
 .cn { font-size: .97rem; font-weight: 700; color: var(--text); margin-bottom: .25rem; }
 .cc {
