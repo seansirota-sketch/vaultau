@@ -5,18 +5,6 @@
 
 'use strict';
 
-/* ── EMBED MODE ──────────────────────────────────────────── */
-// When loaded inside the SPA via iframe (research.html?embed=1),
-// hide the standalone topbar so the parent's navbar stays in charge.
-(function applyEmbedMode() {
-  try {
-    const params = new URLSearchParams(location.search);
-    if (params.get('embed') === '1') {
-      document.documentElement.classList.add('rp-embed');
-    }
-  } catch (_) {}
-})();
-
 /* ── UTILS (self-contained, no dependency on course.js) ──── */
 
 /** HTML entity-encode a value to prevent XSS. */
