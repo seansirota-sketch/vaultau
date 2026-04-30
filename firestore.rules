@@ -96,6 +96,16 @@ service cloud.firestore {
       allow write: if isAdmin();
     }
 
+    // Lecturer-uploaded video submissions awaiting admin review.
+    // - Lecturer can read their own submissions; admin can read all.
+    // - Writes are server-only (Netlify functions via Admin SDK), never from
+    //   the client, so we deny client writes entirely.
+    match /video_submissions/{submissionId} {
+      allow read: if isAdmin()
+        || (isLoggedIn() && resource.data.uploadedByUid == request.auth.uid);
+      allow write: if false;
+    }
+
     // block delete — prevent cache wiping; create/update needed client-side.
     match /ai_questions_cache/{docId} {
       allow read: if isLoggedIn();
@@ -116,7 +126,7 @@ service cloud.firestore {
         && request.resource.data.userId == request.auth.uid
         && request.resource.data.createdAt == request.time
         && request.resource.data.status == 'open'
-        && request.resource.data.category in ['contact', 'bug', 'video_bug', 'lecturer_delete_request']
+        && request.resource.data.category in ['contact', 'bug', 'video_bug', 'lecturer_delete_request', 'lecturer_video_submission']
         && request.resource.data.message is string
         && request.resource.data.message.size() > 0
         && request.resource.data.message.size() <= 2000

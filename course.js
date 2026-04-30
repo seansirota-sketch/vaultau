@@ -3424,7 +3424,7 @@ async function renderVideosTab(exams) {
       const entry = entries[idx];
       if (!entry) return;
       const { q, qi } = entry;
-      body.innerHTML = renderQuestionCard(q, qi, starred, userVotes, videoMap, isAdmin);
+      body.innerHTML = renderQuestionCard(q, qi, starred, userVotes, videoMap, isAdmin, (typeof exam !== 'undefined' && exam) ? exam.id : '', (typeof exam !== 'undefined' && exam) ? (exam.title || '') : '');
 
       // Set HTML content for question/subs (same pattern as renderExam)
       const subs = q.subs || q.parts || [];
@@ -3540,7 +3540,7 @@ async function renderExam() {
         <div class="ev-body" id="ev-questions-body">
           ${!questions.length
             ? `<div class="empty"><span class="ei">📝</span><h3>אין שאלות עדיין</h3></div>`
-            : questions.map((q, qi) => renderQuestionCard(q, qi, starred, userVotes, videoMap, isAdminNow)).join('')}
+            : questions.map((q, qi) => renderQuestionCard(q, qi, starred, userVotes, videoMap, isAdminNow, exam.id, examTitle)).join('')}
         </div>
       </div>`;
 
@@ -3567,7 +3567,10 @@ async function renderExam() {
   }
 }
 
-function renderQuestionCard(q, qi, starred, userVotes = {}, videoMap = {}, isAdmin = false) {
+function renderQuestionCard(q, qi, starred, userVotes = {}, videoMap = {}, isAdmin = false, examId = '', examTitle = '') {
+  // Lecturers (Hebrew or English role) and admins can upload a video for any question.
+  const _roleLocal = STATE.userData?.role;
+  const _canUploadVideo = isAdmin || _roleLocal === 'admin' || _roleLocal === 'instructor' || _roleLocal === 'מרצה';
   const isStarredQ = starred.includes(q.id);
   const isBonus    = q.isBonus === true;
   const subs       = q.subs || q.parts || [];
@@ -3595,6 +3598,8 @@ function renderQuestionCard(q, qi, starred, userVotes = {}, videoMap = {}, isAdm
     <path d="M4 1.5H3a2 2 0 0 0-2 2V14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V3.5a2 2 0 0 0-2-2h-1v1h1a1 1 0 0 1 1 1V14a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V3.5a1 1 0 0 1 1-1h1v-1z"/>
     <path d="M9.5 1a.5.5 0 0 1 .5.5v1a.5.5 0 0 1-.5.5h-3a.5.5 0 0 1-.5-.5v-1a.5.5 0 0 1 .5-.5h3zm-3-1A1.5 1.5 0 0 0 5 1.5v1A1.5 1.5 0 0 0 6.5 4h3A1.5 1.5 0 0 0 11 2.5v-1A1.5 1.5 0 0 0 9.5 0h-3z"/></svg>`;
   const videoSVG = `<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="5" width="14" height="14" rx="2.5" ry="2.5"/><polygon points="16 8 22 12 16 16"/></svg>`;
+  // Upload icon: video frame with up-arrow, used for the lecturer 'submit a video' action.
+  const videoUploadSVG = `<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="5" width="14" height="14" rx="2.5" ry="2.5"/><polygon points="16 8 22 12 16 16"/><path d="M9 15v-4M7 13l2-2 2 2"/></svg>`;
 
   const points = q.points ? `<span class="qv-pts">(${q.points} נקודות)</span>` : '';
   const bonusBadge = isBonus
@@ -3620,6 +3625,7 @@ function renderQuestionCard(q, qi, starred, userVotes = {}, videoMap = {}, isAdm
             <button class="qv-btn" onclick="copyById('${sCopyId}',event)" title="העתק LaTeX">${copySVG}</button>
             ${sAllowAI && canGenerate ? `<button class="qv-btn" onclick="openGeminiModal('${s.id}','sub')" title="צור סעיף דומה">✨</button>` : ''}
             ${videoMap[s.id] ? `<button class="qv-btn qv-video-btn" data-lib="${esc(videoMap[s.id].libraryId)}" data-vid="${esc(videoMap[s.id].videoId)}" data-title="${esc(videoMap[s.id].title || 'פתרון מוצג')}" data-entity-id="${esc(s.id)}" data-entity-label="${esc('שאלה ' + (qi + 1) + ' ' + rawLabel)}" onclick="openVideoModalFromBtn(this)" title="צפה בסרטון פתרון">${videoSVG}</button>` : ''}
+            ${(_canUploadVideo && examId) ? `<button class="qv-btn qv-video-upload-btn" data-exam-id="${esc(examId)}" data-question-id="${esc(s.id)}" data-entity-label="${esc(((examTitle ? examTitle + ' — ' : '') + 'שאלה ' + (qi + 1) + ' סעיף ' + (s.letter || String.fromCharCode(0x05D0 + si))))}" onclick="openLecturerVideoUploadFromBtn(this)" title="העלה סרטון להסבר">${videoUploadSVG}</button>` : ''}
           </div>
         </div>
         <div class="qv-part-text"></div>
@@ -3644,6 +3650,7 @@ function renderQuestionCard(q, qi, starred, userVotes = {}, videoMap = {}, isAdm
         <button class="qv-btn" onclick="copyById('${qCopyId}',event)" title="העתק LaTeX">${copySVG}</button>
         ${q.allowAIGen === true && canGenerate ? `<button class="qv-btn" onclick="openGeminiModal('${q.id}','question')" title="צור שאלה דומה">✨</button>` : ''}
         ${videoMap[q.id] ? `<button class="qv-btn qv-video-btn" data-lib="${esc(videoMap[q.id].libraryId)}" data-vid="${esc(videoMap[q.id].videoId)}" data-title="${esc(videoMap[q.id].title || 'פתרון מוצג')}" data-entity-id="${esc(q.id)}" data-entity-label="${esc('שאלה ' + (qi + 1))}" onclick="openVideoModalFromBtn(this)" title="צפה בסרטון פתרון">${videoSVG}</button>` : ''}
+        ${(_canUploadVideo && examId) ? `<button class="qv-btn qv-video-upload-btn" data-exam-id="${esc(examId)}" data-question-id="${esc(q.id)}" data-entity-label="${esc(((examTitle ? examTitle + ' — ' : '') + 'שאלה ' + (qi + 1)))}" onclick="openLecturerVideoUploadFromBtn(this)" title="העלה סרטון להסבר">${videoUploadSVG}</button>` : ''}
       </div>
     </div>
     <div class="qv-text"></div>
@@ -5214,4 +5221,597 @@ async function detachQuestionVideo(entityId) {
   } catch (e) {
     toast('שגיאה בהסרת הסרטון: ' + e.message, 'error');
   }
+}
+
+/* ============================================================
+   LECTURER VIDEO UPLOAD (to Bunny.net + admin review queue)
+   ============================================================
+   Flow:
+     1. Lecturer fills form (file + notes + chapters)
+     2. POST /lecturer-video-init -> { videoGuid, sig, expire, libraryId }
+     3. tus-js-client uploads file directly to Bunny with signed headers
+     4. POST /lecturer-video-submit -> writes pending submission + admin report
+   ============================================================ */
+
+const TUS_JS_CDN = 'https://cdn.jsdelivr.net/npm/tus-js-client@4.1.0/dist/tus.min.js';
+let _tusLibPromise = null;
+function _loadTusClient() {
+  if (window.tus) return Promise.resolve(window.tus);
+  if (_tusLibPromise) return _tusLibPromise;
+  _tusLibPromise = new Promise((resolve, reject) => {
+    const s = document.createElement('script');
+    s.src = TUS_JS_CDN;
+    s.async = true;
+    s.onload  = () => window.tus ? resolve(window.tus) : reject(new Error('tus-js-client failed to load'));
+    s.onerror = () => reject(new Error('tus-js-client network error'));
+    document.head.appendChild(s);
+  });
+  return _tusLibPromise;
+}
+
+function openLecturerVideoUploadFromBtn(btn) {
+  const examId      = btn.dataset.examId;
+  const questionId  = btn.dataset.questionId;
+  const entityLabel = btn.dataset.entityLabel || '';
+  openLecturerVideoUploadModal(examId, questionId, entityLabel);
+}
+
+function openLecturerVideoUploadModal(examId, questionId, entityLabel) {
+  document.getElementById('lec-video-upload-modal')?.remove();
+
+  const overlay = document.createElement('div');
+  overlay.id = 'lec-video-upload-modal';
+  overlay.className = 'lvu-overlay';
+  overlay.innerHTML = `
+    <div class="lvu-card" role="dialog" aria-modal="true" aria-labelledby="lvu-title">
+      <header class="lvu-header">
+        <div class="lvu-header-icon">🎬</div>
+        <div class="lvu-header-text">
+          <div class="lvu-eyebrow">העלאת סרטון הסבר</div>
+          <h2 id="lvu-title" class="lvu-title-text">${esc(entityLabel)}</h2>
+        </div>
+        <button type="button" class="lvu-close" aria-label="סגור"
+          onclick="document.getElementById('lec-video-upload-modal').remove()">×</button>
+      </header>
+
+      <div class="lvu-body">
+
+        <section class="lvu-section">
+          <label class="lvu-label" for="lvu-file">
+            <span class="lvu-label-icon">📁</span>
+            <span>קובץ הווידאו</span>
+          </label>
+          <label class="lvu-dropzone" for="lvu-file" id="lvu-dropzone">
+            <input type="file" id="lvu-file" accept="video/*" hidden onchange="_lvuOnFilePicked(this)">
+            <div class="lvu-dropzone-inner" id="lvu-dropzone-inner">
+              <div class="lvu-dropzone-icon">⬆</div>
+              <div class="lvu-dropzone-title">בחר קובץ וידאו</div>
+              <div class="lvu-dropzone-hint">או גרור לכאן · ההעלאה מתבצעת ישירות לשרת</div>
+            </div>
+          </label>
+        </section>
+
+        <section class="lvu-section">
+          <label class="lvu-label" for="lvu-notes">
+            <span class="lvu-label-icon">📝</span>
+            <span>הערות לאדמין <span class="lvu-muted">· לא יוצג לסטודנטים</span></span>
+          </label>
+          <textarea id="lvu-notes" rows="3" maxlength="4000" class="lvu-input lvu-textarea"
+            placeholder="לדוגמה: יש לחתוך 30 שניות בהתחלה, להוסיף פרק 'משפט פיתגורס' בדקה 2:15..."></textarea>
+        </section>
+
+        <section class="lvu-section">
+          <div class="lvu-section-head">
+            <label class="lvu-label">
+              <span class="lvu-label-icon">📑</span>
+              <span>פרקים <span class="lvu-muted">· אופציונלי</span></span>
+            </label>
+            <button type="button" class="lvu-btn lvu-btn-ghost lvu-btn-sm" onclick="_lvuAddChapter()">＋ פרק</button>
+          </div>
+          <div id="lvu-chapters" class="lvu-chapters"></div>
+          <div class="lvu-hint">כל פרק מתחיל בסוף הקודם. הזן רק זמן <b>סיום</b> בפורמט <code>mm:ss</code> · הפרק האחרון יסתיים אוטומטית בסוף הסרטון.</div>
+        </section>
+
+        <div id="lvu-progress-wrap" class="lvu-progress" hidden>
+          <div class="lvu-progress-row">
+            <span id="lvu-progress-label">מעלה...</span>
+            <span id="lvu-progress-pct">0%</span>
+          </div>
+          <div class="lvu-progress-track">
+            <div id="lvu-progress-bar" class="lvu-progress-bar"></div>
+          </div>
+        </div>
+
+        <div id="lvu-error" class="lvu-error" hidden></div>
+      </div>
+
+      <footer class="lvu-footer">
+        <button type="button" class="lvu-btn lvu-btn-ghost"
+          onclick="document.getElementById('lec-video-upload-modal').remove()">בטל</button>
+        <button type="button" class="lvu-btn lvu-btn-primary" id="lvu-submit-btn"
+          onclick="_lvuStartUpload('${esc(examId)}','${esc(questionId)}')">
+          <span class="lvu-btn-icon">↑</span>
+          <span>העלה ושלח לאישור</span>
+        </button>
+      </footer>
+    </div>`;
+  document.body.appendChild(overlay);
+  _lvuInjectStylesOnce();
+  window._lvuDur = 0;
+  _lvuAddChapter(); // start with one empty row
+  _lvuWireDropzone();
+}
+
+/* Dropzone: drag-and-drop support + filename echo + duration detection */
+function _lvuOnFilePicked(input) {
+  const inner = document.getElementById('lvu-dropzone-inner');
+  const f = input?.files?.[0];
+  if (!inner) return;
+  if (!f) {
+    window._lvuDur = 0;
+    if (typeof _lvuRecalcChapters === 'function') _lvuRecalcChapters();
+    inner.innerHTML = `
+      <div class="lvu-dropzone-icon">⬆</div>
+      <div class="lvu-dropzone-title">בחר קובץ וידאו</div>
+      <div class="lvu-dropzone-hint">או גרור לכאן · ההעלאה מתבצעת ישירות לשרת</div>`;
+    return;
+  }
+  const sizeMB = (f.size / (1024 * 1024)).toFixed(1);
+  const renderInner = (durTxt) => {
+    inner.innerHTML = `
+      <div class="lvu-dropzone-icon" style="color:#10b981">✓</div>
+      <div class="lvu-dropzone-title">${esc(f.name)}</div>
+      <div class="lvu-dropzone-hint">${sizeMB} MB${durTxt ? ' · אורך: ' + durTxt : ''} · לחץ לבחירת קובץ אחר</div>`;
+  };
+  renderInner('');
+  // Detect duration from the picked file (browser-side, no upload)
+  try {
+    const url = URL.createObjectURL(f);
+    const v = document.createElement('video');
+    v.preload = 'metadata';
+    v.onloadedmetadata = () => {
+      const d = Number(v.duration);
+      URL.revokeObjectURL(url);
+      window._lvuDur = (Number.isFinite(d) && d > 0) ? Math.floor(d) : 0;
+      renderInner(window._lvuDur ? _lvuFmtTime(window._lvuDur) : '');
+      if (typeof _lvuRecalcChapters === 'function') _lvuRecalcChapters();
+    };
+    v.onerror = () => {
+      URL.revokeObjectURL(url);
+      window._lvuDur = 0;
+      if (typeof _lvuRecalcChapters === 'function') _lvuRecalcChapters();
+    };
+    v.src = url;
+  } catch {
+    window._lvuDur = 0;
+    if (typeof _lvuRecalcChapters === 'function') _lvuRecalcChapters();
+  }
+}
+function _lvuWireDropzone() {
+  const dz = document.getElementById('lvu-dropzone');
+  const fi = document.getElementById('lvu-file');
+  if (!dz || !fi) return;
+  ['dragenter', 'dragover'].forEach(ev => dz.addEventListener(ev, (e) => {
+    e.preventDefault(); e.stopPropagation();
+    dz.classList.add('is-drag');
+  }));
+  ['dragleave', 'drop'].forEach(ev => dz.addEventListener(ev, (e) => {
+    e.preventDefault(); e.stopPropagation();
+    dz.classList.remove('is-drag');
+  }));
+  dz.addEventListener('drop', (e) => {
+    const files = e.dataTransfer?.files;
+    if (files && files.length) {
+      fi.files = files;
+      _lvuOnFilePicked(fi);
+    }
+  });
+}
+
+function _lvuInjectStylesOnce() {
+  if (document.getElementById('lvu-styles')) return;
+  const css = `
+    .lvu-overlay {
+      position: fixed; inset: 0; z-index: 10600;
+      background: rgba(15, 23, 42, .58);
+      backdrop-filter: blur(4px);
+      display: flex; align-items: center; justify-content: center;
+      padding: 1rem;
+      animation: lvuFadeIn .18s ease;
+    }
+    @keyframes lvuFadeIn { from { opacity: 0 } to { opacity: 1 } }
+    @keyframes lvuPop    { from { transform: translateY(8px) scale(.98); opacity: 0 } to { transform: none; opacity: 1 } }
+
+    .lvu-card {
+      background: #ffffff;
+      width: min(96vw, 640px);
+      max-height: 92vh;
+      border-radius: 18px;
+      box-shadow: 0 30px 80px rgba(15, 23, 42, .35);
+      display: flex; flex-direction: column;
+      overflow: hidden; direction: rtl;
+      animation: lvuPop .22s cubic-bezier(.2,.9,.3,1.2);
+      font-family: inherit;
+    }
+
+    .lvu-header {
+      display: flex; align-items: center; gap: .85rem;
+      padding: 1rem 1.25rem;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: #fff;
+    }
+    .lvu-header-icon {
+      width: 44px; height: 44px; border-radius: 12px;
+      display: flex; align-items: center; justify-content: center;
+      background: rgba(255,255,255,.18); font-size: 1.4rem;
+      flex-shrink: 0;
+    }
+    .lvu-header-text { flex: 1; min-width: 0; }
+    .lvu-eyebrow {
+      font-size: .72rem; font-weight: 600; opacity: .85;
+      letter-spacing: .03em; text-transform: none;
+    }
+    .lvu-title-text {
+      margin: .15rem 0 0; font-size: 1.05rem; font-weight: 700;
+      line-height: 1.3;
+      overflow: hidden; text-overflow: ellipsis;
+      display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+    }
+    .lvu-close {
+      background: rgba(255,255,255,.18); color: #fff; border: none;
+      width: 32px; height: 32px; border-radius: 8px;
+      font-size: 1.3rem; line-height: 1; cursor: pointer;
+      transition: background .15s; flex-shrink: 0;
+    }
+    .lvu-close:hover { background: rgba(255,255,255,.32); }
+
+    .lvu-body {
+      padding: 1.1rem 1.25rem;
+      overflow-y: auto;
+      display: flex; flex-direction: column; gap: 1rem;
+      background: #fafbff;
+    }
+
+    .lvu-section { display: flex; flex-direction: column; gap: .45rem; }
+    .lvu-section-head {
+      display: flex; align-items: center; justify-content: space-between;
+      gap: .5rem;
+    }
+    .lvu-label {
+      display: inline-flex; align-items: center; gap: .4rem;
+      font-size: .85rem; font-weight: 600; color: #1e293b;
+    }
+    .lvu-label-icon { font-size: 1rem; }
+    .lvu-muted { color: #94a3b8; font-weight: 500; font-size: .78rem; }
+    .lvu-hint  { color: #94a3b8; font-size: .75rem; margin-top: .15rem; }
+    .lvu-hint code {
+      background: #eef2ff; color: #4338ca;
+      padding: 1px 5px; border-radius: 4px; font-size: .72rem;
+    }
+
+    .lvu-input, .lvu-textarea {
+      width: 100%; box-sizing: border-box;
+      padding: .65rem .8rem;
+      border: 1.5px solid #e2e8f0; border-radius: 10px;
+      background: #fff; color: #0f172a;
+      font: inherit; font-size: .9rem;
+      transition: border-color .15s, box-shadow .15s;
+    }
+    .lvu-input:focus, .lvu-textarea:focus {
+      outline: none; border-color: #6366f1;
+      box-shadow: 0 0 0 3px rgba(99,102,241,.18);
+    }
+    .lvu-textarea { resize: vertical; min-height: 76px; }
+
+    .lvu-dropzone {
+      display: block; cursor: pointer;
+      border: 2px dashed #c7d2fe; border-radius: 12px;
+      background: #fff;
+      padding: 1.2rem 1rem; text-align: center;
+      transition: background .15s, border-color .15s, transform .15s;
+    }
+    .lvu-dropzone:hover, .lvu-dropzone.is-drag {
+      background: #eef2ff; border-color: #6366f1;
+      transform: translateY(-1px);
+    }
+    .lvu-dropzone-icon {
+      font-size: 1.6rem; color: #6366f1; line-height: 1; margin-bottom: .35rem;
+    }
+    .lvu-dropzone-title {
+      font-size: .92rem; font-weight: 600; color: #1e293b;
+      word-break: break-all;
+    }
+    .lvu-dropzone-hint {
+      font-size: .76rem; color: #64748b; margin-top: .2rem;
+    }
+
+    .lvu-chapters { display: flex; flex-direction: column; gap: .4rem; }
+    .lvu-chapter-row {
+      display: grid; grid-template-columns: 60px 14px 80px 1fr auto;
+      gap: .35rem; align-items: center;
+      direction: ltr;
+    }
+    .lvu-chapter-row .lvu-input { padding: .5rem .55rem; font-size: .85rem; }
+    .lvu-chapter-row .lvu-chap-end { text-align: center; font-variant-numeric: tabular-nums; }
+    .lvu-chapter-row .lvu-chap-title { direction: rtl; text-align: right; }
+    .lvu-chap-start {
+      display: inline-flex; align-items: center; justify-content: center;
+      padding: .5rem .25rem; font-size: .85rem; font-weight: 600;
+      color: #475569; background: #e2e8f0; border-radius: 8px;
+      font-variant-numeric: tabular-nums;
+    }
+    .lvu-chap-arrow {
+      text-align: center; color: #94a3b8; font-weight: 700; font-size: .9rem;
+    }
+
+    .lvu-btn {
+      display: inline-flex; align-items: center; justify-content: center;
+      gap: .35rem;
+      padding: .55rem 1rem; border-radius: 10px;
+      font: inherit; font-weight: 600; font-size: .88rem;
+      cursor: pointer; border: 1.5px solid transparent;
+      transition: background .15s, color .15s, border-color .15s, transform .1s, opacity .15s;
+      line-height: 1;
+    }
+    .lvu-btn:disabled { opacity: .55; cursor: not-allowed; }
+    .lvu-btn:active:not(:disabled) { transform: translateY(1px); }
+    .lvu-btn-sm { padding: .35rem .65rem; font-size: .78rem; border-radius: 8px; }
+
+    .lvu-btn-primary {
+      background: linear-gradient(135deg, #667eea, #764ba2);
+      color: #fff;
+      box-shadow: 0 4px 12px rgba(102,126,234,.35);
+    }
+    .lvu-btn-primary:hover:not(:disabled) {
+      box-shadow: 0 6px 18px rgba(102,126,234,.45);
+    }
+    .lvu-btn-primary .lvu-btn-icon { font-size: 1rem; }
+
+    .lvu-btn-ghost {
+      background: #fff; color: #475569; border-color: #e2e8f0;
+    }
+    .lvu-btn-ghost:hover:not(:disabled) {
+      background: #f1f5f9; border-color: #cbd5e1; color: #1e293b;
+    }
+
+    .lvu-progress {
+      background: #fff; border: 1px solid #e2e8f0; border-radius: 10px;
+      padding: .6rem .8rem;
+    }
+    .lvu-progress-row {
+      display: flex; justify-content: space-between;
+      font-size: .82rem; font-weight: 600; color: #334155;
+      margin-bottom: .35rem;
+    }
+    .lvu-progress-track {
+      height: 8px; background: #e2e8f0; border-radius: 99px; overflow: hidden;
+    }
+    .lvu-progress-bar {
+      height: 100%; width: 0%;
+      background: linear-gradient(90deg, #667eea, #764ba2);
+      transition: width .25s ease;
+    }
+
+    .lvu-error {
+      background: #fef2f2; border: 1px solid #fecaca; color: #b91c1c;
+      padding: .55rem .75rem; border-radius: 10px;
+      font-size: .82rem; font-weight: 500;
+    }
+
+    .lvu-footer {
+      padding: .85rem 1.25rem;
+      background: #fff;
+      border-top: 1px solid #e2e8f0;
+      display: flex; justify-content: flex-end; gap: .55rem;
+    }
+  `;
+  const style = document.createElement('style');
+  style.id = 'lvu-styles';
+  style.textContent = css;
+  document.head.appendChild(style);
+}
+
+function _lvuAddChapter() {
+  const wrap = document.getElementById('lvu-chapters');
+  if (!wrap) return;
+  const row = document.createElement('div');
+  row.className = 'lvu-chapter-row';
+  row.innerHTML = `
+    <span class="lvu-chap-start">00:00</span>
+    <span class="lvu-chap-arrow">→</span>
+    <input type="text" class="lvu-input lvu-chap-end" placeholder="--:--"
+      oninput="_lvuRecalcChapters()" onchange="_lvuRecalcChapters()">
+    <input type="text" class="lvu-input lvu-chap-title" placeholder="כותרת הפרק" maxlength="200">
+    <button type="button" class="lvu-btn lvu-btn-ghost lvu-btn-sm"
+      onclick="this.parentElement.remove(); _lvuRecalcChapters();" aria-label="הסר פרק"
+      style="color:#ef4444;border-color:#fecaca">×</button>`;
+  wrap.appendChild(row);
+  _lvuRecalcChapters();
+}
+
+function _lvuFmtTime(sec) {
+  sec = Math.max(0, Math.floor(Number(sec) || 0));
+  const h = Math.floor(sec / 3600);
+  const m = Math.floor((sec % 3600) / 60);
+  const s = sec % 60;
+  const pad = n => String(n).padStart(2, '0');
+  return h > 0 ? `${h}:${pad(m)}:${pad(s)}` : `${pad(m)}:${pad(s)}`;
+}
+
+function _lvuRecalcChapters() {
+  const rows = [...document.querySelectorAll('#lvu-chapters .lvu-chapter-row')];
+  const dur = Number(window._lvuDur || 0);
+  let prevEnd = 0;
+  rows.forEach((row, i) => {
+    const startEl = row.querySelector('.lvu-chap-start');
+    const endEl   = row.querySelector('.lvu-chap-end');
+    if (startEl) startEl.textContent = _lvuFmtTime(prevEnd);
+    const isLast = i === rows.length - 1;
+    if (endEl) {
+      endEl.placeholder = (isLast && dur > 0) ? `${_lvuFmtTime(dur)} (סוף)` : '--:--';
+    }
+    const eVal = _lvuParseTime(endEl?.value || '');
+    if (Number.isFinite(eVal) && eVal > prevEnd) prevEnd = eVal;
+  });
+}
+
+function _lvuParseTime(str) {
+  // "ss" | "mm:ss" | "hh:mm:ss" → seconds (or NaN)
+  const parts = String(str || '').trim().split(':').map(p => Number(p));
+  if (parts.some(n => !Number.isFinite(n) || n < 0)) return NaN;
+  if (parts.length === 1) return parts[0];
+  if (parts.length === 2) return parts[0] * 60 + parts[1];
+  if (parts.length === 3) return parts[0] * 3600 + parts[1] * 60 + parts[2];
+  return NaN;
+}
+
+function _lvuCollectChapters() {
+  const rows = [...document.querySelectorAll('#lvu-chapters .lvu-chapter-row')];
+  const dur = Number(window._lvuDur || 0);
+  const out = [];
+  let prevEnd = 0;
+  for (let i = 0; i < rows.length; i++) {
+    const row = rows[i];
+    const title  = (row.querySelector('.lvu-chap-title')?.value || '').trim();
+    const endStr = (row.querySelector('.lvu-chap-end')?.value || '').trim();
+    const isLast = i === rows.length - 1;
+    if (!title && !endStr) continue; // empty row, skip
+    const start = prevEnd;
+    let end = _lvuParseTime(endStr);
+    if (!Number.isFinite(end)) {
+      if (isLast && dur > 0) end = dur;
+      else throw new Error(`פרק ${i + 1}: יש להזין זמן סיום`);
+    }
+    if (!title) throw new Error(`פרק ${i + 1} חסר כותרת`);
+    if (end <= start) throw new Error(`פרק ${i + 1}: זמן הסיום (${_lvuFmtTime(end)}) חייב להיות גדול מההתחלה (${_lvuFmtTime(start)})`);
+    if (dur > 0 && end > dur + 1) throw new Error(`פרק ${i + 1}: זמן הסיום חורג מאורך הסרטון (${_lvuFmtTime(dur)})`);
+    out.push({ timeSeconds: Math.floor(start), endSeconds: Math.floor(end), title });
+    prevEnd = end;
+  }
+  return out;
+}
+
+function _lvuShowError(msg) {
+  const el = document.getElementById('lvu-error');
+  if (!el) return;
+  el.textContent = msg;
+  el.hidden = false;
+}
+function _lvuClearError() {
+  const el = document.getElementById('lvu-error');
+  if (el) el.hidden = true;
+}
+
+async function _lvuStartUpload(examId, questionId) {
+  _lvuClearError();
+
+  const fileEl  = document.getElementById('lvu-file');
+  const notesEl = document.getElementById('lvu-notes');
+  const submitBtn = document.getElementById('lvu-submit-btn');
+  const progressWrap = document.getElementById('lvu-progress-wrap');
+  const progressBar  = document.getElementById('lvu-progress-bar');
+  const progressPct  = document.getElementById('lvu-progress-pct');
+  const progressLbl  = document.getElementById('lvu-progress-label');
+
+  const file = fileEl?.files?.[0];
+  if (!file) { _lvuShowError('יש לבחור קובץ וידאו'); return; }
+  if (!file.type || !file.type.startsWith('video/')) {
+    _lvuShowError('הקובץ אינו וידאו'); return;
+  }
+
+  let chapters;
+  try { chapters = _lvuCollectChapters(); }
+  catch (e) { _lvuShowError(e.message); return; }
+
+  const notes = (notesEl?.value || '').trim();
+
+  const user = STATE.fireUser;
+  if (!user) { _lvuShowError('יש להתחבר מחדש'); return; }
+
+  submitBtn.disabled = true;
+  submitBtn.textContent = 'מאתחל...';
+  progressWrap.hidden = false;
+  progressBar.style.width = '0%';
+  progressPct.textContent = '0%';
+  progressLbl.textContent = 'מבקש הרשאת העלאה...';
+
+  let initRes;
+  try {
+    const idToken = await user.getIdToken();
+    const r = await fetch('/.netlify/functions/lecturer-video-init', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + idToken },
+      body: JSON.stringify({ examId, questionId, title: `Q${questionId} — ${file.name}` }),
+    });
+    if (!r.ok) {
+      const err = await r.json().catch(() => ({}));
+      throw new Error(err.error || `init failed (${r.status})`);
+    }
+    initRes = await r.json();
+  } catch (e) {
+    _lvuShowError('שגיאה באתחול ההעלאה: ' + e.message);
+    submitBtn.disabled = false;
+    submitBtn.textContent = 'העלה ושלח לאישור';
+    progressWrap.hidden = true;
+    return;
+  }
+
+  let tus;
+  try { tus = await _loadTusClient(); }
+  catch (e) {
+    _lvuShowError('כשל בטעינת ספריית ההעלאה');
+    submitBtn.disabled = false;
+    submitBtn.textContent = 'העלה ושלח לאישור';
+    return;
+  }
+
+  progressLbl.textContent = 'מעלה את הסרטון...';
+
+  const upload = new tus.Upload(file, {
+    endpoint: initRes.tusEndpoint,
+    retryDelays: [0, 3000, 6000, 12000, 24000],
+    headers: {
+      AuthorizationSignature: initRes.authorizationSignature,
+      AuthorizationExpire:    String(initRes.authorizationExpire),
+      VideoId:                initRes.videoGuid,
+      LibraryId:              String(initRes.libraryId),
+    },
+    metadata: {
+      filetype: file.type,
+      title:    file.name,
+    },
+    onError: (err) => {
+      _lvuShowError('שגיאת העלאה: ' + (err && err.message ? err.message : err));
+      submitBtn.disabled = false;
+      submitBtn.textContent = 'נסה שוב';
+    },
+    onProgress: (sent, total) => {
+      const pct = total ? Math.floor((sent / total) * 100) : 0;
+      progressBar.style.width = pct + '%';
+      progressPct.textContent = pct + '%';
+    },
+    onSuccess: async () => {
+      progressLbl.textContent = 'מסיים...';
+      try {
+        const idToken = await user.getIdToken();
+        const r = await fetch('/.netlify/functions/lecturer-video-submit', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + idToken },
+          body: JSON.stringify({ videoGuid: initRes.videoGuid, notes, chapters }),
+        });
+        if (!r.ok) {
+          const err = await r.json().catch(() => ({}));
+          throw new Error(err.error || `submit failed (${r.status})`);
+        }
+        toast('✅ הסרטון הועלה ונשלח לאישור האדמין', 'info');
+        document.getElementById('lec-video-upload-modal')?.remove();
+      } catch (e) {
+        _lvuShowError('הסרטון הועלה אך נכשלה השליחה לאישור: ' + e.message);
+        submitBtn.disabled = false;
+        submitBtn.textContent = 'נסה שוב';
+      }
+    },
+  });
+
+  upload.start();
 }
