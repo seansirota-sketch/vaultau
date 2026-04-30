@@ -2464,7 +2464,7 @@ function _lecturerExamRowHtml(exam, course) {
         <div class="lec-exam-meta">${esc(courseLabel)}${meta ? ' · ' + esc(meta) : ''}</div>
       </div>
       <div class="lec-exam-actions">
-        <button class="lec-btn lec-btn-primary" onclick="goExam('${esc(exam.courseId)}','${esc(exam.id)}')">פתח</button>
+        <button class="lec-btn lec-btn-primary" onclick="goExamFromMyExams('${esc(exam.courseId)}','${esc(exam.id)}')">פתח</button>
         <button class="lec-btn lec-btn-ghost" onclick="toggleExamHidden('${esc(exam.id)}')">${hidden ? 'הצג' : 'הסתר'}</button>
         ${isAdmin ? '' : `<button class="lec-btn lec-btn-danger" onclick="requestExamDeletion('${esc(exam.id)}','${esc(safeTitle)}','${esc(exam.courseId || '')}')">בקש מחיקה</button>`}
       </div>
@@ -2476,6 +2476,42 @@ function _applyLecturerExamsFilter() {
   document.querySelectorAll('#my-exams-list > .lec-exam-row').forEach(row => {
     row.style.display = (!cid || row.dataset.course === cid) ? '' : 'none';
   });
+}
+
+/* Render the lecturer's "My Exams" inside a course tab. */
+function renderMyAssignedExamsInCourseTab(course, myExams) {
+  const tc = document.getElementById('tab-content');
+  if (!tc) return;
+  if (!myExams.length) {
+    tc.innerHTML = `
+      <div class="empty" style="padding:2.5rem;text-align:center">
+        <h3>אין מבחנים שלך בקורס זה</h3>
+        <p style="color:var(--muted);font-size:.9rem">פנה למנהל כדי לשייך אליך מבחנים בקורס "${esc(course.name)}".</p>
+      </div>`;
+    return;
+  }
+  STATE._lecturerExamsCache = myExams; // for toggleExamHidden lookups
+  tc.innerHTML = `
+    <div id="my-exams-list" style="display:flex;flex-direction:column;gap:.7rem">
+      ${myExams.map(e => _lecturerExamRowHtml(e, course)).join('')}
+    </div>`;
+}
+
+/* Smart back from exam page: respects origin (my-exams vs course tab). */
+function _examBackNav(courseId) {
+  if (STATE.examOrigin === 'my-exams') {
+    STATE.examOrigin = null;
+    // Prefer browser history back (preserves scroll/forward stack)
+    history.back();
+    return;
+  }
+  goCourse(courseId);
+}
+
+/* Wrapper used by lecturer "My Exams" rows so we know where to return. */
+function goExamFromMyExams(cId, eId) {
+  STATE.examOrigin = 'my-exams';
+  goExam(cId, eId);
 }
 
 async function toggleExamHidden(examId) {
@@ -2795,6 +2831,18 @@ async function renderCourse() {
     // If user landed on the now-removed AI tab, fall back to exams
     if (STATE.tab === 'ai-questions') STATE.tab = 'exams';
 
+    // Lecturer-only "My Exams" tab — shows exams in this course assigned to the lecturer
+    const _role = STATE.userData?.role;
+    const _isLecturer = _role === 'instructor' || _role === 'מרצה' || _role === 'admin';
+    const _myUid = STATE.fireUser?.uid;
+    const myCourseExams = _isLecturer
+      ? (_role === 'admin'
+          ? exams
+          : exams.filter(e => Array.isArray(e.assignedLecturers) && e.assignedLecturers.includes(_myUid)))
+      : [];
+    // Guard: if non-lecturer somehow has 'mine' tab selected, fall back
+    if (STATE.tab === 'mine' && !_isLecturer) STATE.tab = 'exams';
+
     page.innerHTML = `
       <div class="container">
         <div class="breadcrumb">
@@ -2810,6 +2858,11 @@ async function renderCourse() {
           <button class="tab-btn ${STATE.tab === 'exams' ? 'active' : ''}" onclick="setTab('exams')">
             📋 כל המבחנים
           </button>
+          ${_isLecturer ? `
+          <button class="tab-btn ${STATE.tab === 'mine' ? 'active' : ''}" onclick="setTab('mine')">
+            המבחנים שלי
+            ${myCourseExams.length ? `<span class="badge b-orange">${myCourseExams.length}</span>` : ''}
+          </button>` : ''}
           <button class="tab-btn ${STATE.tab === 'starred' ? 'active' : ''}" onclick="setTab('starred')">
             ⭐ שאלות מסומנות
             ${starCount ? `<span class="badge b-orange">${starCount}</span>` : ''}
@@ -2823,6 +2876,7 @@ async function renderCourse() {
 
     if (STATE.tab === 'starred') renderStarredTab(exams, starred);
     else if (STATE.tab === 'videos') renderVideosTab(exams);
+    else if (STATE.tab === 'mine') renderMyAssignedExamsInCourseTab(course, myCourseExams);
     else renderExamsTab(course, exams, years, semesters, moeds, lecturers);
 
   } catch (e) {
@@ -3436,7 +3490,7 @@ async function renderExam() {
     page.innerHTML = `
       <div class="ev-wrap">
         <div class="ev-topbar">
-          <button class="ev-back" onclick="goCourse('${course.id}')">← חזרה</button>
+          <button class="ev-back" onclick="_examBackNav('${course.id}')">← חזרה</button>
           <div class="ev-topbar-meta">
             ${(Array.isArray(exam.lecturers) ? exam.lecturers : (exam.lecturer ? [exam.lecturer] : []))
               .map(l => `<span>${esc(l)}</span>`).join('<span class="lec-sep"> · </span>')}
