@@ -19,6 +19,13 @@ service cloud.firestore {
     match /exams/{examId} {
       allow read: if isLoggedIn();
       allow write: if isAdmin();
+
+      // Lecturers assigned to an exam may toggle ONLY the `hiddenFromStudents`
+      // flag on it. They cannot edit any other field.
+      allow update: if isLoggedIn()
+        && resource.data.assignedLecturers is list
+        && request.auth.uid in resource.data.assignedLecturers
+        && request.resource.data.diff(resource.data).changedKeys().hasOnly(['hiddenFromStudents']);
     }
 
     match /users/{userId} {
@@ -109,7 +116,7 @@ service cloud.firestore {
         && request.resource.data.userId == request.auth.uid
         && request.resource.data.createdAt == request.time
         && request.resource.data.status == 'open'
-        && request.resource.data.category in ['contact', 'bug', 'video_bug']
+        && request.resource.data.category in ['contact', 'bug', 'video_bug', 'lecturer_delete_request']
         && request.resource.data.message is string
         && request.resource.data.message.size() > 0
         && request.resource.data.message.size() <= 2000

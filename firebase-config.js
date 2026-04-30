@@ -38,7 +38,13 @@ async function fetchExamsForCourse(courseId) {
   const snap = await db.collection('exams')
     .where('courseId', '==', courseId)
     .get();
-  const docs = snap.docs.map(d => ({ ...d.data(), id: d.id }));
+  let docs = snap.docs.map(d => ({ ...d.data(), id: d.id }));
+  // Hide exams flagged by lecturers from students (admins/instructors still see all here;
+  // course.js further refines visibility based on role and assignment).
+  const role = (typeof STATE !== 'undefined' && STATE?.userData?.role) || 'student';
+  if (role !== 'admin' && role !== 'instructor') {
+    docs = docs.filter(d => d.hiddenFromStudents !== true);
+  }
   docs.sort((a, b) => (b.year || 0) - (a.year || 0));
   return docs;
 }

@@ -2285,3 +2285,106 @@ mjx-container { direction: ltr; }
   width: 100%; height: 100%;
   border: none;
 }
+
+/* ?? Lecturer "My Exams" rows ?????????????????????????????? */
+.lec-exam-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 1rem 1.25rem;
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 12px;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, .04);
+  transition: box-shadow .18s ease, transform .18s ease, border-color .18s ease;
+  flex-wrap: wrap;
+}
+.lec-exam-row:hover {
+  box-shadow: 0 4px 14px rgba(15, 23, 42, .08);
+  border-color: #cbd5e1;
+}
+.lec-exam-row.is-hidden {
+  background: #fafafa;
+  border-style: dashed;
+  border-color: #d4d4d8;
+}
+.lec-exam-row.is-hidden .lec-exam-title { color: #52525b; }
+
+.lec-exam-info { flex: 1; min-width: 220px; }
+.lec-exam-title {
+  font-weight: 600;
+  font-size: 1rem;
+  color: #0f172a;
+  display: flex;
+  align-items: center;
+  gap: .6rem;
+  flex-wrap: wrap;
+  letter-spacing: -0.01em;
+}
+.lec-exam-flag {
+  font-size: .7rem;
+  font-weight: 500;
+  letter-spacing: .02em;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: #f1f5f9;
+  color: #475569;
+  border: 1px solid #e2e8f0;
+}
+.lec-exam-meta {
+  margin-top: .35rem;
+  font-size: .82rem;
+  color: #64748b;
+}
+
+.lec-exam-actions { display: flex; gap: .45rem; flex-wrap: wrap; }
+
+.lec-btn {
+  font-family: inherit;
+  font-size: .82rem;
+  font-weight: 500;
+  letter-spacing: .01em;
+  padding: .45rem 1rem;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition: background .15s ease, border-color .15s ease, color .15s ease;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+.lec-btn:focus-visible { outline: 2px solid #6366f1; outline-offset: 2px; }
+
+.lec-btn-primary {
+  background: #0f172a;
+  color: #fff;
+}
+.lec-btn-primary:hover { background: #1e293b; }
+
+.lec-btn-ghost {
+  background: #fff;
+  color: #334155;
+  border-color: #cbd5e1;
+}
+.lec-btn-ghost:hover {
+  background: #f8fafc;
+  border-color: #94a3b8;
+  color: #0f172a;
+}
+
+.lec-btn-danger {
+  background: #fff;
+  color: #b91c1c;
+  border-color: #fecaca;
+}
+.lec-btn-danger:hover {
+  background: #fef2f2;
+  border-color: #f87171;
+  color: #991b1b;
+}
+
+@media (max-width: 540px) {
+  .lec-exam-row { align-items: stretch; }
+  .lec-exam-actions { width: 100%; }
+  .lec-btn { flex: 1; text-align: center; }
+}

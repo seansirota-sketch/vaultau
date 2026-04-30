@@ -497,6 +497,92 @@ function _clearLecturers() {
   _renderLecturersWidget();
 }
 
+/* ── Assigned lecturers (uid-based) widget ─────────────── */
+// Each entry: { uid, label }
+let _assignedLecturers = [];
+let _instructorOptionsCache = null; // [{ uid, email, displayName }]
+
+async function _loadInstructorOptions() {
+  if (_instructorOptionsCache) return _instructorOptionsCache;
+  try {
+    // Accept both canonical 'instructor' and legacy Hebrew 'מרצה' role values
+    const snap = await db.collection('users').where('role', 'in', ['instructor', 'מרצה']).get();
+    const seen = new Set();
+    _instructorOptionsCache = snap.docs
+      .map(d => {
+        const data = d.data() || {};
+        return { uid: d.id, email: data.email || '', displayName: data.displayName || '' };
+      })
+      .filter(u => { if (seen.has(u.uid)) return false; seen.add(u.uid); return true; })
+      .sort((a, b) => (a.email || '').localeCompare(b.email || ''));
+  } catch (e) {
+    console.warn('_loadInstructorOptions failed:', e.message);
+    _instructorOptionsCache = [];
+  }
+  return _instructorOptionsCache;
+}
+
+async function _populateAssignedLecturerSelect() {
+  const sel = document.getElementById('ae-assigned-lecturer-select');
+  if (!sel) return;
+  const list = await _loadInstructorOptions();
+  const taken = new Set(_assignedLecturers.map(a => a.uid));
+  const opts = list
+    .filter(u => !taken.has(u.uid))
+    .map(u => {
+      const label = u.displayName ? `${u.displayName} <${u.email}>` : u.email || u.uid;
+      return `<option value="${esc(u.uid)}">${esc(label)}</option>`;
+    }).join('');
+  sel.innerHTML = `<option value="">— בחר מרצה רשום —</option>${opts}`;
+}
+
+function _renderAssignedLecturersWidget() {
+  const el = document.getElementById('assigned-lecturers-list');
+  if (!el) return;
+  el.innerHTML = _assignedLecturers.length
+    ? _assignedLecturers.map((a, i) => `<span class="lecturer-tag">
+        <span class="lecturer-tag-name">${esc(a.label || a.uid)}</span>
+        <button class="lecturer-tag-rm" onclick="removeAssignedLecturer(${i})" title="הסר">✕</button>
+      </span>`).join('')
+    : '<span class="lecturer-empty">לא שויכו מרצים</span>';
+  _populateAssignedLecturerSelect();
+}
+
+async function addAssignedLecturer() {
+  const sel = document.getElementById('ae-assigned-lecturer-select');
+  if (!sel) return;
+  const uid = sel.value;
+  if (!uid) return;
+  if (_assignedLecturers.some(a => a.uid === uid)) return;
+  const list = await _loadInstructorOptions();
+  const u = list.find(x => x.uid === uid);
+  const label = u ? (u.displayName ? `${u.displayName} <${u.email}>` : u.email || uid) : uid;
+  _assignedLecturers.push({ uid, label });
+  sel.value = '';
+  _renderAssignedLecturersWidget();
+}
+
+function removeAssignedLecturer(idx) {
+  _assignedLecturers.splice(idx, 1);
+  _renderAssignedLecturersWidget();
+}
+
+async function _setAssignedLecturers(uids) {
+  if (!Array.isArray(uids)) uids = [];
+  const list = await _loadInstructorOptions();
+  _assignedLecturers = uids.filter(Boolean).map(uid => {
+    const u = list.find(x => x.uid === uid);
+    const label = u ? (u.displayName ? `${u.displayName} <${u.email}>` : u.email || uid) : uid;
+    return { uid, label };
+  });
+  _renderAssignedLecturersWidget();
+}
+
+function _clearAssignedLecturers() {
+  _assignedLecturers = [];
+  _renderAssignedLecturersWidget();
+}
+
 /* ── FIREBASE AUTH (Admin login) ───────────────────────────── */
 let adminUser = null; // Firebase user object
 
@@ -1043,6 +1129,8 @@ async function startBulkUpload() {
         semester:  known.semester || meta.semester || null,
         moed:      known.moed     || meta.moed     || null,
         lecturers: lecturers.length ? lecturers : null,
+        assignedLecturers: [],
+        hiddenFromStudents: false,
         pdfUrl,
         solutionPdfUrl: null,
         parsedModel: result.model || null,
@@ -1929,6 +2017,7 @@ async function handleFileInput(file) {
 /* ── Live text parser ─────────────────────────────────────── */
 let parsedQuestions = [];
 let _editingExamId  = null;  // tracks the exam being edited (for safe update, not delete-first)
+let _editingExamHidden = false; // preserve hiddenFromStudents flag across edits
 let _examPdfFile    = null;  // File object selected for PDF download upload
 let _solPdfFile     = null;  // File object selected for solution PDF upload
 let _parsedModel    = null;  // which Claude model parsed the current exam
@@ -2924,6 +3013,8 @@ async function submitAddExam() {
       semester:  sem  || null,
       moed:      moed || null,
       lecturers: lecturers.length ? lecturers : null,
+      assignedLecturers: _assignedLecturers.map(a => a.uid),
+      hiddenFromStudents: _editingExamId ? (_editingExamHidden === true) : false,
       pdfUrl:    pdfUrl || null,
       solutionPdfUrl: solutionPdfUrl || null,
       parsedModel: _parsedModel || null,
@@ -3012,10 +3103,12 @@ function resetForm() {
   ['ae-course','ae-sem','ae-moed'].forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
   ['ae-title','ae-year'].forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
   _clearLecturers();
+  _clearAssignedLecturers();
   clearExamPdf();
   clearSolPdf();
   parsedQuestions = [];
   _editingExamId  = null;
+  _editingExamHidden = false;
   _parsedModel    = null;
   _loadedExamImageUrls = new Set();
   _pendingImageDeletes  = new Set();
@@ -4003,6 +4096,7 @@ async function editExam(courseId, examId) {
     if (!exam) { toast('מבחן לא נמצא', 'error'); return; }
 
     _editingExamId = examId;
+    _editingExamHidden = exam.hiddenFromStudents === true;
     // Keep the original model badge when saving edited exams without re-parsing.
     _parsedModel = exam.parsedModel || null;
 
@@ -4038,6 +4132,7 @@ async function editExam(courseId, examId) {
     set('ae-sem',    exam.semester || '');
     set('ae-moed',   exam.moed     || '');
     _setLecturers(exam.lecturers || exam.lecturer || []);
+    await _setAssignedLecturers(exam.assignedLecturers || []);
 
     // ── PDF ────────────────────────────────────────────────────
     const pdfUrlEl     = document.getElementById('ae-pdf-url');
@@ -5195,7 +5290,9 @@ async function _renderReportsContent() {
 
       const categoryBadge = r.category === 'bug'
         ? `<span class="badge" style="background:#fef3c7;color:#92400e;border:1px solid #fcd34d">⚠ תקלה</span>`
-        : `<span class="badge" style="background:#ede9fe;color:#5b21b6;border:1px solid #c4b5fd">✉ פנייה</span>`;
+        : r.category === 'lecturer_delete_request'
+          ? `<span class="badge" style="background:#fee2e2;color:#b91c1c;border:1px solid #fca5a5">🗑 בקשת מחיקה ממרצה</span>`
+          : `<span class="badge" style="background:#ede9fe;color:#5b21b6;border:1px solid #c4b5fd">✉ פנייה</span>`;
 
       const typeBadge = r.category === 'contact' && r.typeLabel
         ? `<span class="badge b-blue" style="font-size:.72rem">${esc(r.typeLabel)}</span>`
