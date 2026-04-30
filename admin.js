@@ -751,7 +751,7 @@ function _applySectionUI(name) {
   if (name === 'manage')      renderManageTable();
   if (name === 'dashboard')   refreshDashboard();
   if (name === 'courses')     renderCoursesList();
-  if (name === 'add-exam')    populateAllSelects();
+  if (name === 'add-exam')    { populateAllSelects(); _renderAssignedLecturersWidget(); }
   if (name === 'analytics')   renderAnalytics();
   if (name === 'users')       renderUserStats();
   if (name === 'manage-users') renderManageUsers();
@@ -3056,6 +3056,7 @@ async function submitAddExam() {
       exam.createdAt = firebase.firestore.FieldValue.serverTimestamp();
     }
     // Always set createdAt for new exams; editing preserves it via the exam object
+    console.log('[submitAddExam] saving with assignedLecturers=', exam.assignedLecturers, 'hiddenFromStudents=', exam.hiddenFromStudents);
     await db.collection('exams').doc(examId).set(exam);
 
     if (_editingExamId && _loadedExamImageUrls.size) {
@@ -5224,11 +5225,12 @@ async function _loadReportsBadge() {
    REPORTS SECTION
    ═══════════════════════════════════════════════════════════ */
 
-let _reportsCurrentTab = 'open'; // 'open' | 'archived'
+let _reportsCurrentTab = 'open'; // 'open' | 'videos' | 'archived'
 
 function switchReportsTab(tab) {
   _reportsCurrentTab = tab;
   document.getElementById('reports-tab-open')?.classList.toggle('active', tab === 'open');
+  document.getElementById('reports-tab-videos')?.classList.toggle('active', tab === 'videos');
   document.getElementById('reports-tab-archived')?.classList.toggle('active', tab === 'archived');
   _renderReportsContent();
 }
@@ -5257,22 +5259,25 @@ async function _renderReportsContent() {
   el.innerHTML = '<div class="spinner" style="margin:2rem auto"></div>';
 
   const isArchive = _reportsCurrentTab === 'archived';
+  const isVideos  = _reportsCurrentTab === 'videos';
   const status    = isArchive ? 'closed' : 'open';
 
   try {
     const snap = await db.collection('reports').where('status', '==', status).get();
 
-    const items = snap.docs
+    let items = snap.docs
       .map(d => ({ id: d.id, ...d.data() }))
       .filter(r => !r.adminDeletedAt)
       .sort((a, b) => (b.createdAt?.toMillis?.() || 0) - (a.createdAt?.toMillis?.() || 0));
 
+    if (isVideos) items = items.filter(r => r.category === 'lecturer_video_submission');
+
     if (!items.length) {
       el.innerHTML = `
         <div class="empty" style="padding:2.5rem;text-align:center">
-          <span style="font-size:2rem;display:block;margin-bottom:.5rem">${isArchive ? '🗂️' : '📭'}</span>
-          <h3 style="font-weight:600;margin-bottom:.3rem">${isArchive ? 'הארכיון ריק' : 'אין דיווחים פתוחים'}</h3>
-          <p style="color:var(--muted);font-size:.88rem">${isArchive ? 'עוד לא נסגרו דיווחים' : 'כל הדיווחים טופלו'}</p>
+          <span style="font-size:2rem;display:block;margin-bottom:.5rem">${isArchive ? '🗂️' : isVideos ? '🎬' : '📭'}</span>
+          <h3 style="font-weight:600;margin-bottom:.3rem">${isArchive ? 'הארכיון ריק' : isVideos ? 'אין סרטונים בהמתנה לאישור' : 'אין דיווחים פתוחים'}</h3>
+          <p style="color:var(--muted);font-size:.88rem">${isArchive ? 'עוד לא נסגרו דיווחים' : isVideos ? 'כל ההגשות טופלו' : 'כל הדיווחים טופלו'}</p>
         </div>`;
       return;
     }
@@ -5292,7 +5297,9 @@ async function _renderReportsContent() {
         ? `<span class="badge" style="background:#fef3c7;color:#92400e;border:1px solid #fcd34d">⚠ תקלה</span>`
         : r.category === 'lecturer_delete_request'
           ? `<span class="badge" style="background:#fee2e2;color:#b91c1c;border:1px solid #fca5a5">🗑 בקשת מחיקה ממרצה</span>`
-          : `<span class="badge" style="background:#ede9fe;color:#5b21b6;border:1px solid #c4b5fd">✉ פנייה</span>`;
+          : r.category === 'lecturer_video_submission'
+            ? `<span class="badge" style="background:#dbeafe;color:#1e3a8a;border:1px solid #93c5fd">🎬 סרטון חדש ממרצה</span>`
+            : `<span class="badge" style="background:#ede9fe;color:#5b21b6;border:1px solid #c4b5fd">✉ פנייה</span>`;
 
       const typeBadge = r.category === 'contact' && r.typeLabel
         ? `<span class="badge b-blue" style="font-size:.72rem">${esc(r.typeLabel)}</span>`
@@ -5342,6 +5349,17 @@ async function _renderReportsContent() {
            onclick="deleteReport('${esc(r.id)}')">🗑 הסר מהפאנל</button>`
         : `<button class="btn btn-secondary btn-sm" onclick="closeReport('${esc(r.id)}')">✓ סגור תקלה</button>`;
 
+      const videoReviewPanel = (r.category === 'lecturer_video_submission' && r.submissionId)
+        ? `<div id="lvr-panel-${esc(r.id)}" data-submission-id="${esc(r.submissionId)}"
+             style="background:#eff6ff;border:1px solid #93c5fd;border-radius:8px;padding:.65rem .9rem;display:flex;flex-direction:column;gap:.5rem">
+             <div style="font-size:.78rem;color:#1e3a8a;font-weight:600">🎬 סקירת סרטון מהמרצה</div>
+             <div style="font-size:.78rem;color:#1e3a8a">שאלה: <strong>${esc(r.questionId || '')}</strong>${r.examId ? ` · מבחן: <strong>${esc(r.examId)}</strong>` : ''}</div>
+             <div style="display:flex;gap:.4rem;flex-wrap:wrap">
+               <button class="btn btn-sm" onclick="openLecturerVideoReview('${esc(r.submissionId)}','${esc(r.id)}')">👁 צפה ואשר/דחה</button>
+             </div>
+           </div>`
+        : '';
+
       return `
         <div class="ac" style="margin-bottom:.75rem">
           <div style="padding:1rem 1.25rem;display:flex;flex-direction:column;gap:.5rem">
@@ -5356,6 +5374,7 @@ async function _renderReportsContent() {
             <div style="background:var(--bg,#f9fafb);border-radius:8px;padding:.65rem .9rem;
                         font-size:.9rem;line-height:1.6;border:1px solid var(--border);
                         white-space:pre-wrap;word-break:break-word">${esc(r.message)}</div>
+            ${videoReviewPanel}
             ${responseInfo}
             ${responseEditor}
             ${closedInfo}
@@ -5816,6 +5835,427 @@ async function deleteBroadcast(id) {
     toast('שגיאה במחיקה', 'error');
   }
 }
+
+/* ============================================================
+   LECTURER VIDEO SUBMISSIONS — admin review / approve / reject
+   ============================================================ */
+
+function _lvrFmtTime(s) {
+  s = Math.max(0, Math.floor(Number(s) || 0));
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const sec = s % 60;
+  const pad = (n) => String(n).padStart(2, '0');
+  return h > 0 ? `${h}:${pad(m)}:${pad(sec)}` : `${pad(m)}:${pad(sec)}`;
+}
+function _lvrParseTime(str) {
+  const parts = String(str || '').trim().split(':').map(p => Number(p));
+  if (parts.some(n => !Number.isFinite(n) || n < 0)) return NaN;
+  if (parts.length === 1) return parts[0];
+  if (parts.length === 2) return parts[0] * 60 + parts[1];
+  if (parts.length === 3) return parts[0] * 3600 + parts[1] * 60 + parts[2];
+  return NaN;
+}
+
+async function openLecturerVideoReview(submissionId, reportId) {
+  document.getElementById('lvr-modal')?.remove();
+
+  let sub;
+  try {
+    const snap = await db.collection('video_submissions').doc(submissionId).get();
+    if (!snap.exists) { toast('ההגשה לא נמצאה', 'error'); return; }
+    sub = snap.data();
+  } catch (e) {
+    toast('שגיאת טעינה: ' + e.message, 'error');
+    return;
+  }
+
+  // Resolve friendly labels: exam title + question number (sub-question letter if any)
+  let examLabel = '';
+  let qLabel    = '';
+  try {
+    if (sub.examId) {
+      const exSnap = await db.collection('exams').doc(sub.examId).get();
+      if (exSnap.exists) {
+        const ex = exSnap.data();
+        examLabel = ex.title || ex.name || sub.examId;
+        const qs = Array.isArray(ex.questions) ? ex.questions : [];
+        // Direct match on top-level question
+        let qIdx = qs.findIndex(q => q && q.id === sub.questionId);
+        if (qIdx >= 0) {
+          qLabel = `שאלה ${qIdx + 1}`;
+        } else {
+          // Search inside subQuestions of each top-level question
+          for (let i = 0; i < qs.length; i++) {
+            const subs = Array.isArray(qs[i]?.subQuestions) ? qs[i].subQuestions : [];
+            const sIdx = subs.findIndex(s => s && s.id === sub.questionId);
+            if (sIdx >= 0) {
+              const letter = subs[sIdx].letter || String.fromCharCode(0x05D0 + sIdx);
+              qLabel = `שאלה ${i + 1} סעיף ${letter}`;
+              break;
+            }
+          }
+        }
+      }
+    }
+  } catch (_) { /* non-fatal */ }
+  if (!examLabel) examLabel = sub.examTitle || '';
+
+  _lvrInjectStylesOnce();
+
+  const embedUrl = `https://iframe.mediadelivery.net/embed/${encodeURIComponent(sub.libraryId)}/${encodeURIComponent(sub.videoGuid)}?autoplay=false`;
+  const chapters = Array.isArray(sub.chapters) ? sub.chapters : [];
+  const headerSub = [examLabel, qLabel].filter(Boolean).join(' — ') || 'סרטון להסבר שאלה';
+
+  const overlay = document.createElement('div');
+  overlay.id = 'lvr-modal';
+  overlay.className = 'lvr-overlay';
+  overlay.innerHTML = `
+    <div class="lvr-card" role="dialog" aria-modal="true" aria-labelledby="lvr-title">
+      <header class="lvr-header">
+        <div class="lvr-header-icon">🎬</div>
+        <div class="lvr-header-text">
+          <div class="lvr-eyebrow">סקירת סרטון מהמרצה</div>
+          <h2 id="lvr-title" class="lvr-title-text">${esc(headerSub)}</h2>
+        </div>
+        <button class="lvr-close" aria-label="סגור" onclick="document.getElementById('lvr-modal').remove()">×</button>
+      </header>
+
+      <div class="lvr-body">
+        <div class="lvr-video-wrap">
+          <iframe src="${embedUrl}" loading="lazy"
+            allow="accelerometer; gyroscope; autoplay; encrypted-media; picture-in-picture"
+            allowfullscreen></iframe>
+        </div>
+
+        <div class="lvr-meta">
+          <span class="lvr-meta-icon">👤</span>
+          <span>הועלה ע״י <strong>${esc(sub.uploadedByEmail || sub.uploadedByUid || '')}</strong></span>
+        </div>
+
+        ${sub.notes ? `
+        <section class="lvr-section">
+          <div class="lvr-label"><span class="lvr-label-icon">📝</span><span>הערות המרצה</span></div>
+          <div class="lvr-notes-box">${esc(sub.notes)}</div>
+        </section>` : ''}
+
+        <section class="lvr-section">
+          <div class="lvr-section-head">
+            <div class="lvr-label"><span class="lvr-label-icon">📑</span><span>פרקים <span class="lvr-muted">· ניתן לערוך לפני אישור</span></span></div>
+            <button type="button" class="lvr-btn lvr-btn-ghost lvr-btn-sm" onclick="_lvrAddChapterRow()">＋ פרק</button>
+          </div>
+          <div id="lvr-chapters" class="lvr-chapters">
+            ${chapters.map(c => `
+              <div class="lvr-chap-row">
+                <input type="text" class="lvr-chap-time" value="${esc(_lvrFmtTime(c.timeSeconds))}" placeholder="00:00">
+                <input type="text" class="lvr-chap-title" value="${esc(c.title || '')}" maxlength="200" placeholder="כותרת הפרק">
+                <button type="button" class="lvr-btn lvr-btn-ghost lvr-btn-sm lvr-btn-x"
+                  onclick="this.parentElement.remove()" aria-label="הסר פרק">×</button>
+              </div>`).join('')}
+          </div>
+        </section>
+
+        <section class="lvr-section">
+          <label class="lvr-label" for="lvr-admin-notes">
+            <span class="lvr-label-icon">🛠</span><span>הערות אדמין <span class="lvr-muted">· אופציונלי</span></span>
+          </label>
+          <textarea id="lvr-admin-notes" rows="2" maxlength="4000" class="lvr-input lvr-textarea"
+            placeholder="הערות פנימיות (לא יוצג למרצה או לסטודנטים)"></textarea>
+        </section>
+
+        <div id="lvr-error" class="lvr-error" hidden></div>
+      </div>
+
+      <footer class="lvr-footer">
+        <button class="lvr-btn lvr-btn-ghost" onclick="document.getElementById('lvr-modal').remove()">סגור</button>
+        <button class="lvr-btn lvr-btn-danger" id="lvr-reject-btn"
+          onclick="_lvrDecide('${esc(submissionId)}','${esc(reportId)}','reject')">
+          <span class="lvr-btn-icon">✕</span><span>דחה ומחק</span>
+        </button>
+        <button class="lvr-btn lvr-btn-primary" id="lvr-approve-btn"
+          onclick="_lvrDecide('${esc(submissionId)}','${esc(reportId)}','approve')">
+          <span class="lvr-btn-icon">✓</span><span>אשר ופרסם</span>
+        </button>
+      </footer>
+    </div>`;
+  document.body.appendChild(overlay);
+}
+
+function _lvrInjectStylesOnce() {
+  if (document.getElementById('lvr-styles')) return;
+  const css = `
+    .lvr-overlay {
+      position: fixed; inset: 0; background: rgba(15, 23, 42, .65);
+      backdrop-filter: blur(4px);
+      display: flex; align-items: center; justify-content: center;
+      z-index: 10000; padding: 1rem;
+      animation: lvrFade .15s ease-out;
+    }
+    @keyframes lvrFade { from { opacity: 0 } to { opacity: 1 } }
+    .lvr-card {
+      background: #fff; border-radius: 16px;
+      width: 100%; max-width: 820px; max-height: 92vh;
+      display: flex; flex-direction: column;
+      box-shadow: 0 25px 70px -10px rgba(0,0,0,.45), 0 0 0 1px rgba(255,255,255,.05);
+      overflow: hidden; direction: rtl;
+      animation: lvrPop .18s ease-out;
+    }
+    @keyframes lvrPop { from { transform: translateY(8px) scale(.98); opacity: 0 } to { transform: none; opacity: 1 } }
+
+    .lvr-header {
+      background: linear-gradient(135deg, #1e3a8a 0%, #3b82f6 100%);
+      padding: 1rem 1.25rem; color: #fff;
+      display: flex; align-items: center; gap: .85rem;
+    }
+    .lvr-header-icon {
+      width: 42px; height: 42px; border-radius: 50%;
+      background: rgba(255,255,255,.2); display: inline-flex;
+      align-items: center; justify-content: center;
+      font-size: 1.3rem; flex-shrink: 0;
+    }
+    .lvr-header-text { flex: 1; min-width: 0; }
+    .lvr-eyebrow {
+      font-size: .72rem; opacity: .85; letter-spacing: .04em;
+      text-transform: uppercase; margin-bottom: .15rem;
+    }
+    .lvr-title-text {
+      margin: 0; font-size: 1.05rem; font-weight: 600; line-height: 1.3;
+      display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+      overflow: hidden;
+    }
+    .lvr-close {
+      background: rgba(255,255,255,.15); border: 0; color: #fff;
+      width: 32px; height: 32px; border-radius: 50%;
+      font-size: 1.3rem; line-height: 1; cursor: pointer;
+      display: inline-flex; align-items: center; justify-content: center;
+      transition: background .15s;
+    }
+    .lvr-close:hover { background: rgba(255,255,255,.3); }
+
+    .lvr-body {
+      padding: 1.1rem 1.25rem; overflow-y: auto;
+      background: #f8fafc; flex: 1;
+      display: flex; flex-direction: column; gap: .9rem;
+    }
+
+    .lvr-video-wrap {
+      position: relative; padding-top: 56.25%;
+      background: #000; border-radius: 12px; overflow: hidden;
+      box-shadow: 0 4px 12px rgba(0,0,0,.15);
+    }
+    .lvr-video-wrap iframe {
+      position: absolute; inset: 0; width: 100%; height: 100%; border: 0;
+    }
+
+    .lvr-meta {
+      display: inline-flex; align-items: center; gap: .4rem;
+      font-size: .82rem; color: #475569;
+      background: #fff; padding: .45rem .7rem; border-radius: 8px;
+      border: 1px solid #e2e8f0; align-self: flex-start;
+    }
+    .lvr-meta-icon { font-size: .9rem; }
+
+    .lvr-section {
+      background: #fff; border: 1px solid #e2e8f0; border-radius: 12px;
+      padding: .85rem 1rem;
+    }
+    .lvr-section-head {
+      display: flex; justify-content: space-between; align-items: center;
+      margin-bottom: .55rem;
+    }
+    .lvr-label {
+      display: inline-flex; align-items: center; gap: .4rem;
+      font-weight: 600; font-size: .88rem; color: #1e293b;
+    }
+    .lvr-label-icon { font-size: 1rem; }
+    .lvr-muted { font-weight: 400; color: #94a3b8; font-size: .78rem; }
+
+    .lvr-notes-box {
+      background: #f1f5f9; border: 1px solid #e2e8f0; border-radius: 8px;
+      padding: .6rem .8rem; white-space: pre-wrap; font-size: .88rem;
+      color: #334155; line-height: 1.5;
+    }
+
+    .lvr-input, .lvr-textarea {
+      width: 100%; padding: .55rem .7rem;
+      border: 1.5px solid #e2e8f0; border-radius: 8px;
+      font: inherit; font-size: .88rem; background: #fff;
+      transition: border-color .15s, box-shadow .15s;
+      box-sizing: border-box;
+    }
+    .lvr-input:focus, .lvr-textarea:focus {
+      outline: 0; border-color: #3b82f6;
+      box-shadow: 0 0 0 3px rgba(59,130,246,.15);
+    }
+    .lvr-textarea { resize: vertical; min-height: 60px; font-family: inherit; }
+
+    .lvr-chapters { display: flex; flex-direction: column; gap: .4rem; }
+    .lvr-chap-row {
+      display: grid; grid-template-columns: 90px 1fr auto;
+      gap: .4rem; align-items: center;
+    }
+    .lvr-chap-time {
+      padding: .5rem .55rem; font-size: .85rem;
+      border: 1.5px solid #e2e8f0; border-radius: 8px;
+      text-align: center; font-variant-numeric: tabular-nums;
+      background: #fff; box-sizing: border-box;
+    }
+    .lvr-chap-title {
+      padding: .5rem .65rem; font-size: .85rem;
+      border: 1.5px solid #e2e8f0; border-radius: 8px;
+      background: #fff; box-sizing: border-box;
+    }
+    .lvr-chap-time:focus, .lvr-chap-title:focus {
+      outline: 0; border-color: #3b82f6;
+      box-shadow: 0 0 0 3px rgba(59,130,246,.15);
+    }
+
+    .lvr-btn {
+      display: inline-flex; align-items: center; justify-content: center;
+      gap: .35rem; padding: .55rem 1rem; border-radius: 10px;
+      font: inherit; font-weight: 600; font-size: .88rem;
+      cursor: pointer; border: 1.5px solid transparent; line-height: 1;
+      transition: background .15s, color .15s, border-color .15s, transform .1s, opacity .15s, box-shadow .15s;
+    }
+    .lvr-btn:disabled { opacity: .55; cursor: not-allowed; }
+    .lvr-btn:active:not(:disabled) { transform: translateY(1px); }
+    .lvr-btn-sm { padding: .35rem .65rem; font-size: .78rem; border-radius: 8px; }
+    .lvr-btn-icon { font-size: 1rem; line-height: 1; }
+
+    .lvr-btn-ghost {
+      background: #fff; color: #475569; border-color: #e2e8f0;
+    }
+    .lvr-btn-ghost:hover:not(:disabled) {
+      background: #f8fafc; border-color: #cbd5e1;
+    }
+    .lvr-btn-x {
+      color: #ef4444; border-color: #fecaca;
+    }
+    .lvr-btn-x:hover:not(:disabled) { background: #fef2f2; }
+
+    .lvr-btn-primary {
+      background: linear-gradient(135deg, #2563eb 0%, #1e40af 100%);
+      color: #fff; border-color: transparent;
+      box-shadow: 0 2px 8px rgba(37,99,235,.3);
+    }
+    .lvr-btn-primary:hover:not(:disabled) {
+      box-shadow: 0 4px 14px rgba(37,99,235,.45);
+    }
+
+    .lvr-btn-danger {
+      background: #fff; color: #b91c1c; border-color: #fca5a5;
+    }
+    .lvr-btn-danger:hover:not(:disabled) {
+      background: #fef2f2; border-color: #f87171;
+    }
+
+    .lvr-error {
+      background: #fef2f2; border: 1px solid #fecaca; color: #b91c1c;
+      padding: .55rem .8rem; border-radius: 8px; font-size: .85rem;
+    }
+
+    .lvr-footer {
+      padding: .85rem 1.25rem; background: #fff;
+      border-top: 1px solid #e2e8f0;
+      display: flex; gap: .5rem; justify-content: flex-end; flex-wrap: wrap;
+    }
+
+    @media (max-width: 600px) {
+      .lvr-card { max-height: 100vh; border-radius: 0; }
+      .lvr-chap-row { grid-template-columns: 70px 1fr auto; }
+    }
+  `;
+  const style = document.createElement('style');
+  style.id = 'lvr-styles';
+  style.textContent = css;
+  document.head.appendChild(style);
+}
+
+function _lvrAddChapterRow() {
+  const wrap = document.getElementById('lvr-chapters');
+  if (!wrap) return;
+  const row = document.createElement('div');
+  row.className = 'lvr-chap-row';
+  row.innerHTML = `
+    <input type="text" class="lvr-chap-time" placeholder="00:00">
+    <input type="text" class="lvr-chap-title" placeholder="כותרת הפרק" maxlength="200">
+    <button type="button" class="lvr-btn lvr-btn-ghost lvr-btn-sm lvr-btn-x"
+      onclick="this.parentElement.remove()" aria-label="הסר פרק">×</button>`;
+  wrap.appendChild(row);
+}
+
+async function _lvrDecide(submissionId, reportId, action) {
+  const errEl  = document.getElementById('lvr-error');
+  const apprBtn = document.getElementById('lvr-approve-btn');
+  const rejBtn  = document.getElementById('lvr-reject-btn');
+
+  if (errEl) { errEl.hidden = true; errEl.textContent = ''; }
+
+  let chapters = [];
+  if (action === 'approve') {
+    try {
+      const rows = document.querySelectorAll('#lvr-chapters .lvr-chap-row');
+      for (const row of rows) {
+        const timeStr = row.querySelector('.lvr-chap-time')?.value || '';
+        const title   = (row.querySelector('.lvr-chap-title')?.value || '').trim();
+        if (!timeStr && !title) continue;
+        const t = _lvrParseTime(timeStr);
+        if (!Number.isFinite(t)) throw new Error(`זמן לא תקין: ${timeStr}`);
+        if (!title) throw new Error(`כותרת חסרה לפרק בזמן ${timeStr}`);
+        chapters.push({ timeSeconds: Math.floor(t), title });
+      }
+    } catch (e) {
+      if (errEl) { errEl.textContent = e.message; errEl.hidden = false; }
+      return;
+    }
+  } else if (action === 'reject') {
+    if (!confirm('לדחות את הסרטון? הוא יימחק לצמיתות מ-Bunny.')) return;
+  }
+
+  if (apprBtn) apprBtn.disabled = true;
+  if (rejBtn)  rejBtn.disabled  = true;
+
+  const adminNotes = (document.getElementById('lvr-admin-notes')?.value || '').trim();
+
+  try {
+    const idToken = await firebase.auth().currentUser?.getIdToken();
+    const r = await fetch('/.netlify/functions/lecturer-video-approve', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + idToken },
+      body: JSON.stringify({
+        videoGuid: submissionId,
+        action,
+        adminNotes,
+        ...(action === 'approve' ? { chapters } : {}),
+      }),
+    });
+    if (!r.ok) {
+      const err = await r.json().catch(() => ({}));
+      throw new Error(err.error || `failed (${r.status})`);
+    }
+
+    // Auto-close the report so it leaves the open queue
+    if (reportId) {
+      try {
+        await db.collection('reports').doc(reportId).update({
+          status: 'closed',
+          closedAt: firebase.firestore.FieldValue.serverTimestamp(),
+          closedByEmail: adminUser?.email || '',
+          closedNote: action === 'approve' ? 'סרטון אושר ופורסם' : 'סרטון נדחה',
+        });
+      } catch (_) { /* non-fatal */ }
+    }
+
+    toast(action === 'approve' ? '✅ הסרטון פורסם' : '❌ הסרטון נדחה', 'success');
+    document.getElementById('lvr-modal')?.remove();
+    if (typeof renderReportsSection === 'function') renderReportsSection();
+  } catch (e) {
+    if (errEl) { errEl.textContent = 'שגיאה: ' + e.message; errEl.hidden = false; }
+    if (apprBtn) apprBtn.disabled = false;
+    if (rejBtn)  rejBtn.disabled  = false;
+  }
+}
+
 
 
 
