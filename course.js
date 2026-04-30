@@ -2845,17 +2845,17 @@ async function renderCourse() {
     // If user landed on the now-removed AI tab, fall back to exams
     if (STATE.tab === 'ai-questions') STATE.tab = 'exams';
 
-    // Lecturer-only "My Exams" tab — shows exams in this course assigned to the lecturer
+    // Lecturer-only "My Exams" tab — shown ONLY for instructors with assigned exams in this course.
+    // Admins do NOT see this tab (they manage from the admin panel).
     const _role = STATE.userData?.role;
-    const _isLecturer = _role === 'instructor' || _role === 'מרצה' || _role === 'admin';
+    const _isLecturer = _role === 'instructor' || _role === 'מרצה';
     const _myUid = STATE.fireUser?.uid;
     const myCourseExams = _isLecturer
-      ? (_role === 'admin'
-          ? exams
-          : exams.filter(e => Array.isArray(e.assignedLecturers) && e.assignedLecturers.includes(_myUid)))
+      ? exams.filter(e => Array.isArray(e.assignedLecturers) && e.assignedLecturers.includes(_myUid))
       : [];
-    // Guard: if non-lecturer somehow has 'mine' tab selected, fall back
-    if (STATE.tab === 'mine' && !_isLecturer) STATE.tab = 'exams';
+    const _showMineTab = _isLecturer && myCourseExams.length > 0;
+    // Guard: if 'mine' tab is selected but no longer available, fall back
+    if (STATE.tab === 'mine' && !_showMineTab) STATE.tab = 'exams';
 
     page.innerHTML = `
       <div class="container">
@@ -2872,10 +2872,10 @@ async function renderCourse() {
           <button class="tab-btn ${STATE.tab === 'exams' ? 'active' : ''}" onclick="setTab('exams')">
             📋 כל המבחנים
           </button>
-          ${_isLecturer ? `
+          ${_showMineTab ? `
           <button class="tab-btn ${STATE.tab === 'mine' ? 'active' : ''}" onclick="setTab('mine')">
             המבחנים שלי
-            ${myCourseExams.length ? `<span class="badge b-orange">${myCourseExams.length}</span>` : ''}
+            <span class="badge b-orange">${myCourseExams.length}</span>
           </button>` : ''}
           <button class="tab-btn ${STATE.tab === 'starred' ? 'active' : ''}" onclick="setTab('starred')">
             ⭐ שאלות מסומנות
