@@ -1881,11 +1881,11 @@ async function goHome() {
   await renderHome();
 }
 
-async function goCourse(id) {
+async function goCourse(id, opts) {
   STATE.page     = 'course';
   STATE.courseId = id;
   STATE.examId   = null;
-  STATE.tab      = 'exams';
+  STATE.tab      = (opts && opts.tab) || 'exams';
   history.pushState({ page: 'course', courseId: id, examId: null }, '');
   await renderCourse();
 }
@@ -2448,12 +2448,13 @@ async function renderLecturerExams() {
   STATE._lecturerExamsCourseById = courseById;
 }
 
-function _lecturerExamRowHtml(exam, course) {
+function _lecturerExamRowHtml(exam, course, origin) {
   const hidden = exam.hiddenFromStudents === true;
   const courseLabel = course ? `${course.name}${course.code ? ' (' + course.code + ')' : ''}` : (exam.courseId || '');
   const meta = [exam.year, exam.semester, exam.moed].filter(Boolean).join(' · ');
   const isAdmin = STATE.userData?.role === 'admin';
   const safeTitle = (exam.title || '').replace(/'/g, "\\'");
+  const originArg = origin === 'course-tab' ? 'course-tab' : 'my-exams';
   return `
     <div class="lec-exam-row${hidden ? ' is-hidden' : ''}" data-course="${esc(exam.courseId || '')}">
       <div class="lec-exam-info">
@@ -2464,7 +2465,7 @@ function _lecturerExamRowHtml(exam, course) {
         <div class="lec-exam-meta">${esc(courseLabel)}${meta ? ' · ' + esc(meta) : ''}</div>
       </div>
       <div class="lec-exam-actions">
-        <button class="lec-btn lec-btn-primary" onclick="goExamFromMyExams('${esc(exam.courseId)}','${esc(exam.id)}')">פתח</button>
+        <button class="lec-btn lec-btn-primary" onclick="goExamFromMyExams('${esc(exam.courseId)}','${esc(exam.id)}','${originArg}')">פתח</button>
         <button class="lec-btn lec-btn-ghost" onclick="toggleExamHidden('${esc(exam.id)}')">${hidden ? 'הצג' : 'הסתר'}</button>
         ${isAdmin ? '' : `<button class="lec-btn lec-btn-danger" onclick="requestExamDeletion('${esc(exam.id)}','${esc(safeTitle)}','${esc(exam.courseId || '')}')">בקש מחיקה</button>`}
       </div>
@@ -2492,25 +2493,38 @@ function renderMyAssignedExamsInCourseTab(course, myExams) {
   }
   STATE._lecturerExamsCache = myExams; // for toggleExamHidden lookups
   tc.innerHTML = `
-    <div id="my-exams-list" style="display:flex;flex-direction:column;gap:.7rem">
-      ${myExams.map(e => _lecturerExamRowHtml(e, course)).join('')}
+    <div id="my-exams-list" data-origin="course-tab" style="display:flex;flex-direction:column;gap:.7rem">
+      ${myExams.map(e => _lecturerExamRowHtml(e, course, 'course-tab')).join('')}
     </div>`;
 }
 
-/* Smart back from exam page: respects origin (my-exams vs course tab). */
+/* Smart back from exam page: respects origin (my-exams page vs course "my exams" tab). */
 function _examBackNav(courseId) {
+  console.log('[_examBackNav] examOrigin=', STATE.examOrigin, 'courseId=', courseId);
   if (STATE.examOrigin === 'my-exams') {
     STATE.examOrigin = null;
-    // Prefer browser history back (preserves scroll/forward stack)
-    history.back();
+    STATE.page     = 'my-exams';
+    STATE.courseId = null;
+    STATE.examId   = null;
+    history.pushState({ page: 'my-exams' }, '');
+    renderLecturerExams().catch(err => {
+      console.error('[_examBackNav] renderLecturerExams failed:', err);
+      goCourse(courseId);
+    });
     return;
+  }
+  if (STATE.examOrigin === 'course-tab') {
+    STATE.examOrigin = null;
+    return goCourse(courseId, { tab: 'mine' });
   }
   goCourse(courseId);
 }
 
-/* Wrapper used by lecturer "My Exams" rows so we know where to return. */
-function goExamFromMyExams(cId, eId) {
-  STATE.examOrigin = 'my-exams';
+/* Wrapper used by lecturer "My Exams" rows so we know where to return.
+   origin: 'my-exams' (default) or 'course-tab'. */
+function goExamFromMyExams(cId, eId, origin) {
+  STATE.examOrigin = (origin === 'course-tab') ? 'course-tab' : 'my-exams';
+  console.log('[goExamFromMyExams] examOrigin=', STATE.examOrigin, cId, eId);
   goExam(cId, eId);
 }
 
