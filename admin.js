@@ -589,7 +589,20 @@ document.addEventListener('DOMContentLoaded', () => {
   auth.onAuthStateChanged(async (user) => {
     if (user) {
       const userDoc = await db.collection('users').doc(user.uid).get();
-      if (userDoc.exists && userDoc.data()?.role === 'admin') {
+      const userData = userDoc.exists ? userDoc.data() : null;
+
+      // ── Forced password change gate ─────────────────────────
+      // If an admin flagged this account, block admin panel access
+      // and bounce to the main app where the change-password UI lives.
+      if (userData?.mustChangePassword === true) {
+        try { sessionStorage.setItem('vaultau_forced_pw_redirect', '1'); } catch (_) {}
+        // Don't sign out — keep the session so course.js can clear the flag
+        // after they set a new password.
+        location.href = '/index.html';
+        return;
+      }
+
+      if (userData?.role === 'admin') {
         adminUser = { ...user, role: 'admin' };
         // Stamp initial history state so Back works from first section
         if (!history.state?.section) {
