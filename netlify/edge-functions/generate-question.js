@@ -20,7 +20,7 @@
 // ── Constants ───────────────────────────────────────────────
 const GEMINI_MODEL   = 'gemini-3.1-pro-preview';
 const GEMINI_URL     = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:streamGenerateContent?alt=sse`;
-const CLAUDE_MODEL   = 'claude-sonnet-4-20250514';
+const CLAUDE_MODEL   = 'claude-sonnet-4-6';
 const FIREBASE_PROJECT = 'eaxmbank';
 const FIRESTORE_BASE   = `https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT}/databases/(default)/documents`;
 const ROLE_ALLOWED     = new Set(['instructor', 'admin']);
