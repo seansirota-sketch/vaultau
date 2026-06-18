@@ -1805,18 +1805,77 @@ function initPdfJs() {
 }
 
 async function extractTextFromPDF(file) {
+  const pages = await extractPdfTextPages(file);
+  return pages.map(p => p.text).join('\n\n');
+}
+
+async function extractPdfTextPages(file) {
   if (!pdfjsLib) initPdfJs();
   if (!pdfjsLib) throw new Error('pdf.js לא נטען');
   const arrayBuffer = await file.arrayBuffer();
   const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
-  let fullText = '';
+  const pages = [];
   for (let i = 1; i <= pdf.numPages; i++) {
     const page   = await pdf.getPage(i);
     const tc     = await page.getTextContent();
-    const pageText = tc.items.map(item => item.str).join(' ');
-    fullText += pageText + '\n\n';
+    const pageText = tc.items
+      .map(item => item.str)
+      .join(' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+    pages.push({
+      number: i,
+      text: pageText,
+      charCount: pageText.length,
+    });
   }
-  return fullText;
+  return pages;
+}
+
+function analyzePdfTextLayer(pages) {
+  const totalPages = pages.length;
+  const pagesWithText = pages.filter(p => p.charCount >= 30).length;
+  const totalChars = pages.reduce((sum, p) => sum + p.charCount, 0);
+  const textRatio = totalPages ? pagesWithText / totalPages : 0;
+
+  return {
+    totalPages,
+    pagesWithText,
+    totalChars,
+    textRatio,
+    hasUsableTextLayer: pagesWithText >= 2 && (textRatio >= 0.5 || totalChars >= 800),
+  };
+}
+
+function buildPdfTextPrompt(pages) {
+  return pages.map(page => {
+    const text = page.text || 'אין טקסט קריא בעמוד הזה';
+    return `=== עמוד ${page.number} ===\n${text}`;
+  }).join('\n\n');
+}
+
+async function parseSinglePdfWithSmartFlow(file, hooks = {}, parseOpts = {}) {
+  const { onTextLayerStart, onTextLayerReady, onVisionStart, onFallbackStart } = hooks;
+
+  if (onTextLayerStart) onTextLayerStart();
+
+  const pages = await extractPdfTextPages(file);
+  const analysis = analyzePdfTextLayer(pages);
+
+  if (analysis.hasUsableTextLayer) {
+    if (onTextLayerReady) onTextLayerReady(analysis);
+    const textPrompt = buildPdfTextPrompt(pages);
+    const data = await processWithClaude(textPrompt, {
+      titleHint: parseOpts.titleHint || '',
+    });
+    return typeof data === 'object' && data.questions ? data : { questions: data, metadata: null };
+  }
+
+  return await parsePdfWithSharedPipeline(file, {
+    onRenderStart: hooks.onRenderStart,
+    onVisionStart,
+    onFallbackStart,
+  }, parseOpts);
 }
 
 /* ── Progress bar helper ───────────────────────────────── */
@@ -1920,7 +1979,7 @@ async function handleFileInput(file) {
     const t = zone.querySelector('.uz-text');
     const s = zone.querySelector('.uz-sub');
     if (t) t.textContent = `📎 ${file.name}`;
-    if (s) s.textContent = `${(file.size / 1024).toFixed(0)} KB — ממתין לניתוח Vision...`;
+    if (s) s.textContent = `${(file.size / 1024).toFixed(0)} KB — ממתין לניתוח...`;
   }
 
   const isPDF = file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf');
@@ -1933,7 +1992,17 @@ async function handleFileInput(file) {
     let result; // { questions, metadata }
 
     if (isPDF) {
-      result = await parsePdfWithSharedPipeline(file, {
+      result = await parseSinglePdfWithSmartFlow(file, {
+        onTextLayerStart: () => {
+          setStatus('📄 בודק שכבת טקסט ב-PDF...');
+          setProgress(20);
+        },
+        onTextLayerReady: (analysis) => {
+          const coverage = Math.round(analysis.textRatio * 100);
+          setProgress(45);
+          setStatus(`📝 טקסט נמצא ב-PDF (${coverage}% מהעמודים) — מנתח ישירות...`);
+          showSpinner(`📝 טקסט נמצא ב-PDF (${coverage}% מהעמודים) — מנתח ישירות...`);
+        },
         onRenderStart: () => {
           setStatus('🖼️ ממיר PDF לתמונות...');
           setProgress(20);
@@ -6255,7 +6324,4 @@ async function _lvrDecide(submissionId, reportId, action) {
     if (rejBtn)  rejBtn.disabled  = false;
   }
 }
-
-
-
 
