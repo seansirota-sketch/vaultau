@@ -234,13 +234,26 @@ function _truncate(s, n = 280) {
   return str.length > n ? str.slice(0, n - 1) + '…' : str;
 }
 
+function normalizeSubLabel(raw, fallbackIndex = 0) {
+  const heLetters = ['א','ב','ג','ד','ה','ו','ז','ח','ט','י','כ','ל'];
+  const fallback = heLetters[fallbackIndex] || String(fallbackIndex + 1);
+  const cleaned = String(raw || '')
+    .trim()
+    .replace(/^[\(\[\{<\s]+/, '')
+    .replace(/[\)\]\}>\s]+$/, '')
+    .replace(/[׳'״"`]+/g, '')
+    .trim();
+  const letter = cleaned || fallback;
+  return `(${letter})`;
+}
+
 function _sampleQuestionsForPrompt(questions, limit = 3) {
   return (questions || []).slice(0, limit).map((q, i) => ({
     number: q.number || q.index || i + 1,
     text: _truncate(q.text || '', 300),
     isBonus: q.isBonus === true,
     parts: (q.parts || q.subs || []).slice(0, 3).map((p, pi) => ({
-      letter: p.letter || p.label || String(pi + 1),
+      letter: normalizeSubLabel(p.letter || p.label || '', pi),
       text: _truncate(p.text || '', 220),
     }))
   }));
@@ -1777,7 +1790,7 @@ function _normalizeResult(parsed) {
       isBonus: bonus,
       subs:    (q.parts || []).map(p => ({
         id:    genId(),
-        label: '(' + (p.letter || '') + ')',
+        label: normalizeSubLabel(p.letter || p.label || '', 0),
         text:  stripPoints(p.text || ''),
         inlineImages: {},
       }))
@@ -2732,13 +2745,12 @@ function hasPendingImageUploads() {
 }
 
 function renderSubsPreview(subs, qi) {
-  const heLetters = ['א','ב','ג','ד','ה','ו','ז','ח','ט','י','כ','ל'];
   return `<div class="sub-preview" id="static-subs-${qi}">
     <div style="font-size:.78rem;color:var(--muted);margin:.55rem 1.1rem .3rem;font-weight:600">סעיפים:</div>
     ${subs.map((s, si) => `
     <div class="sub-preview-item${s.isBonus ? ' pq-bonus' : ''}" style="margin:0 1.1rem .5rem">
       <div class="sub-preview-top">
-        <span class="sub-preview-lbl">${s.isBonus ? '⭐ ' : ''}${esc(s.label || ('(' + (heLetters[si] || si + 1) + ')'))}</span>
+        <span class="sub-preview-lbl">${s.isBonus ? '⭐ ' : ''}${esc(normalizeSubLabel(s.label, si))}</span>
         <div class="sub-preview-actions">
           <label class="bonus-chk-label" style="font-size:.72rem;white-space:nowrap" title="סמן סעיף כבונוס">
             <input type="checkbox" ${s.isBonus === true ? 'checked' : ''}
@@ -2769,7 +2781,7 @@ function addSubToPreview(qi) {
   const n = parsedQuestions[qi].subs.length;
   parsedQuestions[qi].subs.push({
     id: genId(),
-    label: '(' + (heLetters[n] || String(n + 1)) + ')',
+    label: normalizeSubLabel('', n),
     text: '',
     inlineImages: {},
   });
@@ -6255,7 +6267,6 @@ async function _lvrDecide(submissionId, reportId, action) {
     if (rejBtn)  rejBtn.disabled  = false;
   }
 }
-
 
 
 
