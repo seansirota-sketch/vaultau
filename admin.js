@@ -247,11 +247,18 @@ function normalizeSubLabel(raw, fallbackIndex = 0) {
   return `(${letter})`;
 }
 
+function normalizeQuestionSubject(raw) {
+  return String(raw || '')
+    .trim()
+    .replace(/\s+/g, ' ');
+}
+
 function _sampleQuestionsForPrompt(questions, limit = 3) {
   return (questions || []).slice(0, limit).map((q, i) => ({
     number: q.number || q.index || i + 1,
     text: _truncate(q.text || '', 300),
     isBonus: q.isBonus === true,
+    subject: normalizeQuestionSubject(q.subject || q.topic || ''),
     parts: (q.parts || q.subs || []).slice(0, 3).map((p, pi) => ({
       letter: normalizeSubLabel(p.letter || p.label || '', pi),
       text: _truncate(p.text || '', 220),
@@ -1786,6 +1793,7 @@ function _normalizeResult(parsed) {
       id:      genId(),
       index:   q.number || i + 1,
       text,
+      subject: normalizeQuestionSubject(q.subject || q.topic || ''),
       inlineImages: {},
       isBonus: bonus,
       subs:    (q.parts || []).map(p => ({
@@ -1983,7 +1991,10 @@ async function handleFileInput(file) {
 
     setProgress(95);
 
-    parsedQuestions = result.questions || [];
+    parsedQuestions = (result.questions || []).map(q => ({
+      ...q,
+      subject: normalizeQuestionSubject(q.subject || q.topic || ''),
+    }));
     _parsedModel   = result.model || null;
     _lastParseQuality = computeParseQuality(result, {
       filenameHint: file.name,
@@ -2309,6 +2320,11 @@ function updateQuestionText(qi, val) {
   refreshInlinePreviewContainer(`qb-inline-preview-${qi}`, val, parsedQuestions[qi].inlineImages, `qb-${qi}`, qi, null);
 }
 
+function updateQuestionSubject(qi, val) {
+  if (!parsedQuestions[qi]) return;
+  parsedQuestions[qi].subject = normalizeQuestionSubject(val);
+}
+
 function updateSubText(qi, si, val) {
   if (!parsedQuestions[qi]?.subs?.[si]) return;
   parsedQuestions[qi].subs[si].text = val;
@@ -2627,7 +2643,12 @@ async function runParser() {
     const questions = result.questions || result; // backward compat
 
     setProgress(100);
-    parsedQuestions = Array.isArray(questions) ? questions : [];
+    parsedQuestions = Array.isArray(questions)
+      ? questions.map(q => ({
+          ...q,
+          subject: normalizeQuestionSubject(q.subject || q.topic || ''),
+        }))
+      : [];
     _lastParseQuality = computeParseQuality({ questions: parsedQuestions, metadata: result.metadata || null }, {
       titleHint,
       filenameHint: titleHint,
@@ -2714,10 +2735,17 @@ function renderPreview() {
              ondrop="dropImageIntoQuestionText(event,${i})">${esc(q.text)}</textarea>
            <div id="q-inline-preview-${i}">${renderEditorInlineImagePreview(q.text, q.inlineImages, `q-${i}`, i, null)}</div>`
         : `<input type="hidden" id="qt-${i}" value="">`}
+      <div style="margin:.55rem 1.1rem 0;display:flex;align-items:center;gap:.5rem;flex-wrap:wrap">
+        <label for="qs-${i}" style="font-size:.78rem;color:var(--muted);font-weight:600">נושא:</label>
+        <input id="qs-${i}" class="pq-subject-input" type="text" value="${esc(q.subject || '')}"
+         placeholder="למשל דטרמיננטות"
+         oninput="updateQuestionSubject(${i}, this.value)"
+         style="flex:1;min-width:220px;padding:.5rem .65rem;border:1.5px solid var(--border);border-radius:8px;box-sizing:border-box;font:inherit;color:var(--text)">
+      </div>
       ${q.subs.length ? renderSubsPreview(q.subs, i) : `
         <div style="font-size:.78rem;color:var(--muted);margin:.6rem 1.1rem .2rem;font-weight:600">תוכן השאלה:</div>
         <textarea class="pq-textarea" id="qbody-${i}" rows="4"
-          oninput="updateQuestionText(${i},this.value)"
+         oninput="updateQuestionText(${i},this.value)"
           onpaste="pasteImageIntoQuestionText(event,${i})"
           ondragover="allowImageDrop(event)"
           ondragleave="clearImageDropState(event)"
@@ -2848,6 +2876,7 @@ function addManualQuestion() {
     id: genId(),
     index: newIndex,
     text: '',
+    subject: '',
     isBonus: false,
     subs: [],
     inlineImages: {},
@@ -3038,6 +3067,7 @@ async function submitAddExam() {
       questions: questions.map(q => ({
         id:      q.id || genId(),
         text:    q.text,
+        subject: normalizeQuestionSubject(q.subject || ''),
         inlineImages: Object.fromEntries(
           Object.entries(filterInlineImagesForText(q.text, q.inlineImages)).map(([k, v]) => {
             const url = typeof v === 'string' ? normalizeHttpUrl(v) : normalizeHttpUrl(v?.url || '');
@@ -4184,6 +4214,7 @@ async function editExam(courseId, examId) {
     // ── Questions ──────────────────────────────────────────────
     parsedQuestions = (exam.questions || []).map(q => ({
       ...migrateLegacyImageToInlineText({ ...q, inlineImages: normalizeInlineImagesMap(q.inlineImages) }, 'question-image'),
+      subject: normalizeQuestionSubject(q.subject || q.topic || ''),
       subs: (q.subs || q.parts || []).map(s => (
         migrateLegacyImageToInlineText({ ...s, inlineImages: normalizeInlineImagesMap(s.inlineImages) }, 'sub-image')
       ))
@@ -6267,6 +6298,4 @@ async function _lvrDecide(submissionId, reportId, action) {
     if (rejBtn)  rejBtn.disabled  = false;
   }
 }
-
-
 

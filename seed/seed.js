@@ -6,128 +6,63 @@
  *
  * Creates:
  *  - 2 courses
- *  - 10 exams (5 per course) with Hebrew questions
+ *  - 10 exams (5 per course) with Hebrew questions + subject tags
  *  - users
  *  - 3 users (Firestore)
  *  - 3 Auth accounts (via emulator REST API)
  */
 
-const http = require('http');
 const fs   = require('fs');
 const path = require('path');
+const admin = require('firebase-admin');
 
 const FIRESTORE_HOST = 'localhost';
 const FIRESTORE_PORT = 8080;
 const AUTH_PORT      = 9099;
 const PROJECT_ID     = 'eaxmbank';
 
+process.env.FIRESTORE_EMULATOR_HOST = process.env.FIRESTORE_EMULATOR_HOST || `${FIRESTORE_HOST}:${FIRESTORE_PORT}`;
+process.env.FIREBASE_AUTH_EMULATOR_HOST = process.env.FIREBASE_AUTH_EMULATOR_HOST || `${FIRESTORE_HOST}:${AUTH_PORT}`;
+
+if (!admin.apps.length) {
+  admin.initializeApp({ projectId: PROJECT_ID });
+}
+
+const db = admin.firestore();
+const auth = admin.auth();
+
 // ── Helpers ────────────────────────────────────────────────────────────────
 
-function request(options, body) {
-  return new Promise((resolve, reject) => {
-    const req = http.request(options, res => {
-      let data = '';
-      res.on('data', chunk => data += chunk);
-      res.on('end', () => {
-        try { resolve({ status: res.statusCode, body: JSON.parse(data) }); }
-        catch { resolve({ status: res.statusCode, body: data }); }
-      });
-    });
-    req.on('error', reject);
-    if (body) req.write(typeof body === 'string' ? body : JSON.stringify(body));
-    req.end();
-  });
-}
-
-function toFirestoreValue(val) {
-  if (val === null || val === undefined) return { nullValue: null };
-  if (typeof val === 'boolean')          return { booleanValue: val };
-  if (typeof val === 'number')           return Number.isInteger(val) ? { integerValue: String(val) } : { doubleValue: val };
-  if (typeof val === 'string')           return { stringValue: val };
-  if (Array.isArray(val))                return { arrayValue: { values: val.map(toFirestoreValue) } };
-  if (typeof val === 'object') {
-    const fields = {};
-    for (const [k, v] of Object.entries(val)) fields[k] = toFirestoreValue(v);
-    return { mapValue: { fields } };
-  }
-  return { stringValue: String(val) };
-}
-
-function toFirestoreDoc(obj) {
-  const fields = {};
-  for (const [k, v] of Object.entries(obj)) fields[k] = toFirestoreValue(v);
-  return { fields };
-}
-
 async function setDoc(collection, docId, data) {
-  const path = `/v1/projects/${PROJECT_ID}/databases/(default)/documents/${collection}/${docId}`;
-  const res = await request({
-    hostname: FIRESTORE_HOST,
-    port: FIRESTORE_PORT,
-    path,
-    method: 'PATCH',
-    headers: { 'Content-Type': 'application/json' }
-  }, toFirestoreDoc(data));
-  if (res.status >= 400) throw new Error(`Firestore PATCH ${collection}/${docId} failed: ${res.status} ${JSON.stringify(res.body)}`);
-  return res.body;
+  await db.collection(collection).doc(docId).set(data);
 }
 
 async function createAuthUser(email, password, displayName) {
-  const res = await request({
-    hostname: FIRESTORE_HOST,
-    port: AUTH_PORT,
-    path: `/identitytoolkit.googleapis.com/v1/accounts:signUp?key=fake-api-key`,
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' }
-  }, { email, password, displayName });
-  if (res.status >= 400) throw new Error(`Auth createUser ${email} failed: ${JSON.stringify(res.body)}`);
-  return res.body.localId;
+  const user = await auth.createUser({ email, password, displayName });
+  return user.uid;
 }
 
 async function clearCollection(collection) {
-  const path = `/v1/projects/${PROJECT_ID}/databases/(default)/documents/${collection}`;
-  const res = await request({
-    hostname: FIRESTORE_HOST,
-    port: FIRESTORE_PORT,
-    path,
-    method: 'GET',
-    headers: {}
-  });
-  if (res.status === 404 || !res.body.documents) return;
-  for (const doc of res.body.documents) {
-    const docPath = doc.name.replace(`projects/${PROJECT_ID}/databases/(default)/documents/`, '');
-    await request({
-      hostname: FIRESTORE_HOST,
-      port: FIRESTORE_PORT,
-      path: `/v1/projects/${PROJECT_ID}/databases/(default)/documents/${docPath}`,
-      method: 'DELETE',
-      headers: {}
-    });
+  const docs = await db.collection(collection).listDocuments();
+  for (const doc of docs) {
+    await doc.delete();
   }
 }
 
 async function clearAllAuthUsers() {
-  const res = await request({
-    hostname: FIRESTORE_HOST,
-    port: AUTH_PORT,
-    path: `/emulator/v1/projects/${PROJECT_ID}/accounts`,
-    method: 'DELETE',
-    headers: {}
-  });
-  if (res.status >= 400) console.warn('Could not clear auth users:', res.status);
+  let nextPageToken = undefined;
+  do {
+    const result = await auth.listUsers(1000, nextPageToken);
+    const uids = result.users.map(user => user.uid);
+    if (uids.length) {
+      await auth.deleteUsers(uids);
+    }
+    nextPageToken = result.pageToken;
+  } while (nextPageToken);
 }
 
 async function createDoc(collection, data) {
-  const path = `/v1/projects/${PROJECT_ID}/databases/(default)/documents/${collection}`;
-  const res = await request({
-    hostname: FIRESTORE_HOST,
-    port: FIRESTORE_PORT,
-    path,
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' }
-  }, toFirestoreDoc(data));
-  if (res.status >= 400) throw new Error(`Firestore POST ${collection} failed: ${res.status} ${JSON.stringify(res.body)}`);
-  return res.body;
+  await db.collection(collection).add(data);
 }
 
 // ── Seed Data ──────────────────────────────────────────────────────────────
@@ -148,7 +83,7 @@ const EXAMS = [
     pdfUrl: null, status: 'published', createdBy: 'admin@admin.com',
     questions: [
       {
-        id: 'q1', text: 'חשבו את הנגזרת של הפונקציות הבאות', isBonus: false,
+        id: 'q1', text: 'חשבו את הנגזרת של הפונקציות הבאות', subject: 'נגזרות', isBonus: false,
         subs: [
           { id: 'q1a', label: 'א', text: 'f(x) = x³ − 5x² + 3x − 7' },
           { id: 'q1b', label: 'ב', text: 'g(x) = sin(x²) · eˣ' },
@@ -156,14 +91,14 @@ const EXAMS = [
         ]
       },
       {
-        id: 'q2', text: 'חשבו את האינטגרלים הבאים', isBonus: false,
+        id: 'q2', text: 'חשבו את האינטגרלים הבאים', subject: 'אינטגרלים', isBonus: false,
         subs: [
           { id: 'q2a', label: 'א', text: '∫(2x³ − 4x + 1)dx' },
           { id: 'q2b', label: 'ב', text: '∫sin(x)·cos(x)dx' },
         ]
       },
       {
-        id: 'q3', text: 'מצאו את נקודות הקיצון של f(x) = x⁴ − 8x² + 3 וסווגו אותן', isBonus: false,
+        id: 'q3', text: 'מצאו את נקודות הקיצון של f(x) = x⁴ − 8x² + 3 וסווגו אותן', subject: 'קיצון', isBonus: false,
         subs: []
       },
     ]
@@ -177,22 +112,22 @@ const EXAMS = [
     pdfUrl: null, status: 'published', createdBy: 'admin@admin.com',
     questions: [
       {
-        id: 'q1', text: 'חשבו את הגבולות הבאים', isBonus: false,
+        id: 'q1', text: 'חשבו את הגבולות הבאים', subject: 'גבולות', isBonus: false,
         subs: [
           { id: 'q1a', label: 'א', text: 'lim(x→0) sin(3x)/x' },
           { id: 'q1b', label: 'ב', text: 'lim(x→∞) (x² + 2x) / (3x² − 1)' },
         ]
       },
       {
-        id: 'q2', text: 'השתמשו בכלל לופיטל: lim(x→0) (eˣ − 1 − x) / x²', isBonus: false,
+        id: 'q2', text: 'השתמשו בכלל לופיטל: lim(x→0) (eˣ − 1 − x) / x²', subject: 'לופיטל', isBonus: false,
         subs: []
       },
       {
-        id: 'q3', text: 'חשבו את האינטגרל המסוים: ∫₀¹ x·eˣ dx', isBonus: false,
+        id: 'q3', text: 'חשבו את האינטגרל המסוים: ∫₀¹ x·eˣ dx', subject: 'אינטגרלים', isBonus: false,
         subs: []
       },
       {
-        id: 'q4', text: 'בונוס: הוכיחו כי f(x) = x³ חסומה בקטע [0,1]', isBonus: true,
+        id: 'q4', text: 'בונוס: הוכיחו כי f(x) = x³ חסומה בקטע [0,1]', subject: 'בונוס', isBonus: true,
         subs: []
       },
     ]
@@ -206,7 +141,7 @@ const EXAMS = [
     pdfUrl: null, status: 'published', createdBy: 'admin@admin.com',
     questions: [
       {
-        id: 'q1', text: 'נתונה f(x) = x² · ln(x) עבור x > 0. מצאו:', isBonus: false,
+        id: 'q1', text: 'נתונה f(x) = x² · ln(x) עבור x > 0. מצאו:', subject: 'נגזרות', isBonus: false,
         subs: [
           { id: 'q1a', label: 'א', text: 'את הנגזרת f\'(x)' },
           { id: 'q1b', label: 'ב', text: 'את נקודות הקיצון' },
@@ -214,7 +149,7 @@ const EXAMS = [
         ]
       },
       {
-        id: 'q2', text: 'חשבו בחלקים: ∫ x²·sin(x) dx', isBonus: false,
+        id: 'q2', text: 'חשבו בחלקים: ∫ x²·sin(x) dx', subject: 'אינטגרלים', isBonus: false,
         subs: []
       },
     ]
@@ -228,11 +163,11 @@ const EXAMS = [
     pdfUrl: null, status: 'published', createdBy: 'admin@admin.com',
     questions: [
       {
-        id: 'q1', text: 'הוכיחו מהגדרה: lim(x→2) (3x − 1) = 5', isBonus: false,
+        id: 'q1', text: 'הוכיחו מהגדרה: lim(x→2) (3x − 1) = 5', subject: 'גבולות', isBonus: false,
         subs: []
       },
       {
-        id: 'q2', text: 'חשבו את הנגזרות:', isBonus: false,
+        id: 'q2', text: 'חשבו את הנגזרות:', subject: 'נגזרות', isBonus: false,
         subs: [
           { id: 'q2a', label: 'א', text: 'f(x) = arctan(x²)' },
           { id: 'q2b', label: 'ב', text: 'g(x) = √(x³ + 2x)' },
@@ -249,18 +184,18 @@ const EXAMS = [
     pdfUrl: null, status: 'published', createdBy: 'admin@admin.com',
     questions: [
       {
-        id: 'q1', text: 'בדקו רציפות בנקודה x=0:', isBonus: false,
+        id: 'q1', text: 'בדקו רציפות בנקודה x=0:', subject: 'רציפות', isBonus: false,
         subs: [
           { id: 'q1a', label: 'א', text: 'f(x) = |x|/x עבור x≠0, f(0)=0' },
           { id: 'q1b', label: 'ב', text: 'g(x) = x·sin(1/x) עבור x≠0, g(0)=0' },
         ]
       },
       {
-        id: 'q2', text: 'חשבו: ∫ 1/(x²−1) dx', isBonus: false,
+        id: 'q2', text: 'חשבו: ∫ 1/(x²−1) dx', subject: 'אינטגרלים', isBonus: false,
         subs: []
       },
       {
-        id: 'q3', text: 'מצאו משוואת המשיק לגרף f(x) = eˣ בנקודה x=0', isBonus: false,
+        id: 'q3', text: 'מצאו משוואת המשיק לגרף f(x) = eˣ בנקודה x=0', subject: 'משיקים', isBonus: false,
         subs: []
       },
     ]
@@ -276,7 +211,7 @@ const EXAMS = [
     pdfUrl: null, status: 'published', createdBy: 'admin@admin.com',
     questions: [
       {
-        id: 'q1', text: 'סיבוכיות:', isBonus: false,
+        id: 'q1', text: 'סיבוכיות:', subject: 'סיבוכיות', isBonus: false,
         subs: [
           { id: 'q1a', label: 'א', text: 'מהי סיבוכיות חיפוש בינארי? נמקו.' },
           { id: 'q1b', label: 'ב', text: 'מהי סיבוכיות הזמן הגרוע של מיון בועות?' },
@@ -284,11 +219,11 @@ const EXAMS = [
         ]
       },
       {
-        id: 'q2', text: 'BST: הכניסו 5, 3, 7, 1, 4 לעץ ריק ורשמו את סדר In-Order.', isBonus: false,
+        id: 'q2', text: 'BST: הכניסו 5, 3, 7, 1, 4 לעץ ריק ורשמו את סדר In-Order.', subject: 'עצים', isBonus: false,
         subs: []
       },
       {
-        id: 'q3', text: 'ממשו תור באמצעות שתי מחסניות. כתבו פסאודו-קוד ל-Enqueue ו-Dequeue.', isBonus: false,
+        id: 'q3', text: 'ממשו תור באמצעות שתי מחסניות. כתבו פסאודו-קוד ל-Enqueue ו-Dequeue.', subject: 'תורים', isBonus: false,
         subs: []
       },
     ]
@@ -302,18 +237,18 @@ const EXAMS = [
     pdfUrl: null, status: 'published', createdBy: 'admin@admin.com',
     questions: [
       {
-        id: 'q1', text: 'Heap:', isBonus: false,
+        id: 'q1', text: 'Heap:', subject: 'ערימות', isBonus: false,
         subs: [
           { id: 'q1a', label: 'א', text: 'הגדירו Max-Heap. מה תכונת הסדר?' },
           { id: 'q1b', label: 'ב', text: 'מהי סיבוכיות הוצאת המקסימום?' },
         ]
       },
       {
-        id: 'q2', text: 'תארו BFS והדגימו על גרף עם 5 צמתים.', isBonus: false,
+        id: 'q2', text: 'תארו BFS והדגימו על גרף עם 5 צמתים.', subject: 'גרפים', isBonus: false,
         subs: []
       },
       {
-        id: 'q3', text: 'האם ניתן למיין n מספרים שלמים בסיבוכיות O(n)? תחת אילו תנאים?', isBonus: false,
+        id: 'q3', text: 'האם ניתן למיין n מספרים שלמים בסיבוכיות O(n)? תחת אילו תנאים?', subject: 'סיבוכיות', isBonus: false,
         subs: []
       },
     ]
@@ -327,18 +262,18 @@ const EXAMS = [
     pdfUrl: null, status: 'published', createdBy: 'admin@admin.com',
     questions: [
       {
-        id: 'q1', text: 'רשימה מקושרת:', isBonus: false,
+        id: 'q1', text: 'רשימה מקושרת:', subject: 'רשימות מקושרות', isBonus: false,
         subs: [
           { id: 'q1a', label: 'א', text: 'כתבו פסאודו-קוד להיפוך רשימה מקושרת בודדת' },
           { id: 'q1b', label: 'ב', text: 'מהי הסיבוכיות?' },
         ]
       },
       {
-        id: 'q2', text: 'טבלת גיבוב: הסבירו את עיקרון הפעולה. תארו שתי שיטות לטיפול בהתנגשות.', isBonus: false,
+        id: 'q2', text: 'טבלת גיבוב: הסבירו את עיקרון הפעולה. תארו שתי שיטות לטיפול בהתנגשות.', subject: 'Hashing', isBonus: false,
         subs: []
       },
       {
-        id: 'q3', text: 'Memoization: הסבירו את העיקרון ותנו דוגמה.', isBonus: false,
+        id: 'q3', text: 'Memoization: הסבירו את העיקרון ותנו דוגמה.', subject: 'דינמיקה', isBonus: false,
         subs: []
       },
     ]
@@ -352,11 +287,11 @@ const EXAMS = [
     pdfUrl: null, status: 'published', createdBy: 'admin@admin.com',
     questions: [
       {
-        id: 'q1', text: 'הוכיחו כי גובה עץ AVL עם n צמתים הוא O(log n)', isBonus: false,
+        id: 'q1', text: 'הוכיחו כי גובה עץ AVL עם n צמתים הוא O(log n)', subject: 'עצים מאוזנים', isBonus: false,
         subs: []
       },
       {
-        id: 'q2', text: 'Merge Sort:', isBonus: false,
+        id: 'q2', text: 'Merge Sort:', subject: 'מיון', isBonus: false,
         subs: [
           { id: 'q2a', label: 'א', text: 'הסבירו את עיקרון האלגוריתם' },
           { id: 'q2b', label: 'ב', text: 'כתבו את נוסחת הנסיגה וחשבו את הסיבוכיות' },

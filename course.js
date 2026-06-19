@@ -65,6 +65,12 @@ function safeUrl(u) {
   catch { return ''; }
 }
 
+function normalizeQuestionSubject(raw) {
+  return String(raw || '')
+    .trim()
+    .replace(/\s+/g, ' ');
+}
+
 function toast(msg, type = '') {
   const c = document.getElementById('toast-wrap');
   if (!c) return;
@@ -563,6 +569,7 @@ let STATE = {
   doneExams: [],     // Array<examId> — exams marked as done by user
   inProgressExams: [], // Array<examId> — exams marked as in-progress by user
   savedFilters: {},    // { [courseId]: { fy, fs, fm, fl } } — persists across exam navigation
+  subjectFilters: {},   // { [courseId]: subject } — persists subject tab selection per course
   isAnalyticsOn: true,  // kill switch loaded from settings/global.isAnalyticsOn
   courseCode:    '',    // official university course code (course.code) — set on course/exam load
   examLabel:     '',    // courseCode_year_sem_moed — set on exam load, cleared on course load
@@ -2765,6 +2772,8 @@ async function renderCourse() {
     const lecturers = [...new Set(exams.flatMap(e =>
       Array.isArray(e.lecturers) ? e.lecturers : (e.lecturer ? [e.lecturer] : [])
     ).filter(Boolean))];
+    const subjectEntries = collectCourseSubjectEntries(exams);
+    const subjectOptions = [...new Set(subjectEntries.map(it => it.subject))].sort((a, b) => a.localeCompare(b, 'he'));
     const starCount = countStarred(exams, starred);
 
     // If user landed on the now-removed AI tab, fall back to exams
@@ -2781,6 +2790,8 @@ async function renderCourse() {
     const _showMineTab = _isLecturer && myCourseExams.length > 0;
     // Guard: if 'mine' tab is selected but no longer available, fall back
     if (STATE.tab === 'mine' && !_showMineTab) STATE.tab = 'exams';
+    if (STATE.tab === 'subjects' && !subjectOptions.length) STATE.tab = 'exams';
+    STATE.subjectFilter = STATE.subjectFilters[STATE.courseId] || '';
 
     page.innerHTML = `
       <div class="container">
@@ -2795,25 +2806,29 @@ async function renderCourse() {
         </div>
         <div class="tabs-bar">
           <button class="tab-btn ${STATE.tab === 'exams' ? 'active' : ''}" onclick="setTab('exams')">
-            📋 כל המבחנים
+            כל המבחנים
+          </button>
+          <button class="tab-btn ${STATE.tab === 'subjects' ? 'active' : ''}" onclick="setTab('subjects')">
+            נושאים
+          </button>
+          <button class="tab-btn ${STATE.tab === 'starred' ? 'active' : ''}" onclick="setTab('starred')">
+            שאלות מסומנות
+            ${starCount ? `<span class="badge b-orange">${starCount}</span>` : ''}
+          </button>
+          <button class="tab-btn ${STATE.tab === 'videos' ? 'active' : ''}" onclick="setTab('videos')">
+            סרטונים
           </button>
           ${_showMineTab ? `
           <button class="tab-btn ${STATE.tab === 'mine' ? 'active' : ''}" onclick="setTab('mine')">
             המבחנים שלי
             <span class="badge b-orange">${myCourseExams.length}</span>
           </button>` : ''}
-          <button class="tab-btn ${STATE.tab === 'starred' ? 'active' : ''}" onclick="setTab('starred')">
-            ⭐ שאלות מסומנות
-            ${starCount ? `<span class="badge b-orange">${starCount}</span>` : ''}
-          </button>
-          <button class="tab-btn ${STATE.tab === 'videos' ? 'active' : ''}" onclick="setTab('videos')">
-            🎬 סרטונים
-          </button>
         </div>
         <div id="tab-content"></div>
       </div>`;
 
     if (STATE.tab === 'starred') renderStarredTab(exams, starred);
+    else if (STATE.tab === 'subjects') renderSubjectQuestionsTab(course, subjectEntries, subjectOptions);
     else if (STATE.tab === 'videos') renderVideosTab(exams);
     else if (STATE.tab === 'mine') renderMyAssignedExamsInCourseTab(course, myCourseExams);
     else renderExamsTab(course, exams, years, semesters, moeds, lecturers);
@@ -3417,6 +3432,8 @@ async function renderExam() {
     STATE.examQuestions = questions;
     const userVotes   = STATE.userData?.difficultyVotes || {};
     const isAdminNow  = STATE.userData?.role === 'admin';
+    const subjectOptions = [...new Set(questions.map(q => normalizeQuestionSubject(q.subject || '')).filter(Boolean))]
+      .sort((a, b) => a.localeCompare(b, 'he'));
 
     const metaParts = [
       exam.year,
@@ -3462,12 +3479,12 @@ async function renderExam() {
           </div>
         </div>
 
-        <div class="ev-body" id="ev-questions-body">
-          ${!questions.length
-            ? `<div class="empty"><span class="ei">📝</span><h3>אין שאלות עדיין</h3></div>`
-            : questions.map((q, qi) => renderQuestionCard(q, qi, starred, userVotes, videoMap, isAdminNow, exam.id, examTitle)).join('')}
-        </div>
-      </div>`;
+          <div class="ev-body" id="ev-questions-body">
+            ${!questions.length
+              ? `<div class="empty"><span class="ei">📝</span><h3>אין שאלות עדיין</h3></div>`
+              : questions.map((q, qi) => renderQuestionCard(q, qi, starred, userVotes, videoMap, isAdminNow, exam.id, examTitle)).join('')}
+          </div>
+        </div>`;
 
     // Set text via innerHTML after DOM is built (safe for LaTeX/HTML)
     questions.forEach(q => {
@@ -3501,6 +3518,7 @@ function renderQuestionCard(q, qi, starred, userVotes = {}, videoMap = {}, isAdm
   const subs       = q.subs || q.parts || [];
   const hasSubs    = subs.length > 0;
   const qText      = q.text || '';
+  const subject    = normalizeQuestionSubject(q.subject || '');
   const qImage     = safeUrl(q.imageUrl || '');
   const qAlign     = normalizeImageAlign(q.imageAlign || 'center');
   const qCopyId    = 'copy-q-' + q.id;
@@ -3560,7 +3578,7 @@ function renderQuestionCard(q, qi, starred, userVotes = {}, videoMap = {}, isAdm
     partsHtml = `<div class="qv-parts">${partsHtml}</div>`;
   }
 
-  return `<div class="qv-card${isBonus ? ' qv-card-bonus' : ''}" id="qc-${q.id}">
+  return `<div class="qv-card${isBonus ? ' qv-card-bonus' : ''}" id="qc-${q.id}" data-subject="${esc(subject)}">
     <div class="qv-head${isBonus ? ' qv-head-bonus' : ''}">
       <div class="qv-head-right">
         <span class="qv-num">${isBonus ? 'שאלת בונוס' : 'שאלה ' + (qi + 1)}</span>
@@ -3582,6 +3600,114 @@ function renderQuestionCard(q, qi, starred, userVotes = {}, videoMap = {}, isAdm
     ${qImage ? `<div class="qv-image-wrap align-${qAlign}"><img class="qv-image" src="${qImage}" alt="תמונה לשאלה ${qi + 1}" loading="lazy" referrerpolicy="no-referrer"></div>` : ''}
     ${partsHtml}
   </div>`;
+}
+
+function collectCourseSubjectEntries(exams) {
+  const entries = [];
+  exams.forEach(exam => {
+    (exam.questions || []).forEach((q, qi) => {
+     const subject = normalizeQuestionSubject(q.subject || q.topic || '');
+     if (!subject) return;
+     entries.push({
+       exam,
+       q,
+       qi,
+       subject,
+       examTitle: exam.title || exam.id || '',
+     });
+    });
+  });
+  return entries;
+}
+
+function setCourseSubjectFilter(value) {
+  const normalized = normalizeQuestionSubject(value);
+  STATE.subjectFilter = normalized;
+  if (STATE.courseId) {
+    STATE.subjectFilters[STATE.courseId] = normalized;
+  }
+  renderSubjectQuestionsTab(
+    STATE._currentCourseForSubjectTab,
+    STATE._currentSubjectEntries || [],
+    STATE._currentSubjectOptions || []
+  );
+}
+
+window.setCourseSubjectFilter = setCourseSubjectFilter;
+
+function renderSubjectQuestionsTab(course, subjectEntries, subjectOptions) {
+  const tc = document.getElementById('tab-content');
+  if (!tc) return;
+
+  STATE._currentCourseForSubjectTab = course;
+  STATE._currentSubjectEntries = subjectEntries;
+  STATE._currentSubjectOptions = subjectOptions;
+
+  const starred   = STATE.userData?.starredQuestions || [];
+  const userVotes = STATE.userData?.difficultyVotes || {};
+  const isAdmin   = STATE.userData?.role === 'admin';
+  const selectedSubject = normalizeQuestionSubject(STATE.subjectFilter || '');
+  const filtered = selectedSubject
+    ? subjectEntries.filter(it => it.subject === selectedSubject)
+    : subjectEntries;
+
+  tc.innerHTML = `
+    <div class="subjects-tab">
+      <div style="display:flex;align-items:end;gap:.75rem;flex-wrap:wrap;margin-bottom:1rem">
+        <div class="form-group" style="margin:0;min-width:260px">
+          <label>בחר נושא</label>
+          <select id="subject-filter-select" onchange="setCourseSubjectFilter(this.value)">
+            <option value="">כל הנושאים</option>
+            ${subjectOptions.map(s => `<option value="${esc(s)}"${s === selectedSubject ? ' selected' : ''}>${esc(s)}</option>`).join('')}
+          </select>
+        </div>
+        <div style="font-size:.85rem;color:var(--muted)">
+          ${selectedSubject ? `${filtered.length} שאלות בנושא "${esc(selectedSubject)}"` : `${subjectEntries.length} שאלות מתויגות`}
+        </div>
+      </div>
+      ${!filtered.length ? `
+        <div class="empty" style="margin-top:2rem">
+          <span class="ei">🔎</span>
+          <h3>${selectedSubject ? 'אין שאלות בנושא הזה' : 'אין שאלות מתויגות עדיין'}</h3>
+          <p>${selectedSubject ? 'נסה לבחור נושא אחר' : 'הוסף subject לשאלות כדי שיופיעו כאן'}</p>
+        </div>` : ''}
+      <div class="vt-list" style="display:flex;flex-direction:column;gap:.75rem">
+        ${filtered.map((entry, idx) => `
+          <details class="vt-item" data-subject-entry="${idx}">
+            <summary class="vt-summary">
+              <span class="vt-title">${esc(entry.examTitle)} · שאלה ${entry.qi + 1}</span>
+              <span class="vt-chev">▾</span>
+            </summary>
+            <div class="vt-body"></div>
+          </details>
+        `).join('')}
+      </div>
+    </div>`;
+
+  const select = document.getElementById('subject-filter-select');
+  if (select && select.value !== selectedSubject) select.value = selectedSubject;
+
+  tc.querySelectorAll('details.vt-item').forEach(d => {
+    d.addEventListener('toggle', () => {
+      if (!d.open) return;
+      const body = d.querySelector('.vt-body');
+      if (!body || body.dataset.loaded === '1') return;
+      const idx = Number(d.dataset.subjectEntry);
+      const entry = filtered[idx];
+      if (!entry) return;
+      const questionHtml = renderQuestionCard(entry.q, entry.qi, starred, userVotes, {}, isAdmin, entry.exam.id, entry.examTitle);
+      body.innerHTML = questionHtml;
+      const qEl = body.querySelector(`#qc-${entry.q.id} .qv-text`);
+      if (qEl) qEl.innerHTML = formatMathText(entry.q.text || '', entry.q.inlineImages || null);
+      const subs = entry.q.subs || entry.q.parts || [];
+      subs.forEach(s => {
+        const sEl = body.querySelector(`#si-${s.id} .qv-part-text`);
+        if (sEl) sEl.innerHTML = formatMathText(s.text || '', s.inlineImages || null);
+      });
+      if (window.MathJax) MathJax.typesetPromise([body]);
+      body.dataset.loaded = '1';
+    });
+  });
 }
 
 /* ── STAR (sync to Firestore) ───────────────────────────────── */
