@@ -460,13 +460,25 @@ function getSubjectAiSuggestionContext(input) {
   const matchQuestion = input?.id?.match(/^qs-(\d+)$/);
   const matchSub = input?.id?.match(/^ss-(\d+)-(\d+)$/);
   const question = matchQuestion ? parsedQuestions[Number(matchQuestion[1])] : null;
+  const parentQuestion = matchSub ? parsedQuestions[Number(matchSub[1])] : null;
   const sub = matchSub ? parsedQuestions[Number(matchSub[1])]?.subs?.[Number(matchSub[2])] : null;
+  const fullQuestionText = question
+    ? [
+        normalizeQuestionSubject(question.text || ''),
+        ...(question.subs || question.parts || []).map((part, si) => {
+          const partText = normalizeQuestionSubject(part.text || '');
+          if (!partText) return '';
+          const label = normalizeSubLabel(part.label || part.letter || '', si);
+          return `${label} ${partText}`.trim();
+        }).filter(Boolean),
+      ].filter(Boolean).join('\n')
+    : '';
   return {
     courseId,
     courseName,
     suggestions,
     currentValue: normalizeQuestionSubject(input?.value || ''),
-    questionText: normalizeQuestionSubject(question?.text || ''),
+    questionText: normalizeQuestionSubject(fullQuestionText || parentQuestion?.text || ''),
     subText: normalizeQuestionSubject(sub?.text || ''),
     subjectScope: sub ? 'סעיף' : 'שאלה',
   };
