@@ -593,7 +593,7 @@ async function openSubjectAutocomplete(input) {
   _subjectAutocompleteState.activeInput = input;
   const courseId = document.getElementById('ae-course')?.value || '';
   const token = ++_subjectCatalogRefreshToken;
-  if (courseId) await loadCourseSubjectCatalog(courseId, false);
+  if (courseId) await loadCourseSubjectCatalog(courseId, true);
   if (token !== _subjectCatalogRefreshToken) return [];
   return renderSubjectAutocomplete(input);
 }
@@ -617,7 +617,7 @@ function selectSubjectSuggestion(value) {
 async function refreshSubjectSuggestions(forceReload = false) {
   const courseId = document.getElementById('ae-course')?.value || '';
   const token = ++_subjectCatalogRefreshToken;
-  if (courseId) await loadCourseSubjectCatalog(courseId, forceReload);
+  if (courseId) await loadCourseSubjectCatalog(courseId, forceReload === true);
   if (token !== _subjectCatalogRefreshToken) return [];
   if (_subjectAutocompleteState.activeInput) {
     return renderSubjectAutocomplete(_subjectAutocompleteState.activeInput);
