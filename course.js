@@ -71,6 +71,19 @@ function normalizeQuestionSubject(raw) {
     .replace(/\s+/g, ' ');
 }
 
+function normalizeSubLabel(raw, fallbackIndex = 0) {
+  const heLetters = ['א','ב','ג','ד','ה','ו','ז','ח','ט','י','כ','ל'];
+  const fallback = heLetters[fallbackIndex] || String(fallbackIndex + 1);
+  const cleaned = String(raw || '')
+    .trim()
+    .replace(/^[\(\[\{<\s]+/, '')
+    .replace(/[\)\]\}>\s]+$/, '')
+    .replace(/[׳'״"`]+/g, '')
+    .trim();
+  const letter = cleaned || fallback;
+  return `(${letter})`;
+}
+
 function toast(msg, type = '') {
   const c = document.getElementById('toast-wrap');
   if (!c) return;
@@ -3521,6 +3534,10 @@ function renderQuestionCard(q, qi, starred, userVotes = {}, videoMap = {}, isAdm
   const hasSubs    = subs.length > 0;
   const qText      = q.text || '';
   const subject    = normalizeQuestionSubject(q.subject || '');
+  const subjectTags = [...new Set([
+    subject,
+    ...subs.map(s => normalizeQuestionSubject(s.subject || s.topic || '')),
+  ].filter(Boolean))];
   const qImage     = safeUrl(q.imageUrl || '');
   const qAlign     = normalizeImageAlign(q.imageAlign || 'center');
   const qCopyId    = 'copy-q-' + q.id;
@@ -3580,7 +3597,7 @@ function renderQuestionCard(q, qi, starred, userVotes = {}, videoMap = {}, isAdm
     partsHtml = `<div class="qv-parts">${partsHtml}</div>`;
   }
 
-  return `<div class="qv-card${isBonus ? ' qv-card-bonus' : ''}" id="qc-${q.id}" data-subject="${esc(subject)}">
+  return `<div class="qv-card${isBonus ? ' qv-card-bonus' : ''}" id="qc-${q.id}" data-subject="${esc(subject)}" data-subjects="${esc(subjectTags.join('|'))}">
     <div class="qv-head${isBonus ? ' qv-head-bonus' : ''}">
       <div class="qv-head-right">
         <span class="qv-num">${isBonus ? 'שאלת בונוס' : 'שאלה ' + (qi + 1)}</span>
@@ -3608,15 +3625,39 @@ function collectCourseSubjectEntries(exams) {
   const entries = [];
   exams.forEach(exam => {
     (exam.questions || []).forEach((q, qi) => {
-     const subject = normalizeQuestionSubject(q.subject || q.topic || '');
-     if (!subject) return;
-     entries.push({
-       exam,
-       q,
-       qi,
-       subject,
-       examTitle: exam.title || exam.id || '',
-     });
+      const entryMap = new Map();
+      const examTitle = exam.title || exam.id || '';
+      const stemSubject = normalizeQuestionSubject(q.subject || q.topic || '');
+      if (stemSubject) {
+        entryMap.set(stemSubject, {
+          exam,
+          q,
+          qi,
+          subject: stemSubject,
+          examTitle,
+          subLabels: [],
+        });
+      }
+
+      (q.subs || q.parts || []).forEach((s, si) => {
+        const subject = normalizeQuestionSubject(s.subject || s.topic || '');
+        if (!subject) return;
+        const label = normalizeSubLabel(s.label || s.letter || '', si);
+        if (!entryMap.has(subject)) {
+          entryMap.set(subject, {
+            exam,
+            q,
+            qi,
+            subject,
+            examTitle,
+            subLabels: [],
+          });
+        }
+        const entry = entryMap.get(subject);
+        if (!entry.subLabels.includes(label)) entry.subLabels.push(label);
+      });
+
+      entries.push(...entryMap.values());
     });
   });
   return entries;
@@ -3652,6 +3693,13 @@ function renderSubjectQuestionsTab(course, subjectEntries, subjectOptions) {
   const filtered = selectedSubject
     ? subjectEntries.filter(it => it.subject === selectedSubject)
     : subjectEntries;
+  const subjectSuffix = (entry) => {
+    const labels = entry.subLabels || [];
+    if (!labels.length) return '';
+    return labels.length === 1
+      ? ` · סעיף ${labels[0]}`
+      : ` · סעיפים ${labels.join(', ')}`;
+  };
 
   tc.innerHTML = `
     <div class="subjects-tab">
@@ -3664,20 +3712,20 @@ function renderSubjectQuestionsTab(course, subjectEntries, subjectOptions) {
           </select>
         </div>
         <div style="font-size:.85rem;color:var(--muted)">
-          ${selectedSubject ? `${filtered.length} שאלות בנושא "${esc(selectedSubject)}"` : `${subjectEntries.length} שאלות מתויגות`}
+          ${selectedSubject ? `${filtered.length} שאלות/סעיפים בנושא "${esc(selectedSubject)}"` : `${subjectEntries.length} שאלות/סעיפים מתויגים`}
         </div>
       </div>
       ${!filtered.length ? `
         <div class="empty" style="margin-top:2rem">
           <span class="ei">🔎</span>
-          <h3>${selectedSubject ? 'אין שאלות בנושא הזה' : 'אין שאלות מתויגות עדיין'}</h3>
-          <p>${selectedSubject ? 'נסה לבחור נושא אחר' : 'הוסף subject לשאלות כדי שיופיעו כאן'}</p>
+          <h3>${selectedSubject ? 'אין שאלות או סעיפים בנושא הזה' : 'אין שאלות מתויגות עדיין'}</h3>
+          <p>${selectedSubject ? 'נסה לבחור נושא אחר' : 'הוסף subject לשאלות או לסעיפים כדי שיופיעו כאן'}</p>
         </div>` : ''}
       <div class="vt-list" style="display:flex;flex-direction:column;gap:.75rem">
         ${filtered.map((entry, idx) => `
           <details class="vt-item" data-subject-entry="${idx}">
             <summary class="vt-summary">
-              <span class="vt-title">${esc(entry.examTitle)} · שאלה ${entry.qi + 1}</span>
+              <span class="vt-title">${esc(entry.examTitle)} · שאלה ${entry.qi + 1}${esc(subjectSuffix(entry))}</span>
               <span class="vt-chev">▾</span>
             </summary>
             <div class="vt-body"></div>

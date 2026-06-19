@@ -85,16 +85,16 @@ const EXAMS = [
       {
         id: 'q1', text: 'חשבו את הנגזרת של הפונקציות הבאות', subject: 'נגזרות', isBonus: false,
         subs: [
-          { id: 'q1a', label: 'א', text: 'f(x) = x³ − 5x² + 3x − 7' },
-          { id: 'q1b', label: 'ב', text: 'g(x) = sin(x²) · eˣ' },
-          { id: 'q1c', label: 'ג', text: 'h(x) = ln(x² + 1) / x' },
+          { id: 'q1a', label: 'א', text: 'f(x) = x³ − 5x² + 3x − 7', subject: 'נגזרת פולינום' },
+          { id: 'q1b', label: 'ב', text: 'g(x) = sin(x²) · eˣ', subject: 'שרשרת ומכפלה' },
+          { id: 'q1c', label: 'ג', text: 'h(x) = ln(x² + 1) / x', subject: 'מנה ולוגים' },
         ]
       },
       {
         id: 'q2', text: 'חשבו את האינטגרלים הבאים', subject: 'אינטגרלים', isBonus: false,
         subs: [
-          { id: 'q2a', label: 'א', text: '∫(2x³ − 4x + 1)dx' },
-          { id: 'q2b', label: 'ב', text: '∫sin(x)·cos(x)dx' },
+          { id: 'q2a', label: 'א', text: '∫(2x³ − 4x + 1)dx', subject: 'אינטגרל פולינום' },
+          { id: 'q2b', label: 'ב', text: '∫sin(x)·cos(x)dx', subject: 'אינטגרל טריגונומטרי' },
         ]
       },
       {
@@ -213,9 +213,9 @@ const EXAMS = [
       {
         id: 'q1', text: 'סיבוכיות:', subject: 'סיבוכיות', isBonus: false,
         subs: [
-          { id: 'q1a', label: 'א', text: 'מהי סיבוכיות חיפוש בינארי? נמקו.' },
-          { id: 'q1b', label: 'ב', text: 'מהי סיבוכיות הזמן הגרוע של מיון בועות?' },
-          { id: 'q1c', label: 'ג', text: 'מהי סיבוכיות המרחב של Merge Sort?' },
+          { id: 'q1a', label: 'א', text: 'מהי סיבוכיות חיפוש בינארי? נמקו.', subject: 'חיפוש' },
+          { id: 'q1b', label: 'ב', text: 'מהי סיבוכיות הזמן הגרוע של מיון בועות?', subject: 'מיון' },
+          { id: 'q1c', label: 'ג', text: 'מהי סיבוכיות המרחב של Merge Sort?', subject: 'מיון' },
         ]
       },
       {
