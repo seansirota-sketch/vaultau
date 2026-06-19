@@ -201,6 +201,7 @@ function _buildDirectPrompt(filenameHint) {
 
 ════ שאלות ════
 ⚠️ אל תוסיף ניקוד. אל תכלול "(X נק')".
+▸ subject — אם אפשר לזהות נושא ברור, החזר אותו גם ברמת השאלה וגם ברמת סעיף.
 • LaTeX: $...$ inline, $$...$$ display, \\begin{pmatrix}, \\frac, \\sqrt
 • סעיפים (א)(ב)(ג) / (1)(2)(3) → parts[].letter
 • שאלת בונוס → isBonus: true
@@ -251,6 +252,17 @@ function normalizeQuestionSubject(raw) {
   return String(raw || '')
     .trim()
     .replace(/\s+/g, ' ');
+}
+
+function normalizeParsedQuestion(q) {
+  return {
+    ...q,
+    subject: normalizeQuestionSubject(q.subject || q.topic || ''),
+    subs: (q.subs || q.parts || []).map(s => ({
+      ...s,
+      subject: normalizeQuestionSubject(s.subject || s.topic || ''),
+    })),
+  };
 }
 
 function _sampleQuestionsForPrompt(questions, limit = 3) {
@@ -1750,7 +1762,7 @@ async function processWithClaude(text, opts = {}) {
     messages = [{
       role: 'user',
       content: `${hint}${fewShot}אתה מנתח מבחן אקדמי. שלוף שאלות וסעיפים והחזר JSON בלבד.
-פורמט: {"questions":[{"number":1,"text":"...","isBonus":false,"parts":[{"letter":"א","text":"..."}]}]}
+פורמט: {"questions":[{"number":1,"text":"...","subject":"...","isBonus":false,"parts":[{"letter":"א","text":"...","subject":"..."}]}]}
 הוראות: שלוף הכל, LaTeX ב-$...$, שמור עברית מקורית, החזר JSON תקני בלבד.
 
 טקסט המבחן:
@@ -1800,6 +1812,7 @@ function _normalizeResult(parsed) {
         id:    genId(),
         label: normalizeSubLabel(p.letter || p.label || '', 0),
         text:  stripPoints(p.text || ''),
+        subject: normalizeQuestionSubject(p.subject || p.topic || ''),
         inlineImages: {},
       }))
     };
@@ -1991,10 +2004,7 @@ async function handleFileInput(file) {
 
     setProgress(95);
 
-    parsedQuestions = (result.questions || []).map(q => ({
-      ...q,
-      subject: normalizeQuestionSubject(q.subject || q.topic || ''),
-    }));
+    parsedQuestions = (result.questions || []).map(normalizeParsedQuestion);
     _parsedModel   = result.model || null;
     _lastParseQuality = computeParseQuality(result, {
       filenameHint: file.name,
@@ -2325,6 +2335,11 @@ function updateQuestionSubject(qi, val) {
   parsedQuestions[qi].subject = normalizeQuestionSubject(val);
 }
 
+function updateSubSubject(qi, si, val) {
+  if (!parsedQuestions[qi]?.subs?.[si]) return;
+  parsedQuestions[qi].subs[si].subject = normalizeQuestionSubject(val);
+}
+
 function updateSubText(qi, si, val) {
   if (!parsedQuestions[qi]?.subs?.[si]) return;
   parsedQuestions[qi].subs[si].text = val;
@@ -2644,10 +2659,7 @@ async function runParser() {
 
     setProgress(100);
     parsedQuestions = Array.isArray(questions)
-      ? questions.map(q => ({
-          ...q,
-          subject: normalizeQuestionSubject(q.subject || q.topic || ''),
-        }))
+      ? questions.map(normalizeParsedQuestion)
       : [];
     _lastParseQuality = computeParseQuality({ questions: parsedQuestions, metadata: result.metadata || null }, {
       titleHint,
@@ -2793,6 +2805,13 @@ function renderSubsPreview(subs, qi) {
             onclick="removeSub(${qi},${si})" title="מחק סעיף">✕</button>
         </div>
       </div>
+      <div style="margin:.45rem 0 .45rem;display:flex;align-items:center;gap:.5rem;flex-wrap:wrap">
+        <label for="ss-${qi}-${si}" style="font-size:.72rem;color:var(--muted);font-weight:600">נושא לסעיף:</label>
+        <input id="ss-${qi}-${si}" class="pq-subject-input" type="text" value="${esc(s.subject || '')}"
+          placeholder="למשל דטרמיננטות"
+          oninput="updateSubSubject(${qi}, ${si}, this.value)"
+          style="flex:1;min-width:220px;padding:.45rem .6rem;border:1.5px solid var(--border);border-radius:8px;box-sizing:border-box;font:inherit;color:var(--text)">
+      </div>
       <textarea class="pq-textarea sub-pq-textarea" id="st-${qi}-${si}"
         oninput="updateSubText(${qi},${si},this.value)"
         onpaste="pasteImageIntoSubText(event,${qi},${si})"
@@ -2811,6 +2830,7 @@ function addSubToPreview(qi) {
     id: genId(),
     label: normalizeSubLabel('', n),
     text: '',
+    subject: '',
     inlineImages: {},
   });
   renderPreview();
@@ -3080,6 +3100,7 @@ async function submitAddExam() {
           id:    s.id || genId(),
           label: s.label,
           text:  s.text,
+          subject: normalizeQuestionSubject(s.subject || ''),
           inlineImages: Object.fromEntries(
             Object.entries(filterInlineImagesForText(s.text, s.inlineImages)).map(([k, v]) => {
               const url = typeof v === 'string' ? normalizeHttpUrl(v) : normalizeHttpUrl(v?.url || '');
@@ -4216,7 +4237,11 @@ async function editExam(courseId, examId) {
       ...migrateLegacyImageToInlineText({ ...q, inlineImages: normalizeInlineImagesMap(q.inlineImages) }, 'question-image'),
       subject: normalizeQuestionSubject(q.subject || q.topic || ''),
       subs: (q.subs || q.parts || []).map(s => (
-        migrateLegacyImageToInlineText({ ...s, inlineImages: normalizeInlineImagesMap(s.inlineImages) }, 'sub-image')
+        migrateLegacyImageToInlineText({
+          ...s,
+          subject: normalizeQuestionSubject(s.subject || s.topic || ''),
+          inlineImages: normalizeInlineImagesMap(s.inlineImages)
+        }, 'sub-image')
       ))
     }));
     _loadedExamImageUrls = collectPersistedInlineImageUrls(exam);
@@ -6298,4 +6323,3 @@ async function _lvrDecide(submissionId, reportId, action) {
     if (rejBtn)  rejBtn.disabled  = false;
   }
 }
-
