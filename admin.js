@@ -265,6 +265,54 @@ function normalizeParsedQuestion(q) {
   };
 }
 
+const _subjectCatalogCache = new Map();
+let _subjectCatalogRefreshToken = 0;
+
+function collectQuestionSubjects(items) {
+  const subjects = new Set();
+  (items || []).forEach(q => {
+    const questionSubject = normalizeQuestionSubject(q.subject || q.topic || '');
+    if (questionSubject) subjects.add(questionSubject);
+    (q.subs || q.parts || []).forEach(s => {
+      const subSubject = normalizeQuestionSubject(s.subject || s.topic || '');
+      if (subSubject) subjects.add(subSubject);
+    });
+  });
+  return [...subjects].sort((a, b) => a.localeCompare(b, 'he'));
+}
+
+async function loadCourseSubjectCatalog(courseId, forceReload = false) {
+  if (!courseId) return [];
+  if (!forceReload && _subjectCatalogCache.has(courseId)) {
+    return _subjectCatalogCache.get(courseId);
+  }
+
+  const exams = await fetchExamsForCourse(courseId);
+  const subjects = collectQuestionSubjects(exams.flatMap(exam => exam.questions || []));
+  _subjectCatalogCache.set(courseId, subjects);
+  return subjects;
+}
+
+async function refreshSubjectSuggestions(forceReload = false) {
+  const list = document.getElementById('subject-suggestions');
+  if (!list) return [];
+
+  const courseId = document.getElementById('ae-course')?.value || '';
+  const token = ++_subjectCatalogRefreshToken;
+  const draftSubjects = collectQuestionSubjects(parsedQuestions);
+  const courseSubjects = courseId ? await loadCourseSubjectCatalog(courseId, forceReload) : [];
+  if (token !== _subjectCatalogRefreshToken) return [];
+
+  const subjects = [...new Set([...courseSubjects, ...draftSubjects])].sort((a, b) => a.localeCompare(b, 'he'));
+  list.innerHTML = subjects.map(s => `<option value="${esc(s)}"></option>`).join('');
+  return subjects;
+}
+
+function onAddExamCourseChange() {
+  refreshSubjectSuggestions(true).catch(err => console.warn('refreshSubjectSuggestions failed:', err));
+}
+window.onAddExamCourseChange = onAddExamCourseChange;
+
 function _sampleQuestionsForPrompt(questions, limit = 3) {
   return (questions || []).slice(0, limit).map((q, i) => ({
     number: q.number || q.index || i + 1,
@@ -702,6 +750,7 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('adm-email')?.addEventListener('keydown', e => {
     if (e.key === 'Enter') adminLogin();
   });
+  document.getElementById('ae-course')?.addEventListener('change', onAddExamCourseChange);
 
   // Listen for auth state changes
   auth.onAuthStateChanged(async (user) => {
@@ -811,6 +860,7 @@ async function populateAllSelects() {
         (id === 'manage-filter' || id === 'an-filter' ? '<option value="">כל הקורסים</option>' :
           '<option value="">-- בחר קורס --</option>') + opts;
     });
+    refreshSubjectSuggestions().catch(e => console.warn('refreshSubjectSuggestions failed:', e));
   } catch (e) {
     console.error(e);
   }
@@ -1172,8 +1222,17 @@ async function startBulkUpload() {
         needsManualReview: quality.needsManualReview,
         verified: false,
         questions: questions.map(q => ({
-          id: q.id || genId(), text: q.text, isBonus: q.isBonus === true,
-          subs: (q.subs || []).map(s => ({ id: s.id || genId(), label: s.label, text: s.text, isBonus: s.isBonus === true }))
+          id: q.id || genId(),
+          text: q.text,
+          subject: normalizeQuestionSubject(q.subject || ''),
+          isBonus: q.isBonus === true,
+          subs: (q.subs || []).map(s => ({
+            id: s.id || genId(),
+            label: s.label,
+            text: s.text,
+            subject: normalizeQuestionSubject(s.subject || ''),
+            isBonus: s.isBonus === true
+          }))
         })),
         createdAt: firebase.firestore.FieldValue.serverTimestamp(),
         updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
@@ -1181,11 +1240,12 @@ async function startBulkUpload() {
       };
 
       await db.collection('exams').doc(examId).set(exam);
+        _subjectCatalogCache.delete(courseId);
 
-      // Bulk uploads are stored as non-approved examples for future curation.
-      try {
-        await saveParseExample(exam, {
-          approved: false,
+        // Bulk uploads are stored as non-approved examples for future curation.
+        try {
+          await saveParseExample(exam, {
+            approved: false,
           quality,
           source: 'bulk',
           filenameHint: file.name,
@@ -2333,11 +2393,13 @@ function updateQuestionText(qi, val) {
 function updateQuestionSubject(qi, val) {
   if (!parsedQuestions[qi]) return;
   parsedQuestions[qi].subject = normalizeQuestionSubject(val);
+  refreshSubjectSuggestions().catch(() => {});
 }
 
 function updateSubSubject(qi, si, val) {
   if (!parsedQuestions[qi]?.subs?.[si]) return;
   parsedQuestions[qi].subs[si].subject = normalizeQuestionSubject(val);
+  refreshSubjectSuggestions().catch(() => {});
 }
 
 function updateSubText(qi, si, val) {
@@ -2749,7 +2811,7 @@ function renderPreview() {
         : `<input type="hidden" id="qt-${i}" value="">`}
       <div style="margin:.55rem 1.1rem 0;display:flex;align-items:center;gap:.5rem;flex-wrap:wrap">
         <label for="qs-${i}" style="font-size:.78rem;color:var(--muted);font-weight:600">נושא:</label>
-        <input id="qs-${i}" class="pq-subject-input" type="text" value="${esc(q.subject || '')}"
+        <input id="qs-${i}" class="pq-subject-input" type="text" list="subject-suggestions" value="${esc(q.subject || '')}"
          placeholder="למשל דטרמיננטות"
          oninput="updateQuestionSubject(${i}, this.value)"
          style="flex:1;min-width:220px;padding:.5rem .65rem;border:1.5px solid var(--border);border-radius:8px;box-sizing:border-box;font:inherit;color:var(--text)">
@@ -2768,6 +2830,7 @@ function renderPreview() {
 
   _refreshAdminVideoButtons();
   if (window.MathJax) MathJax.typesetPromise([grid]);
+  refreshSubjectSuggestions().catch(() => {});
 }
 
 function ensureBody(qi, val) { parsedQuestions[qi].text = val; }
@@ -2807,7 +2870,7 @@ function renderSubsPreview(subs, qi) {
       </div>
       <div style="margin:.45rem 0 .45rem;display:flex;align-items:center;gap:.5rem;flex-wrap:wrap">
         <label for="ss-${qi}-${si}" style="font-size:.72rem;color:var(--muted);font-weight:600">נושא לסעיף:</label>
-        <input id="ss-${qi}-${si}" class="pq-subject-input" type="text" value="${esc(s.subject || '')}"
+        <input id="ss-${qi}-${si}" class="pq-subject-input" type="text" list="subject-suggestions" value="${esc(s.subject || '')}"
           placeholder="למשל דטרמיננטות"
           oninput="updateSubSubject(${qi}, ${si}, this.value)"
           style="flex:1;min-width:220px;padding:.45rem .6rem;border:1.5px solid var(--border);border-radius:8px;box-sizing:border-box;font:inherit;color:var(--text)">
@@ -2887,6 +2950,7 @@ function clearImport() {
   const c = document.getElementById('preview-container');
   if (c) c.style.display = 'none';
   setProgress(0);
+  refreshSubjectSuggestions().catch(() => {});
 }
 
 /* Add an empty question manually (no PDF / no text needed) */
@@ -2909,6 +2973,7 @@ function addManualQuestion() {
     const ta = document.getElementById('qbody-' + i);
     if (ta) ta.focus();
   }, 60);
+  refreshSubjectSuggestions().catch(() => {});
   toast('נוספה שאלה ריקה — מלא את התוכן', 'success');
 }
 window.addManualQuestion = addManualQuestion;
@@ -3121,6 +3186,7 @@ async function submitAddExam() {
     // Always set createdAt for new exams; editing preserves it via the exam object
     console.log('[submitAddExam] saving with assignedLecturers=', exam.assignedLecturers, 'hiddenFromStudents=', exam.hiddenFromStudents);
     await db.collection('exams').doc(examId).set(exam);
+    _subjectCatalogCache.delete(courseId);
 
     if (_editingExamId && _loadedExamImageUrls.size) {
       const newUrls = collectPersistedInlineImageUrls(exam);
@@ -4197,6 +4263,7 @@ async function editExam(courseId, examId) {
     set('ae-moed',   exam.moed     || '');
     _setLecturers(exam.lecturers || exam.lecturer || []);
     await _setAssignedLecturers(exam.assignedLecturers || []);
+    await refreshSubjectSuggestions(true);
 
     // ── PDF ────────────────────────────────────────────────────
     const pdfUrlEl     = document.getElementById('ae-pdf-url');

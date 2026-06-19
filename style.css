@@ -2243,11 +2243,26 @@ mjx-container { direction: ltr; }
   font-weight: 600;
   color: #1e293b;
 }
+.vt-summary-subjects {
+  direction: ltr;
+}
 .vt-summary::-webkit-details-marker { display: none; }
 .vt-summary:hover { background: #f8fafc; }
 .vt-title {
   flex: 1 1 auto;
   font-size: .95rem;
+  direction: rtl;
+  text-align: right;
+}
+.vt-subject-pill {
+  flex-shrink: 0;
+  padding: .22rem .55rem;
+  border-radius: 999px;
+  background: #eef2ff;
+  color: #4338ca;
+  font-size: .76rem;
+  font-weight: 700;
+  white-space: nowrap;
 }
 .vt-subtitle {
   font-size: .8rem;
