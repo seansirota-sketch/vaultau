@@ -424,7 +424,7 @@ function renderSubjectAutocomplete(input) {
           <span class="subject-autocomplete-count">${suggestions.length}</span>
         </div>
         <button type="button" class="subject-autocomplete-action" ${_subjectAutocompleteState.aiLoading ? 'disabled' : ''}
-          onmousedown="requestSubjectAISuggestion()">
+          onmousedown="event.preventDefault(); requestSubjectAISuggestion()">
           ${_subjectAutocompleteState.aiLoading ? 'מחשב...' : '✨ הצעה עם AI'}
         </button>
       </div>
