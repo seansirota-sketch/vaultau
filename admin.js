@@ -346,6 +346,10 @@ const _subjectAutocompleteState = {
   activeInput: null,
   hideTimer: null,
   suppressNextOpen: false,
+  aiSuggestion: null,
+  aiLoading: false,
+  aiAbortController: null,
+  repositionRaf: null,
 };
 
 function hideSubjectAutocomplete() {
@@ -355,6 +359,12 @@ function hideSubjectAutocomplete() {
     panel.innerHTML = '';
     panel.dataset.open = '0';
   }
+  if (_subjectAutocompleteState.aiAbortController) {
+    _subjectAutocompleteState.aiAbortController.abort();
+    _subjectAutocompleteState.aiAbortController = null;
+  }
+  _subjectAutocompleteState.aiSuggestion = null;
+  _subjectAutocompleteState.aiLoading = false;
   _subjectAutocompleteState.activeInput = null;
 }
 
@@ -363,35 +373,70 @@ function scheduleHideSubjectAutocomplete() {
   _subjectAutocompleteState.hideTimer = setTimeout(() => hideSubjectAutocomplete(), 120);
 }
 
+function positionSubjectAutocomplete(input) {
+  const panel = document.getElementById('subject-suggestions');
+  if (!panel || !input) return;
+  const rect = input.getBoundingClientRect();
+  const minWidth = Math.max(320, Math.round(rect.width));
+  const left = Math.min(Math.max(12, Math.round(rect.left)), Math.max(12, window.innerWidth - minWidth - 12));
+  panel.style.top = `${Math.round(rect.bottom + 8)}px`;
+  panel.style.left = `${left}px`;
+  panel.style.width = `${minWidth}px`;
+  panel.style.maxWidth = `${Math.max(320, window.innerWidth - 24)}px`;
+}
+
+function scheduleSubjectAutocompleteReposition() {
+  if (_subjectAutocompleteState.repositionRaf) return;
+  _subjectAutocompleteState.repositionRaf = requestAnimationFrame(() => {
+    _subjectAutocompleteState.repositionRaf = null;
+    if (_subjectAutocompleteState.activeInput) {
+      positionSubjectAutocomplete(_subjectAutocompleteState.activeInput);
+    }
+  });
+}
+
 function renderSubjectAutocomplete(input) {
   const panel = document.getElementById('subject-suggestions');
   if (!panel || !input) return [];
 
-  const rect = input.getBoundingClientRect();
   const query = normalizeQuestionSubject(input.value || '');
   const suggestions = getCourseSubjectSuggestions();
   const ranked = suggestions
     .map(subject => ({ subject, score: scoreSubjectSuggestion(subject, query) }))
     .filter(item => item.score > 0)
     .sort((a, b) => b.score - a.score || a.subject.localeCompare(b.subject, 'he'));
-  const visible = ranked.slice(0, 8);
+  const aiSubject = normalizeQuestionSubject(_subjectAutocompleteState.aiSuggestion || '');
+  const aiKey = _normalizeSubjectKey(aiSubject);
+  const visible = [];
+  if (aiSubject) visible.push({ subject: aiSubject, isAi: true });
+  for (const item of ranked) {
+    if (visible.length >= 8) break;
+    if (aiKey && _normalizeSubjectKey(item.subject) === aiKey) continue;
+    visible.push(item);
+  }
   const hasTypedValue = !!query;
 
   panel.innerHTML = `
-    <div class="subject-autocomplete-card" role="listbox" aria-label="נושאים קיימים">
+    <div class="subject-autocomplete-card" role="listbox" aria-label="נושאים קיימים" onwheel="event.stopPropagation()">
       <div class="subject-autocomplete-head">
-        <span>נושאים בקורס</span>
-        <span class="subject-autocomplete-count">${suggestions.length}</span>
+        <div class="subject-autocomplete-head-main">
+          <span>נושאים בקורס</span>
+          <span class="subject-autocomplete-count">${suggestions.length}</span>
+        </div>
+        <button type="button" class="subject-autocomplete-action" ${_subjectAutocompleteState.aiLoading ? 'disabled' : ''}
+          onmousedown="requestSubjectAISuggestion()">
+          ${_subjectAutocompleteState.aiLoading ? 'מחשב...' : '✨ הצעה עם AI'}
+        </button>
       </div>
       <div class="subject-autocomplete-list">
-        ${visible.map(({ subject }, idx) => `
-          <button type="button" class="subject-autocomplete-item" role="option"
-            onmousedown="selectSubjectSuggestion('${esc(subject).replace(/'/g, '&#39;')}')">
+        ${visible.map(({ subject, isAi }, idx) => `
+          <button type="button" class="subject-autocomplete-item${isAi ? ' subject-autocomplete-item-ai' : ''}" role="option"
+            onmousedown='selectSubjectSuggestion(${JSON.stringify(subject)})'>
             <span class="subject-autocomplete-item-main">${esc(subject)}</span>
-            ${idx === 0 && query ? `<span class="subject-autocomplete-item-tag">הכי קרוב</span>` : ''}
+            ${isAi ? `<span class="subject-autocomplete-item-tag subject-autocomplete-item-tag-ai">AI</span>` : (idx === 0 && query ? `<span class="subject-autocomplete-item-tag">הכי קרוב</span>` : '')}
           </button>
         `).join('')}
-        ${!visible.length ? `<div class="subject-autocomplete-empty">${hasTypedValue ? 'אין התאמות קרובות' : 'התחל להקליד כדי לראות נושאים'}</div>` : ''}
+        ${!visible.length ? `<div class="subject-autocomplete-empty">${_subjectAutocompleteState.aiLoading ? 'מפיק הצעה חכמה...' : (hasTypedValue ? 'אין התאמות קרובות' : 'התחל להקליד כדי לראות נושאים')}</div>` : ''}
       </div>
     </div>`;
 
@@ -399,13 +444,144 @@ function renderSubjectAutocomplete(input) {
   panel.style.display = 'block';
   panel.style.position = 'fixed';
   panel.style.zIndex = '10000';
-  panel.style.top = `${Math.round(rect.bottom + 8)}px`;
-  const minWidth = Math.max(320, Math.round(rect.width));
-  const left = Math.min(Math.max(12, Math.round(rect.left)), Math.max(12, window.innerWidth - minWidth - 12));
-  panel.style.left = `${left}px`;
-  panel.style.width = `${minWidth}px`;
-  panel.style.maxWidth = `${Math.max(320, window.innerWidth - 24)}px`;
+  positionSubjectAutocomplete(input);
   return visible;
+}
+
+function getSubjectAiSuggestionContext(input) {
+  const courseId = document.getElementById('ae-course')?.value || '';
+  const courseName = document.getElementById('ae-course')?.selectedOptions?.[0]?.textContent?.trim() || '';
+  const suggestions = getCourseSubjectSuggestions(courseId);
+  const matchQuestion = input?.id?.match(/^qs-(\d+)$/);
+  const matchSub = input?.id?.match(/^ss-(\d+)-(\d+)$/);
+  const question = matchQuestion ? parsedQuestions[Number(matchQuestion[1])] : null;
+  const sub = matchSub ? parsedQuestions[Number(matchSub[1])]?.subs?.[Number(matchSub[2])] : null;
+  return {
+    courseId,
+    courseName,
+    suggestions,
+    currentValue: normalizeQuestionSubject(input?.value || ''),
+    questionText: normalizeQuestionSubject(question?.text || ''),
+    subText: normalizeQuestionSubject(sub?.text || ''),
+    subjectScope: sub ? 'סעיף' : 'שאלה',
+  };
+}
+
+function extractSubjectAiResult(rawText) {
+  const text = normalizeQuestionSubject(String(rawText || ''));
+  if (!text) return '';
+  const withoutFence = text.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim();
+  try {
+    const parsed = JSON.parse(withoutFence);
+    if (typeof parsed === 'string') return normalizeQuestionSubject(parsed);
+    if (parsed && typeof parsed === 'object') {
+      return normalizeQuestionSubject(parsed.subject || parsed.noun || parsed.topic || '');
+    }
+  } catch (_) {}
+  const firstLine = withoutFence.split(/\r?\n/).map(line => line.trim()).find(Boolean) || withoutFence;
+  return normalizeQuestionSubject(firstLine.replace(/^[-*•\d.\s]+/, ''));
+}
+
+async function callGenerateQuestionApi(prompt) {
+  const user = auth.currentUser;
+  if (!user) throw new Error('יש להתחבר כדי להשתמש ב-AI');
+  const idToken = await user.getIdToken();
+  const res = await fetch('/api/generate-question', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${idToken}`,
+    },
+    body: JSON.stringify({ prompt }),
+    signal: _subjectAutocompleteState.aiAbortController?.signal,
+  });
+
+  if (!res.ok) {
+    const errData = await res.json().catch(() => ({}));
+    throw new Error(errData?.error || `Server error: ${res.status}`);
+  }
+
+  let fullText = '';
+  const reader = res.body?.getReader();
+  if (!reader) return fullText;
+  const decoder = new TextDecoder();
+  let buffer = '';
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split('\n');
+    buffer = lines.pop() || '';
+    for (const line of lines) {
+      if (!line.startsWith('data: ')) continue;
+      const payload = line.slice(6).trim();
+      if (payload === '[DONE]') continue;
+      try {
+        const chunk = JSON.parse(payload);
+        if (chunk.error) throw new Error(chunk.error);
+        if (chunk.text) fullText += chunk.text;
+      } catch (e) {
+        if (e.message && !e.message.startsWith('Unexpected')) throw e;
+      }
+    }
+  }
+
+  return fullText;
+}
+
+async function requestSubjectAISuggestion() {
+  const input = _subjectAutocompleteState.activeInput;
+  if (!input) return;
+  if (_subjectAutocompleteState.aiLoading) return;
+
+  const ctx = getSubjectAiSuggestionContext(input);
+  if (!ctx.questionText && !ctx.subText && !ctx.currentValue) {
+    toast('יש לבחור שאלה או להתחיל להקליד כדי לקבל הצעת AI', 'error');
+    return;
+  }
+
+  _subjectAutocompleteState.aiLoading = true;
+  _subjectAutocompleteState.aiSuggestion = null;
+  _subjectAutocompleteState.aiAbortController = new AbortController();
+  renderSubjectAutocomplete(input);
+
+  const listText = ctx.suggestions.length
+    ? ctx.suggestions.map((subject, i) => `${i + 1}. ${subject}`).join('\n')
+    : 'אין נושאים קיימים בקורס עדיין';
+
+  const prompt = [
+    'אתה עוזר לבחור נושא לשאלה במבחן.',
+    'החזר רק JSON תקין בפורמט {"subject":"..."} בלי הסברים ובלי קוד בלוק.',
+    'בחר נושא קצר וברור בעברית.',
+    'אם יש נושא מתאים ברשימת הנושאים הקיימים, עדיף לבחור אותו בדיוק.',
+    'אם אין התאמה טובה, אפשר להציע נושא חדש וקצר.',
+    '',
+    `סוג הסיווג: ${ctx.subjectScope}`,
+    `שם הקורס: ${ctx.courseName || 'לא ידוע'}`,
+    `נושא נוכחי שהמשתמש הקליד: ${ctx.currentValue || '—'}`,
+    `טקסט השאלה: ${ctx.questionText || '—'}`,
+    `טקסט הסעיף: ${ctx.subText || '—'}`,
+    '',
+    'נושאים קיימים בקורס:',
+    listText,
+  ].join('\n');
+
+  try {
+    const raw = await callGenerateQuestionApi(prompt);
+    const subject = extractSubjectAiResult(raw);
+    if (!subject) throw new Error('AI לא החזיר נושא תקין');
+    _subjectAutocompleteState.aiSuggestion = subject;
+  } catch (err) {
+    if (err?.name === 'AbortError' || String(err?.message || '').toLowerCase().includes('aborted')) return;
+    toast('שגיאה בהצעת AI: ' + err.message, 'error');
+  } finally {
+    _subjectAutocompleteState.aiLoading = false;
+    _subjectAutocompleteState.aiAbortController = null;
+    if (_subjectAutocompleteState.activeInput === input) {
+      renderSubjectAutocomplete(input);
+    }
+  }
 }
 
 async function openSubjectAutocomplete(input) {
@@ -899,6 +1075,8 @@ document.addEventListener('DOMContentLoaded', () => {
     if (active && active.contains && active.contains(e.target)) return;
     hideSubjectAutocomplete();
   });
+  window.addEventListener('scroll', scheduleSubjectAutocompleteReposition, true);
+  window.addEventListener('resize', scheduleSubjectAutocompleteReposition);
 
   // Listen for auth state changes
   auth.onAuthStateChanged(async (user) => {
@@ -2541,12 +2719,14 @@ function updateQuestionText(qi, val) {
 function updateQuestionSubject(qi, val) {
   if (!parsedQuestions[qi]) return;
   parsedQuestions[qi].subject = normalizeQuestionSubject(val);
+  _subjectAutocompleteState.aiSuggestion = null;
   refreshSubjectSuggestions().catch(() => {});
 }
 
 function updateSubSubject(qi, si, val) {
   if (!parsedQuestions[qi]?.subs?.[si]) return;
   parsedQuestions[qi].subs[si].subject = normalizeQuestionSubject(val);
+  _subjectAutocompleteState.aiSuggestion = null;
   refreshSubjectSuggestions().catch(() => {});
 }
 
