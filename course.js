@@ -2788,9 +2788,10 @@ async function renderCourse() {
       ? exams.filter(e => Array.isArray(e.assignedLecturers) && e.assignedLecturers.includes(_myUid))
       : [];
     const _showMineTab = _isLecturer && myCourseExams.length > 0;
+    const _showSubjectsTab = subjectOptions.length > 0;
     // Guard: if 'mine' tab is selected but no longer available, fall back
     if (STATE.tab === 'mine' && !_showMineTab) STATE.tab = 'exams';
-    if (STATE.tab === 'subjects' && !subjectOptions.length) STATE.tab = 'exams';
+    if (STATE.tab === 'subjects' && !_showSubjectsTab) STATE.tab = 'exams';
     STATE.subjectFilter = STATE.subjectFilters[STATE.courseId] || '';
 
     page.innerHTML = `
@@ -2808,12 +2809,13 @@ async function renderCourse() {
           <button class="tab-btn ${STATE.tab === 'exams' ? 'active' : ''}" onclick="setTab('exams')">
             כל המבחנים
           </button>
+          ${_showSubjectsTab ? `
+          <span style="width:1px;height:22px;background:var(--border);align-self:center;margin:0 .25rem"></span>
           <button class="tab-btn ${STATE.tab === 'subjects' ? 'active' : ''}" onclick="setTab('subjects')">
             נושאים
-          </button>
+          </button>` : ''}
           <button class="tab-btn ${STATE.tab === 'starred' ? 'active' : ''}" onclick="setTab('starred')">
             שאלות מסומנות
-            ${starCount ? `<span class="badge b-orange">${starCount}</span>` : ''}
           </button>
           <button class="tab-btn ${STATE.tab === 'videos' ? 'active' : ''}" onclick="setTab('videos')">
             סרטונים
