@@ -293,19 +293,160 @@ async function loadCourseSubjectCatalog(courseId, forceReload = false) {
   return subjects;
 }
 
-async function refreshSubjectSuggestions(forceReload = false) {
-  const list = document.getElementById('subject-suggestions');
-  if (!list) return [];
+function _normalizeSubjectKey(value) {
+  return normalizeQuestionSubject(value)
+    .toLowerCase()
+    .replace(/[\s\u200f\u200e]/g, '');
+}
 
+function levenshteinDistance(a, b) {
+  const s = String(a || '');
+  const t = String(b || '');
+  if (!s.length) return t.length;
+  if (!t.length) return s.length;
+  const prev = new Array(t.length + 1);
+  const curr = new Array(t.length + 1);
+  for (let j = 0; j <= t.length; j++) prev[j] = j;
+  for (let i = 1; i <= s.length; i++) {
+    curr[0] = i;
+    for (let j = 1; j <= t.length; j++) {
+      const cost = s[i - 1] === t[j - 1] ? 0 : 1;
+      curr[j] = Math.min(
+        prev[j] + 1,
+        curr[j - 1] + 1,
+        prev[j - 1] + cost
+      );
+    }
+    for (let j = 0; j <= t.length; j++) prev[j] = curr[j];
+  }
+  return prev[t.length];
+}
+
+function getCourseSubjectSuggestions(courseId = document.getElementById('ae-course')?.value || '') {
+  const courseSubjects = courseId ? (_subjectCatalogCache.get(courseId) || []) : [];
+  const draftSubjects = collectQuestionSubjects(parsedQuestions);
+  return [...new Set([...courseSubjects, ...draftSubjects])].sort((a, b) => a.localeCompare(b, 'he'));
+}
+
+function scoreSubjectSuggestion(subject, query) {
+  const s = _normalizeSubjectKey(subject);
+  const q = _normalizeSubjectKey(query);
+  if (!q) return 1;
+  if (s === q) return 1000;
+  if (s.startsWith(q)) return 900 - s.length;
+  if (s.includes(q)) return 700 - s.indexOf(q);
+  if (q.includes(s)) return 650 - s.length;
+  const dist = levenshteinDistance(s, q);
+  if (dist <= 2) return 600 - dist * 40;
+  if (dist <= 4) return 420 - dist * 25;
+  return 0;
+}
+
+const _subjectAutocompleteState = {
+  activeInput: null,
+  hideTimer: null,
+  suppressNextOpen: false,
+};
+
+function hideSubjectAutocomplete() {
+  const panel = document.getElementById('subject-suggestions');
+  if (panel) {
+    panel.style.display = 'none';
+    panel.innerHTML = '';
+    panel.dataset.open = '0';
+  }
+  _subjectAutocompleteState.activeInput = null;
+}
+
+function scheduleHideSubjectAutocomplete() {
+  clearTimeout(_subjectAutocompleteState.hideTimer);
+  _subjectAutocompleteState.hideTimer = setTimeout(() => hideSubjectAutocomplete(), 120);
+}
+
+function renderSubjectAutocomplete(input) {
+  const panel = document.getElementById('subject-suggestions');
+  if (!panel || !input) return [];
+
+  const rect = input.getBoundingClientRect();
+  const query = normalizeQuestionSubject(input.value || '');
+  const suggestions = getCourseSubjectSuggestions();
+  const ranked = suggestions
+    .map(subject => ({ subject, score: scoreSubjectSuggestion(subject, query) }))
+    .filter(item => item.score > 0)
+    .sort((a, b) => b.score - a.score || a.subject.localeCompare(b.subject, 'he'));
+  const visible = ranked.slice(0, 8);
+  const hasTypedValue = !!query;
+
+  panel.innerHTML = `
+    <div class="subject-autocomplete-card" role="listbox" aria-label="נושאים קיימים">
+      <div class="subject-autocomplete-head">
+        <span>נושאים בקורס</span>
+        <span class="subject-autocomplete-count">${suggestions.length}</span>
+      </div>
+      <div class="subject-autocomplete-list">
+        ${visible.map(({ subject }, idx) => `
+          <button type="button" class="subject-autocomplete-item" role="option"
+            onmousedown="selectSubjectSuggestion('${esc(subject).replace(/'/g, '&#39;')}')">
+            <span class="subject-autocomplete-item-main">${esc(subject)}</span>
+            ${idx === 0 && query ? `<span class="subject-autocomplete-item-tag">הכי קרוב</span>` : ''}
+          </button>
+        `).join('')}
+        ${!visible.length ? `<div class="subject-autocomplete-empty">${hasTypedValue ? 'אין התאמות קרובות' : 'התחל להקליד כדי לראות נושאים'}</div>` : ''}
+      </div>
+    </div>`;
+
+  panel.dataset.open = '1';
+  panel.style.display = 'block';
+  panel.style.position = 'fixed';
+  panel.style.zIndex = '10000';
+  panel.style.top = `${Math.round(rect.bottom + 8)}px`;
+  const minWidth = Math.max(320, Math.round(rect.width));
+  const left = Math.min(Math.max(12, Math.round(rect.left)), Math.max(12, window.innerWidth - minWidth - 12));
+  panel.style.left = `${left}px`;
+  panel.style.width = `${minWidth}px`;
+  panel.style.maxWidth = `${Math.max(320, window.innerWidth - 24)}px`;
+  return visible;
+}
+
+async function openSubjectAutocomplete(input) {
+  clearTimeout(_subjectAutocompleteState.hideTimer);
+  if (_subjectAutocompleteState.suppressNextOpen) {
+    _subjectAutocompleteState.suppressNextOpen = false;
+    return [];
+  }
+  _subjectAutocompleteState.activeInput = input;
   const courseId = document.getElementById('ae-course')?.value || '';
   const token = ++_subjectCatalogRefreshToken;
-  const draftSubjects = collectQuestionSubjects(parsedQuestions);
-  const courseSubjects = courseId ? await loadCourseSubjectCatalog(courseId, forceReload) : [];
+  if (courseId) await loadCourseSubjectCatalog(courseId, false);
   if (token !== _subjectCatalogRefreshToken) return [];
+  return renderSubjectAutocomplete(input);
+}
 
-  const subjects = [...new Set([...courseSubjects, ...draftSubjects])].sort((a, b) => a.localeCompare(b, 'he'));
-  list.innerHTML = subjects.map(s => `<option value="${esc(s)}"></option>`).join('');
-  return subjects;
+function selectSubjectSuggestion(value) {
+  const input = _subjectAutocompleteState.activeInput;
+  if (!input) return;
+  hideSubjectAutocomplete();
+  input.value = value;
+  const matchQuestion = input.id.match(/^qs-(\d+)$/);
+  const matchSub = input.id.match(/^ss-(\d+)-(\d+)$/);
+  if (matchQuestion) {
+    updateQuestionSubject(Number(matchQuestion[1]), value);
+  } else if (matchSub) {
+    updateSubSubject(Number(matchSub[1]), Number(matchSub[2]), value);
+  }
+  _subjectAutocompleteState.suppressNextOpen = true;
+  input.focus();
+}
+
+async function refreshSubjectSuggestions(forceReload = false) {
+  const courseId = document.getElementById('ae-course')?.value || '';
+  const token = ++_subjectCatalogRefreshToken;
+  if (courseId) await loadCourseSubjectCatalog(courseId, forceReload);
+  if (token !== _subjectCatalogRefreshToken) return [];
+  if (_subjectAutocompleteState.activeInput) {
+    return renderSubjectAutocomplete(_subjectAutocompleteState.activeInput);
+  }
+  return getCourseSubjectSuggestions(courseId);
 }
 
 function onAddExamCourseChange() {
@@ -750,7 +891,14 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('adm-email')?.addEventListener('keydown', e => {
     if (e.key === 'Enter') adminLogin();
   });
-  document.getElementById('ae-course')?.addEventListener('change', onAddExamCourseChange);
+  document.addEventListener('click', e => {
+    const panel = document.getElementById('subject-suggestions');
+    const active = _subjectAutocompleteState.activeInput;
+    if (!panel || panel.style.display === 'none') return;
+    if (panel.contains(e.target)) return;
+    if (active && active.contains && active.contains(e.target)) return;
+    hideSubjectAutocomplete();
+  });
 
   // Listen for auth state changes
   auth.onAuthStateChanged(async (user) => {
@@ -2772,6 +2920,7 @@ function renderPreview() {
 
   container.style.display = 'block';
   if (countEl) countEl.textContent = `זוהו ${parsedQuestions.length} שאלות`;
+  hideSubjectAutocomplete();
 
   parsedQuestions.forEach((q, i) => { if (!q.index) q.index = i + 1; });
 
@@ -2811,9 +2960,11 @@ function renderPreview() {
         : `<input type="hidden" id="qt-${i}" value="">`}
       <div style="margin:.55rem 1.1rem 0;display:flex;align-items:center;gap:.5rem;flex-wrap:wrap">
         <label for="qs-${i}" style="font-size:.78rem;color:var(--muted);font-weight:600">נושא:</label>
-        <input id="qs-${i}" class="pq-subject-input" type="text" list="subject-suggestions" value="${esc(q.subject || '')}"
+        <input id="qs-${i}" class="pq-subject-input" type="text" autocomplete="off" spellcheck="false" value="${esc(q.subject || '')}"
          placeholder="למשל דטרמיננטות"
-         oninput="updateQuestionSubject(${i}, this.value)"
+         onfocus="openSubjectAutocomplete(this)"
+         oninput="updateQuestionSubject(${i}, this.value); openSubjectAutocomplete(this)"
+         onblur="scheduleHideSubjectAutocomplete()"
          style="flex:1;min-width:220px;padding:.5rem .65rem;border:1.5px solid var(--border);border-radius:8px;box-sizing:border-box;font:inherit;color:var(--text)">
       </div>
       ${q.subs.length ? renderSubsPreview(q.subs, i) : `
@@ -2870,9 +3021,11 @@ function renderSubsPreview(subs, qi) {
       </div>
       <div style="margin:.45rem 0 .45rem;display:flex;align-items:center;gap:.5rem;flex-wrap:wrap">
         <label for="ss-${qi}-${si}" style="font-size:.72rem;color:var(--muted);font-weight:600">נושא לסעיף:</label>
-        <input id="ss-${qi}-${si}" class="pq-subject-input" type="text" list="subject-suggestions" value="${esc(s.subject || '')}"
+        <input id="ss-${qi}-${si}" class="pq-subject-input" type="text" autocomplete="off" spellcheck="false" value="${esc(s.subject || '')}"
           placeholder="למשל דטרמיננטות"
-          oninput="updateSubSubject(${qi}, ${si}, this.value)"
+          onfocus="openSubjectAutocomplete(this)"
+          oninput="updateSubSubject(${qi}, ${si}, this.value); openSubjectAutocomplete(this)"
+          onblur="scheduleHideSubjectAutocomplete()"
           style="flex:1;min-width:220px;padding:.45rem .6rem;border:1.5px solid var(--border);border-radius:8px;box-sizing:border-box;font:inherit;color:var(--text)">
       </div>
       <textarea class="pq-textarea sub-pq-textarea" id="st-${qi}-${si}"
@@ -2950,6 +3103,7 @@ function clearImport() {
   const c = document.getElementById('preview-container');
   if (c) c.style.display = 'none';
   setProgress(0);
+  hideSubjectAutocomplete();
   refreshSubjectSuggestions().catch(() => {});
 }
 
@@ -3243,6 +3397,7 @@ function resetForm() {
   _loadedExamImageUrls = new Set();
   _pendingImageDeletes  = new Set();
   _lastParseQuality = null;
+  hideSubjectAutocomplete();
   clearImport();
   document.getElementById('ae-error')?.classList.remove('show');
   // Hide edit banner

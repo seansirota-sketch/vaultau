@@ -3726,8 +3726,8 @@ function renderSubjectQuestionsTab(course, subjectEntries, subjectOptions) {
           <details class="vt-item" data-subject-entry="${idx}">
             <summary class="vt-summary vt-summary-subjects">
               <span class="vt-title">${esc(entry.examTitle)} · שאלה ${entry.qi + 1}${esc(subSuffix(entry))}</span>
-              <span class="vt-subject-pill">${esc(entry.subject)}</span>
               <span class="vt-chev">▾</span>
+              <span class="vt-subject-pill">${esc(entry.subject)}</span>
             </summary>
             <div class="vt-body"></div>
           </details>
