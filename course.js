@@ -3693,7 +3693,7 @@ function renderSubjectQuestionsTab(course, subjectEntries, subjectOptions) {
   const filtered = selectedSubject
     ? subjectEntries.filter(it => it.subject === selectedSubject)
     : subjectEntries;
-  const subjectSuffix = (entry) => {
+  const subSuffix = (entry) => {
     const labels = entry.subLabels || [];
     if (!labels.length) return '';
     return labels.length === 1
@@ -3724,9 +3724,10 @@ function renderSubjectQuestionsTab(course, subjectEntries, subjectOptions) {
       <div class="vt-list" style="display:flex;flex-direction:column;gap:.75rem">
         ${filtered.map((entry, idx) => `
           <details class="vt-item" data-subject-entry="${idx}">
-            <summary class="vt-summary">
-              <span class="vt-title">${esc(entry.examTitle)} · שאלה ${entry.qi + 1}${esc(subjectSuffix(entry))}</span>
+            <summary class="vt-summary vt-summary-subjects">
+              <span class="vt-title">${esc(entry.examTitle)} · שאלה ${entry.qi + 1}${esc(subSuffix(entry))}</span>
               <span class="vt-chev">▾</span>
+              <span class="vt-subject-pill">${esc(entry.subject)}</span>
             </summary>
             <div class="vt-body"></div>
           </details>

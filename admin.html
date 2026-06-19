@@ -228,10 +228,11 @@
           <div class="ac-title">פרטי המבחן</div>
           <div class="form-group">
             <label>קורס</label>
-            <select id="ae-course">
+            <select id="ae-course" onchange="onAddExamCourseChange()">
               <option value="">-- בחר קורס --</option>
             </select>
           </div>
+          <div id="subject-suggestions" class="subject-autocomplete-panel" style="display:none"></div>
           <div class="form-row-3">
             <div class="form-group">
               <label>כותרת / מזהה מבחן</label>

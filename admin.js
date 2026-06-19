@@ -265,6 +265,371 @@ function normalizeParsedQuestion(q) {
   };
 }
 
+const _subjectCatalogCache = new Map();
+let _subjectCatalogRefreshToken = 0;
+
+function collectQuestionSubjects(items) {
+  const subjects = new Set();
+  (items || []).forEach(q => {
+    const questionSubject = normalizeQuestionSubject(q.subject || q.topic || '');
+    if (questionSubject) subjects.add(questionSubject);
+    (q.subs || q.parts || []).forEach(s => {
+      const subSubject = normalizeQuestionSubject(s.subject || s.topic || '');
+      if (subSubject) subjects.add(subSubject);
+    });
+  });
+  return [...subjects].sort((a, b) => a.localeCompare(b, 'he'));
+}
+
+async function loadCourseSubjectCatalog(courseId, forceReload = false) {
+  if (!courseId) return [];
+  if (!forceReload && _subjectCatalogCache.has(courseId)) {
+    return _subjectCatalogCache.get(courseId);
+  }
+
+  const exams = await fetchExamsForCourse(courseId);
+  const subjects = collectQuestionSubjects(exams.flatMap(exam => exam.questions || []));
+  _subjectCatalogCache.set(courseId, subjects);
+  return subjects;
+}
+
+function _normalizeSubjectKey(value) {
+  return normalizeQuestionSubject(value)
+    .toLowerCase()
+    .replace(/[\s\u200f\u200e]/g, '');
+}
+
+function levenshteinDistance(a, b) {
+  const s = String(a || '');
+  const t = String(b || '');
+  if (!s.length) return t.length;
+  if (!t.length) return s.length;
+  const prev = new Array(t.length + 1);
+  const curr = new Array(t.length + 1);
+  for (let j = 0; j <= t.length; j++) prev[j] = j;
+  for (let i = 1; i <= s.length; i++) {
+    curr[0] = i;
+    for (let j = 1; j <= t.length; j++) {
+      const cost = s[i - 1] === t[j - 1] ? 0 : 1;
+      curr[j] = Math.min(
+        prev[j] + 1,
+        curr[j - 1] + 1,
+        prev[j - 1] + cost
+      );
+    }
+    for (let j = 0; j <= t.length; j++) prev[j] = curr[j];
+  }
+  return prev[t.length];
+}
+
+function getCourseSubjectSuggestions(courseId = document.getElementById('ae-course')?.value || '') {
+  const courseSubjects = courseId ? (_subjectCatalogCache.get(courseId) || []) : [];
+  const draftSubjects = collectQuestionSubjects(parsedQuestions);
+  return [...new Set([...courseSubjects, ...draftSubjects])].sort((a, b) => a.localeCompare(b, 'he'));
+}
+
+function scoreSubjectSuggestion(subject, query) {
+  const s = _normalizeSubjectKey(subject);
+  const q = _normalizeSubjectKey(query);
+  if (!q) return 1;
+  if (s === q) return 1000;
+  if (s.startsWith(q)) return 900 - s.length;
+  if (s.includes(q)) return 700 - s.indexOf(q);
+  if (q.includes(s)) return 650 - s.length;
+  const dist = levenshteinDistance(s, q);
+  if (dist <= 2) return 600 - dist * 40;
+  if (dist <= 4) return 420 - dist * 25;
+  return 0;
+}
+
+const _subjectAutocompleteState = {
+  activeInput: null,
+  hideTimer: null,
+  suppressNextOpen: false,
+  aiSuggestion: null,
+  aiLoading: false,
+  aiAbortController: null,
+  repositionRaf: null,
+};
+
+function hideSubjectAutocomplete() {
+  const panel = document.getElementById('subject-suggestions');
+  if (panel) {
+    panel.style.display = 'none';
+    panel.innerHTML = '';
+    panel.dataset.open = '0';
+  }
+  if (_subjectAutocompleteState.aiAbortController) {
+    _subjectAutocompleteState.aiAbortController.abort();
+    _subjectAutocompleteState.aiAbortController = null;
+  }
+  _subjectAutocompleteState.aiSuggestion = null;
+  _subjectAutocompleteState.aiLoading = false;
+  _subjectAutocompleteState.activeInput = null;
+}
+
+function scheduleHideSubjectAutocomplete() {
+  clearTimeout(_subjectAutocompleteState.hideTimer);
+  _subjectAutocompleteState.hideTimer = setTimeout(() => hideSubjectAutocomplete(), 120);
+}
+
+function positionSubjectAutocomplete(input) {
+  const panel = document.getElementById('subject-suggestions');
+  if (!panel || !input) return;
+  const rect = input.getBoundingClientRect();
+  const minWidth = Math.max(320, Math.round(rect.width));
+  const left = Math.min(Math.max(12, Math.round(rect.left)), Math.max(12, window.innerWidth - minWidth - 12));
+  panel.style.top = `${Math.round(rect.bottom + 8)}px`;
+  panel.style.left = `${left}px`;
+  panel.style.width = `${minWidth}px`;
+  panel.style.maxWidth = `${Math.max(320, window.innerWidth - 24)}px`;
+}
+
+function scheduleSubjectAutocompleteReposition() {
+  if (_subjectAutocompleteState.repositionRaf) return;
+  _subjectAutocompleteState.repositionRaf = requestAnimationFrame(() => {
+    _subjectAutocompleteState.repositionRaf = null;
+    if (_subjectAutocompleteState.activeInput) {
+      positionSubjectAutocomplete(_subjectAutocompleteState.activeInput);
+    }
+  });
+}
+
+function renderSubjectAutocomplete(input) {
+  const panel = document.getElementById('subject-suggestions');
+  if (!panel || !input) return [];
+
+  const query = normalizeQuestionSubject(input.value || '');
+  const suggestions = getCourseSubjectSuggestions();
+  const ranked = suggestions
+    .map(subject => ({ subject, score: scoreSubjectSuggestion(subject, query) }))
+    .filter(item => item.score > 0)
+    .sort((a, b) => b.score - a.score || a.subject.localeCompare(b.subject, 'he'));
+  const aiSubject = normalizeQuestionSubject(_subjectAutocompleteState.aiSuggestion || '');
+  const aiKey = _normalizeSubjectKey(aiSubject);
+  const visible = [];
+  if (aiSubject) visible.push({ subject: aiSubject, isAi: true });
+  for (const item of ranked) {
+    if (visible.length >= 8) break;
+    if (aiKey && _normalizeSubjectKey(item.subject) === aiKey) continue;
+    visible.push(item);
+  }
+  const hasTypedValue = !!query;
+
+  panel.innerHTML = `
+    <div class="subject-autocomplete-card" role="listbox" aria-label="נושאים קיימים" onwheel="event.stopPropagation()">
+      <div class="subject-autocomplete-head">
+        <div class="subject-autocomplete-head-main">
+          <span>נושאים בקורס</span>
+          <span class="subject-autocomplete-count">${suggestions.length}</span>
+        </div>
+        <button type="button" class="subject-autocomplete-action" ${_subjectAutocompleteState.aiLoading ? 'disabled' : ''}
+          onmousedown="requestSubjectAISuggestion()">
+          ${_subjectAutocompleteState.aiLoading ? 'מחשב...' : '✨ הצעה עם AI'}
+        </button>
+      </div>
+      <div class="subject-autocomplete-list">
+        ${visible.map(({ subject, isAi }, idx) => `
+          <button type="button" class="subject-autocomplete-item${isAi ? ' subject-autocomplete-item-ai' : ''}" role="option"
+            onmousedown='selectSubjectSuggestion(${JSON.stringify(subject)})'>
+            <span class="subject-autocomplete-item-main">${esc(subject)}</span>
+            ${isAi ? `<span class="subject-autocomplete-item-tag subject-autocomplete-item-tag-ai">AI</span>` : (idx === 0 && query ? `<span class="subject-autocomplete-item-tag">הכי קרוב</span>` : '')}
+          </button>
+        `).join('')}
+        ${!visible.length ? `<div class="subject-autocomplete-empty">${_subjectAutocompleteState.aiLoading ? 'מפיק הצעה חכמה...' : (hasTypedValue ? 'אין התאמות קרובות' : 'התחל להקליד כדי לראות נושאים')}</div>` : ''}
+      </div>
+    </div>`;
+
+  panel.dataset.open = '1';
+  panel.style.display = 'block';
+  panel.style.position = 'fixed';
+  panel.style.zIndex = '10000';
+  positionSubjectAutocomplete(input);
+  return visible;
+}
+
+function getSubjectAiSuggestionContext(input) {
+  const courseId = document.getElementById('ae-course')?.value || '';
+  const courseName = document.getElementById('ae-course')?.selectedOptions?.[0]?.textContent?.trim() || '';
+  const suggestions = getCourseSubjectSuggestions(courseId);
+  const matchQuestion = input?.id?.match(/^qs-(\d+)$/);
+  const matchSub = input?.id?.match(/^ss-(\d+)-(\d+)$/);
+  const question = matchQuestion ? parsedQuestions[Number(matchQuestion[1])] : null;
+  const sub = matchSub ? parsedQuestions[Number(matchSub[1])]?.subs?.[Number(matchSub[2])] : null;
+  return {
+    courseId,
+    courseName,
+    suggestions,
+    currentValue: normalizeQuestionSubject(input?.value || ''),
+    questionText: normalizeQuestionSubject(question?.text || ''),
+    subText: normalizeQuestionSubject(sub?.text || ''),
+    subjectScope: sub ? 'סעיף' : 'שאלה',
+  };
+}
+
+function extractSubjectAiResult(rawText) {
+  const text = normalizeQuestionSubject(String(rawText || ''));
+  if (!text) return '';
+  const withoutFence = text.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim();
+  try {
+    const parsed = JSON.parse(withoutFence);
+    if (typeof parsed === 'string') return normalizeQuestionSubject(parsed);
+    if (parsed && typeof parsed === 'object') {
+      return normalizeQuestionSubject(parsed.subject || parsed.noun || parsed.topic || '');
+    }
+  } catch (_) {}
+  const firstLine = withoutFence.split(/\r?\n/).map(line => line.trim()).find(Boolean) || withoutFence;
+  return normalizeQuestionSubject(firstLine.replace(/^[-*•\d.\s]+/, ''));
+}
+
+async function callGenerateQuestionApi(prompt) {
+  const user = auth.currentUser;
+  if (!user) throw new Error('יש להתחבר כדי להשתמש ב-AI');
+  const idToken = await user.getIdToken();
+  const res = await fetch('/api/generate-question', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${idToken}`,
+    },
+    body: JSON.stringify({ prompt }),
+    signal: _subjectAutocompleteState.aiAbortController?.signal,
+  });
+
+  if (!res.ok) {
+    const errData = await res.json().catch(() => ({}));
+    throw new Error(errData?.error || `Server error: ${res.status}`);
+  }
+
+  let fullText = '';
+  const reader = res.body?.getReader();
+  if (!reader) return fullText;
+  const decoder = new TextDecoder();
+  let buffer = '';
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split('\n');
+    buffer = lines.pop() || '';
+    for (const line of lines) {
+      if (!line.startsWith('data: ')) continue;
+      const payload = line.slice(6).trim();
+      if (payload === '[DONE]') continue;
+      try {
+        const chunk = JSON.parse(payload);
+        if (chunk.error) throw new Error(chunk.error);
+        if (chunk.text) fullText += chunk.text;
+      } catch (e) {
+        if (e.message && !e.message.startsWith('Unexpected')) throw e;
+      }
+    }
+  }
+
+  return fullText;
+}
+
+async function requestSubjectAISuggestion() {
+  const input = _subjectAutocompleteState.activeInput;
+  if (!input) return;
+  if (_subjectAutocompleteState.aiLoading) return;
+
+  const ctx = getSubjectAiSuggestionContext(input);
+  if (!ctx.questionText && !ctx.subText && !ctx.currentValue) {
+    toast('יש לבחור שאלה או להתחיל להקליד כדי לקבל הצעת AI', 'error');
+    return;
+  }
+
+  _subjectAutocompleteState.aiLoading = true;
+  _subjectAutocompleteState.aiSuggestion = null;
+  _subjectAutocompleteState.aiAbortController = new AbortController();
+  renderSubjectAutocomplete(input);
+
+  const listText = ctx.suggestions.length
+    ? ctx.suggestions.map((subject, i) => `${i + 1}. ${subject}`).join('\n')
+    : 'אין נושאים קיימים בקורס עדיין';
+
+  const prompt = [
+    'אתה עוזר לבחור נושא לשאלה במבחן.',
+    'החזר רק JSON תקין בפורמט {"subject":"..."} בלי הסברים ובלי קוד בלוק.',
+    'בחר נושא קצר וברור בעברית.',
+    'אם יש נושא מתאים ברשימת הנושאים הקיימים, עדיף לבחור אותו בדיוק.',
+    'אם אין התאמה טובה, אפשר להציע נושא חדש וקצר.',
+    '',
+    `סוג הסיווג: ${ctx.subjectScope}`,
+    `שם הקורס: ${ctx.courseName || 'לא ידוע'}`,
+    `נושא נוכחי שהמשתמש הקליד: ${ctx.currentValue || '—'}`,
+    `טקסט השאלה: ${ctx.questionText || '—'}`,
+    `טקסט הסעיף: ${ctx.subText || '—'}`,
+    '',
+    'נושאים קיימים בקורס:',
+    listText,
+  ].join('\n');
+
+  try {
+    const raw = await callGenerateQuestionApi(prompt);
+    const subject = extractSubjectAiResult(raw);
+    if (!subject) throw new Error('AI לא החזיר נושא תקין');
+    _subjectAutocompleteState.aiSuggestion = subject;
+  } catch (err) {
+    if (err?.name === 'AbortError' || String(err?.message || '').toLowerCase().includes('aborted')) return;
+    toast('שגיאה בהצעת AI: ' + err.message, 'error');
+  } finally {
+    _subjectAutocompleteState.aiLoading = false;
+    _subjectAutocompleteState.aiAbortController = null;
+    if (_subjectAutocompleteState.activeInput === input) {
+      renderSubjectAutocomplete(input);
+    }
+  }
+}
+
+async function openSubjectAutocomplete(input) {
+  clearTimeout(_subjectAutocompleteState.hideTimer);
+  if (_subjectAutocompleteState.suppressNextOpen) {
+    _subjectAutocompleteState.suppressNextOpen = false;
+    return [];
+  }
+  _subjectAutocompleteState.activeInput = input;
+  const courseId = document.getElementById('ae-course')?.value || '';
+  const token = ++_subjectCatalogRefreshToken;
+  if (courseId) await loadCourseSubjectCatalog(courseId, false);
+  if (token !== _subjectCatalogRefreshToken) return [];
+  return renderSubjectAutocomplete(input);
+}
+
+function selectSubjectSuggestion(value) {
+  const input = _subjectAutocompleteState.activeInput;
+  if (!input) return;
+  hideSubjectAutocomplete();
+  input.value = value;
+  const matchQuestion = input.id.match(/^qs-(\d+)$/);
+  const matchSub = input.id.match(/^ss-(\d+)-(\d+)$/);
+  if (matchQuestion) {
+    updateQuestionSubject(Number(matchQuestion[1]), value);
+  } else if (matchSub) {
+    updateSubSubject(Number(matchSub[1]), Number(matchSub[2]), value);
+  }
+  _subjectAutocompleteState.suppressNextOpen = true;
+  input.focus();
+}
+
+async function refreshSubjectSuggestions(forceReload = false) {
+  const courseId = document.getElementById('ae-course')?.value || '';
+  const token = ++_subjectCatalogRefreshToken;
+  if (courseId) await loadCourseSubjectCatalog(courseId, forceReload);
+  if (token !== _subjectCatalogRefreshToken) return [];
+  if (_subjectAutocompleteState.activeInput) {
+    return renderSubjectAutocomplete(_subjectAutocompleteState.activeInput);
+  }
+  return getCourseSubjectSuggestions(courseId);
+}
+
+function onAddExamCourseChange() {
+  refreshSubjectSuggestions(true).catch(err => console.warn('refreshSubjectSuggestions failed:', err));
+}
+window.onAddExamCourseChange = onAddExamCourseChange;
+
 function _sampleQuestionsForPrompt(questions, limit = 3) {
   return (questions || []).slice(0, limit).map((q, i) => ({
     number: q.number || q.index || i + 1,
@@ -702,6 +1067,16 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('adm-email')?.addEventListener('keydown', e => {
     if (e.key === 'Enter') adminLogin();
   });
+  document.addEventListener('click', e => {
+    const panel = document.getElementById('subject-suggestions');
+    const active = _subjectAutocompleteState.activeInput;
+    if (!panel || panel.style.display === 'none') return;
+    if (panel.contains(e.target)) return;
+    if (active && active.contains && active.contains(e.target)) return;
+    hideSubjectAutocomplete();
+  });
+  window.addEventListener('scroll', scheduleSubjectAutocompleteReposition, true);
+  window.addEventListener('resize', scheduleSubjectAutocompleteReposition);
 
   // Listen for auth state changes
   auth.onAuthStateChanged(async (user) => {
@@ -811,6 +1186,7 @@ async function populateAllSelects() {
         (id === 'manage-filter' || id === 'an-filter' ? '<option value="">כל הקורסים</option>' :
           '<option value="">-- בחר קורס --</option>') + opts;
     });
+    refreshSubjectSuggestions().catch(e => console.warn('refreshSubjectSuggestions failed:', e));
   } catch (e) {
     console.error(e);
   }
@@ -1172,8 +1548,17 @@ async function startBulkUpload() {
         needsManualReview: quality.needsManualReview,
         verified: false,
         questions: questions.map(q => ({
-          id: q.id || genId(), text: q.text, isBonus: q.isBonus === true,
-          subs: (q.subs || []).map(s => ({ id: s.id || genId(), label: s.label, text: s.text, isBonus: s.isBonus === true }))
+          id: q.id || genId(),
+          text: q.text,
+          subject: normalizeQuestionSubject(q.subject || ''),
+          isBonus: q.isBonus === true,
+          subs: (q.subs || []).map(s => ({
+            id: s.id || genId(),
+            label: s.label,
+            text: s.text,
+            subject: normalizeQuestionSubject(s.subject || ''),
+            isBonus: s.isBonus === true
+          }))
         })),
         createdAt: firebase.firestore.FieldValue.serverTimestamp(),
         updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
@@ -1181,11 +1566,12 @@ async function startBulkUpload() {
       };
 
       await db.collection('exams').doc(examId).set(exam);
+        _subjectCatalogCache.delete(courseId);
 
-      // Bulk uploads are stored as non-approved examples for future curation.
-      try {
-        await saveParseExample(exam, {
-          approved: false,
+        // Bulk uploads are stored as non-approved examples for future curation.
+        try {
+          await saveParseExample(exam, {
+            approved: false,
           quality,
           source: 'bulk',
           filenameHint: file.name,
@@ -2333,11 +2719,15 @@ function updateQuestionText(qi, val) {
 function updateQuestionSubject(qi, val) {
   if (!parsedQuestions[qi]) return;
   parsedQuestions[qi].subject = normalizeQuestionSubject(val);
+  _subjectAutocompleteState.aiSuggestion = null;
+  refreshSubjectSuggestions().catch(() => {});
 }
 
 function updateSubSubject(qi, si, val) {
   if (!parsedQuestions[qi]?.subs?.[si]) return;
   parsedQuestions[qi].subs[si].subject = normalizeQuestionSubject(val);
+  _subjectAutocompleteState.aiSuggestion = null;
+  refreshSubjectSuggestions().catch(() => {});
 }
 
 function updateSubText(qi, si, val) {
@@ -2710,6 +3100,7 @@ function renderPreview() {
 
   container.style.display = 'block';
   if (countEl) countEl.textContent = `זוהו ${parsedQuestions.length} שאלות`;
+  hideSubjectAutocomplete();
 
   parsedQuestions.forEach((q, i) => { if (!q.index) q.index = i + 1; });
 
@@ -2749,9 +3140,11 @@ function renderPreview() {
         : `<input type="hidden" id="qt-${i}" value="">`}
       <div style="margin:.55rem 1.1rem 0;display:flex;align-items:center;gap:.5rem;flex-wrap:wrap">
         <label for="qs-${i}" style="font-size:.78rem;color:var(--muted);font-weight:600">נושא:</label>
-        <input id="qs-${i}" class="pq-subject-input" type="text" value="${esc(q.subject || '')}"
+        <input id="qs-${i}" class="pq-subject-input" type="text" autocomplete="off" spellcheck="false" value="${esc(q.subject || '')}"
          placeholder="למשל דטרמיננטות"
-         oninput="updateQuestionSubject(${i}, this.value)"
+         onfocus="openSubjectAutocomplete(this)"
+         oninput="updateQuestionSubject(${i}, this.value); openSubjectAutocomplete(this)"
+         onblur="scheduleHideSubjectAutocomplete()"
          style="flex:1;min-width:220px;padding:.5rem .65rem;border:1.5px solid var(--border);border-radius:8px;box-sizing:border-box;font:inherit;color:var(--text)">
       </div>
       ${q.subs.length ? renderSubsPreview(q.subs, i) : `
@@ -2768,6 +3161,7 @@ function renderPreview() {
 
   _refreshAdminVideoButtons();
   if (window.MathJax) MathJax.typesetPromise([grid]);
+  refreshSubjectSuggestions().catch(() => {});
 }
 
 function ensureBody(qi, val) { parsedQuestions[qi].text = val; }
@@ -2807,9 +3201,11 @@ function renderSubsPreview(subs, qi) {
       </div>
       <div style="margin:.45rem 0 .45rem;display:flex;align-items:center;gap:.5rem;flex-wrap:wrap">
         <label for="ss-${qi}-${si}" style="font-size:.72rem;color:var(--muted);font-weight:600">נושא לסעיף:</label>
-        <input id="ss-${qi}-${si}" class="pq-subject-input" type="text" value="${esc(s.subject || '')}"
+        <input id="ss-${qi}-${si}" class="pq-subject-input" type="text" autocomplete="off" spellcheck="false" value="${esc(s.subject || '')}"
           placeholder="למשל דטרמיננטות"
-          oninput="updateSubSubject(${qi}, ${si}, this.value)"
+          onfocus="openSubjectAutocomplete(this)"
+          oninput="updateSubSubject(${qi}, ${si}, this.value); openSubjectAutocomplete(this)"
+          onblur="scheduleHideSubjectAutocomplete()"
           style="flex:1;min-width:220px;padding:.45rem .6rem;border:1.5px solid var(--border);border-radius:8px;box-sizing:border-box;font:inherit;color:var(--text)">
       </div>
       <textarea class="pq-textarea sub-pq-textarea" id="st-${qi}-${si}"
@@ -2887,6 +3283,8 @@ function clearImport() {
   const c = document.getElementById('preview-container');
   if (c) c.style.display = 'none';
   setProgress(0);
+  hideSubjectAutocomplete();
+  refreshSubjectSuggestions().catch(() => {});
 }
 
 /* Add an empty question manually (no PDF / no text needed) */
@@ -2909,6 +3307,7 @@ function addManualQuestion() {
     const ta = document.getElementById('qbody-' + i);
     if (ta) ta.focus();
   }, 60);
+  refreshSubjectSuggestions().catch(() => {});
   toast('נוספה שאלה ריקה — מלא את התוכן', 'success');
 }
 window.addManualQuestion = addManualQuestion;
@@ -3121,6 +3520,7 @@ async function submitAddExam() {
     // Always set createdAt for new exams; editing preserves it via the exam object
     console.log('[submitAddExam] saving with assignedLecturers=', exam.assignedLecturers, 'hiddenFromStudents=', exam.hiddenFromStudents);
     await db.collection('exams').doc(examId).set(exam);
+    _subjectCatalogCache.delete(courseId);
 
     if (_editingExamId && _loadedExamImageUrls.size) {
       const newUrls = collectPersistedInlineImageUrls(exam);
@@ -3177,6 +3577,7 @@ function resetForm() {
   _loadedExamImageUrls = new Set();
   _pendingImageDeletes  = new Set();
   _lastParseQuality = null;
+  hideSubjectAutocomplete();
   clearImport();
   document.getElementById('ae-error')?.classList.remove('show');
   // Hide edit banner
@@ -4197,6 +4598,7 @@ async function editExam(courseId, examId) {
     set('ae-moed',   exam.moed     || '');
     _setLecturers(exam.lecturers || exam.lecturer || []);
     await _setAssignedLecturers(exam.assignedLecturers || []);
+    await refreshSubjectSuggestions(true);
 
     // ── PDF ────────────────────────────────────────────────────
     const pdfUrlEl     = document.getElementById('ae-pdf-url');
