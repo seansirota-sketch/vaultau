@@ -287,7 +287,12 @@ async function loadCourseSubjectCatalog(courseId, forceReload = false) {
     return _subjectCatalogCache.get(courseId);
   }
 
-  const exams = await fetchExamsForCourse(courseId);
+  const snap = await db.collection('exams')
+    .where('courseId', '==', courseId)
+    .get();
+  const exams = snap.docs
+    .map(d => ({ ...d.data(), id: d.id }))
+    .sort((a, b) => (b.year || 0) - (a.year || 0));
   const subjects = collectQuestionSubjects(exams.flatMap(exam => exam.questions || []));
   _subjectCatalogCache.set(courseId, subjects);
   return subjects;
