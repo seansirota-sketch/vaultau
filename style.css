@@ -2417,6 +2417,9 @@ mjx-container { direction: ltr; }
   transition: transform .18s;
   flex-shrink: 0;
 }
+.vt-summary-lock {
+  margin-inline-start: auto;
+}
 .vt-item[open] .vt-chev { transform: rotate(180deg); }
 .vt-body {
   border-top: 1px solid #eef2f7;

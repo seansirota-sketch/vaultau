@@ -644,18 +644,33 @@ function getCourseFreeAllowedSubjectsSet() {
   return new Set((settings.freeAllowedSubjects || []).map(s => normalizeQuestionSubject(s)).filter(Boolean));
 }
 
-function renderPremiumLockIcon(title = 'זמין למנויי פרימיום') {
-  return `<span class="feature-lock-icon" title="${esc(title)}" aria-label="${esc(title)}">🔒</span>`;
+function renderPremiumLockIcon(title = 'זמין למנויי פרימיום', extraClass = '') {
+  const cls = `feature-lock-icon${extraClass ? ' ' + extraClass : ''}`;
+  return `<span class="${cls}" title="${esc(title)}" aria-label="${esc(title)}">🔒</span>`;
 }
 
-function isDoneLockedForCurrentCourse(examId) {
+function getCurrentCourseExamIdsSet() {
+  return new Set((STATE.exams[STATE.courseId] || []).map(exam => exam.id));
+}
+
+function countMarkedExamsForCurrentCourse() {
+  const courseExamIds = getCurrentCourseExamIdsSet();
+  const marked = new Set();
+  (STATE.doneExams || []).forEach(id => {
+    if (courseExamIds.has(id)) marked.add(id);
+  });
+  (STATE.inProgressExams || []).forEach(id => {
+    if (courseExamIds.has(id)) marked.add(id);
+  });
+  return marked.size;
+}
+
+function isExamMarkLockedForCurrentCourse(examId) {
   if (isPremiumUnlockedForCourse()) return false;
-  const maxDone = getCourseFreeLimit('maxDoneExams');
-  if (maxDone < 0) return false;
-  if (STATE.doneExams.includes(examId)) return false;
-  const courseExamIds = new Set((STATE.exams[STATE.courseId] || []).map(exam => exam.id));
-  const inCourseDone = (STATE.doneExams || []).filter(id => courseExamIds.has(id)).length;
-  return inCourseDone >= maxDone;
+  const maxMarks = getCourseFreeLimit('maxDoneExams');
+  if (maxMarks < 0) return false;
+  if (STATE.doneExams.includes(examId) || STATE.inProgressExams.includes(examId)) return false;
+  return countMarkedExamsForCurrentCourse() >= maxMarks;
 }
 
 function isStarLockedForCurrentCourse(questionId, starred = []) {
@@ -3068,7 +3083,7 @@ function applyFilters(fromUser = false) {
   el.innerHTML = filtered.map(e => {
     const isDone       = STATE.doneExams.includes(e.id);
     const isInProgress = STATE.inProgressExams.includes(e.id);
-    const doneLocked   = isDoneLockedForCurrentCourse(e.id);
+    const markLocked   = isExamMarkLockedForCurrentCourse(e.id);
     const statusClass  = isDone ? 'exam-done' : isInProgress ? 'exam-inprogress' : '';
     return `
     <div class="exam-item ${statusClass}" onclick="goExam('${STATE.courseId}','${e.id}')">
@@ -3099,12 +3114,13 @@ function applyFilters(fromUser = false) {
         title="${isInProgress ? 'בטל בתהליך' : 'סמן כבתהליך'}">
         ${isInProgress ? '⏳' : '◑'}
       </button>
+      ${markLocked ? renderPremiumLockIcon('סימון מבחן נוסף זמין למנויי פרימיום') : ''}
       <button class="done-toggle-btn ${isDone ? 'done-active' : ''}"
         onclick="event.stopPropagation(); toggleDone('${e.id}')"
         title="${isDone ? 'בטל סימון בוצע' : 'סמן כבוצע'}">
         ${isDone ? '✓' : '○'}
       </button>
-      ${doneLocked ? renderPremiumLockIcon('השלמת מבחן נוסף זמינה למנויי פרימיום') : ''}
+      ${markLocked ? renderPremiumLockIcon('סימון מבחן נוסף זמין למנויי פרימיום') : ''}
       <span class="exam-arrow">←</span>
     </div>`;
   }).join('');
@@ -3151,14 +3167,10 @@ async function toggleDone(examId) {
   const adding  = idx === -1;
 
   if (adding && !isPremiumUnlockedForCourse()) {
-    const maxDone = getCourseFreeLimit('maxDoneExams');
-    if (maxDone >= 0) {
-      const courseExamIds = new Set((STATE.exams[STATE.courseId] || []).map(exam => exam.id));
-      const inCourseDone = done.filter(id => courseExamIds.has(id)).length;
-      if (inCourseDone >= maxDone) {
-        toast(`מסלול חינם מאפשר לסמן עד ${maxDone} מבחנים כבוצעו בקורס זה`, 'error');
-        return;
-      }
+    const maxMarks = getCourseFreeLimit('maxDoneExams');
+    if (maxMarks >= 0 && isExamMarkLockedForCurrentCourse(examId)) {
+      toast(`מסלול חינם מאפשר לסמן עד ${maxMarks} מבחנים (בוצע/בתהליך) בקורס זה`, 'error');
+      return;
     }
   }
 
@@ -3211,6 +3223,14 @@ async function toggleInProgress(examId) {
   const ip    = [...STATE.inProgressExams];
   const idx   = ip.indexOf(examId);
   const adding = idx === -1;
+
+  if (adding && !isPremiumUnlockedForCourse()) {
+    const maxMarks = getCourseFreeLimit('maxDoneExams');
+    if (maxMarks >= 0 && isExamMarkLockedForCurrentCourse(examId)) {
+      toast(`מסלול חינם מאפשר לסמן עד ${maxMarks} מבחנים (בוצע/בתהליך) בקורס זה`, 'error');
+      return;
+    }
+  }
 
   if (adding) {
     ip.push(examId);
@@ -3437,14 +3457,20 @@ async function renderVideosTab(exams) {
   const starred   = STATE.userData?.starredQuestions || [];
   const userVotes = STATE.userData?.difficultyVotes  || {};
   const isAdmin   = STATE.userData?.role === 'admin';
+  const isUnlocked = isPremiumUnlockedForCourse();
 
   const html = entries.map((entry, idx) => {
     const { q, qi, examLabel } = entry;
     const title = `${examLabel} שאלה ${qi + 1}`;
+    const hasLockedVideo = !isUnlocked && (
+      ((videoMap[q.id]?.accessTier || 'free') === 'premium') ||
+      (q.subs || q.parts || []).some(s => ((videoMap[s.id]?.accessTier || 'free') === 'premium'))
+    );
     return `<details class="vt-item" data-qid="${esc(q.id)}" data-idx="${idx}">
       <summary class="vt-summary">
         <span class="vt-title">${esc(title)}</span>
         <span class="vt-chev">▾</span>
+        ${hasLockedVideo ? renderPremiumLockIcon('סרטון זה זמין למנויי פרימיום', 'vt-summary-lock') : ''}
       </summary>
       <div class="vt-body"></div>
     </details>`;
@@ -3554,7 +3580,7 @@ async function renderExam() {
     ].filter(Boolean);
     const metaLine  = metaParts.join(' • ');
     const examTitle = exam.title || exam.id || '';
-    const doneLockedInExam = isDoneLockedForCurrentCourse(exam.id);
+    const markLockedInExam = isExamMarkLockedForCurrentCourse(exam.id);
 
     page.innerHTML = `
       <div class="ev-wrap">
@@ -3579,13 +3605,14 @@ async function renderExam() {
               title="${STATE.inProgressExams.includes(exam.id) ? 'בטל בתהליך' : 'סמן כבתהליך'}">
               ${STATE.inProgressExams.includes(exam.id) ? '⏳' : '◑'}
             </button>
+            ${markLockedInExam ? renderPremiumLockIcon('סימון מבחן נוסף זמין למנויי פרימיום') : ''}
             <button class="done-toggle-btn ${STATE.doneExams.includes(exam.id) ? 'done-active' : ''}"
               id="ev-done-btn"
               onclick="toggleDoneFromExam('${exam.id}')"
               title="${STATE.doneExams.includes(exam.id) ? 'בטל סימון בוצע' : 'סמן כבוצע'}">
               ${STATE.doneExams.includes(exam.id) ? '✓' : '○'}
             </button>
-            ${doneLockedInExam ? renderPremiumLockIcon('השלמת מבחן נוסף זמינה למנויי פרימיום') : ''}
+            ${markLockedInExam ? renderPremiumLockIcon('סימון מבחן נוסף זמין למנויי פרימיום') : ''}
           </div>
           <div class="ev-banner-text">
             <h1 class="ev-banner-title">${esc(examTitle)}</h1>
@@ -3623,7 +3650,7 @@ async function renderExam() {
   }
 }
 
-function renderQuestionCard(q, qi, starred, userVotes = {}, videoMap = {}, isAdmin = false, examId = '', examTitle = '') {
+function renderQuestionCard(q, qi, starred, userVotes = {}, videoMap = {}, isAdmin = false, examId = '', examTitle = '', opts = {}) {
   // Lecturers (Hebrew or English role) and admins can upload a video for any question.
   const _roleLocal = STATE.userData?.role;
   const _canUploadVideo = isAdmin || _roleLocal === 'admin' || _roleLocal === 'instructor' || _roleLocal === 'מרצה';
@@ -3643,6 +3670,7 @@ function renderQuestionCard(q, qi, starred, userVotes = {}, videoMap = {}, isAdm
   const qCopyId    = 'copy-q-' + q.id;
   const _role      = STATE.userData?.role;
   const canGenerate = _role === 'instructor' || _role === 'admin';
+  const hideQuestionLabel = opts?.hideQuestionLabel === true;
 
   // Top copy button copies the full question: stem + all sub-parts
   const fullQText = hasSubs
@@ -3705,7 +3733,7 @@ function renderQuestionCard(q, qi, starred, userVotes = {}, videoMap = {}, isAdm
   return `<div class="qv-card${isBonus ? ' qv-card-bonus' : ''}" id="qc-${q.id}" data-subject="${esc(subject)}" data-subjects="${esc(subjectTags.join('|'))}">
     <div class="qv-head${isBonus ? ' qv-head-bonus' : ''}">
       <div class="qv-head-right">
-        <span class="qv-num">${isBonus ? 'שאלת בונוס' : 'שאלה ' + (qi + 1)}</span>
+        ${hideQuestionLabel ? '' : `<span class="qv-num">${isBonus ? 'שאלת בונוס' : 'שאלה ' + (qi + 1)}</span>`}
         ${points}
         ${bonusBadge}
       </div>
@@ -3823,6 +3851,7 @@ function renderSubjectQuestionsTab(course, subjectEntries, subjectOptions) {
   const userVotes = STATE.userData?.difficultyVotes || {};
   const isAdmin   = STATE.userData?.role === 'admin';
   const isPremium = isPremiumUnlockedForCourse();
+  const isPremiumCourse = normalizeCourseAccessSettings(course?.accessSettings).tier === 'premium';
   const freeAllowedSubjects = getCourseFreeAllowedSubjectsSet();
   const subjectLimit = getCourseFreeLimit('maxSubjectSelections');
   const freeSubjectMap = STATE.userData?.freeSubjectAccess || {};
@@ -3880,7 +3909,7 @@ function renderSubjectQuestionsTab(course, subjectEntries, subjectOptions) {
         ${filtered.map((entry, idx) => `
           <details class="vt-item" data-subject-entry="${idx}">
             <summary class="vt-summary vt-summary-subjects">
-              <span class="vt-title">${esc(entry.examTitle)} · שאלה ${entry.qi + 1}${esc(subSuffix(entry))}</span>
+              <span class="vt-title">${isPremiumCourse ? `${esc(entry.examTitle)}${esc(subSuffix(entry))}` : `${esc(entry.examTitle)} · שאלה ${entry.qi + 1}${esc(subSuffix(entry))}`}</span>
               <span class="vt-chev">▾</span>
               <span class="vt-subject-pill">${esc(entry.subject)}</span>
             </summary>
@@ -3901,7 +3930,7 @@ function renderSubjectQuestionsTab(course, subjectEntries, subjectOptions) {
       const idx = Number(d.dataset.subjectEntry);
       const entry = filtered[idx];
       if (!entry) return;
-      const questionHtml = renderQuestionCard(entry.q, entry.qi, starred, userVotes, {}, isAdmin, entry.exam.id, entry.examTitle);
+      const questionHtml = renderQuestionCard(entry.q, entry.qi, starred, userVotes, {}, isAdmin, entry.exam.id, entry.examTitle, { hideQuestionLabel: isPremiumCourse });
       body.innerHTML = questionHtml;
       const qEl = body.querySelector(`#qc-${entry.q.id} .qv-text`);
       if (qEl) qEl.innerHTML = formatMathText(entry.q.text || '', entry.q.inlineImages || null);
