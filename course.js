@@ -593,12 +593,13 @@ let STATE = {
 const DEFAULT_COURSE_ACCESS_SETTINGS = Object.freeze({
   tier: 'free',
   freeLimits: {
-    maxVideoOpens: 1,
+    maxVideoOpens: 0,
     maxSubjectSelections: 1,
     maxStarredQuestions: 3,
     maxDoneExams: 3,
   },
   freeAllowedSubjects: [],
+  upgradeContentHtml: '',
 });
 
 function normalizeCourseAccessSettings(raw) {
@@ -613,6 +614,7 @@ function normalizeCourseAccessSettings(raw) {
   const freeAllowedSubjects = [...new Set((Array.isArray(raw?.freeAllowedSubjects) ? raw.freeAllowedSubjects : [])
     .map(s => normalizeQuestionSubject(s))
     .filter(Boolean))];
+  const upgradeContentHtml = String(raw?.upgradeContentHtml || '').trim();
   return {
     tier,
     freeLimits: {
@@ -622,7 +624,14 @@ function normalizeCourseAccessSettings(raw) {
       maxDoneExams: toLimit(freeLimits.maxDoneExams, DEFAULT_COURSE_ACCESS_SETTINGS.freeLimits.maxDoneExams),
     },
     freeAllowedSubjects,
+    upgradeContentHtml,
   };
+}
+
+function getUserSubscriptionTier() {
+  const raw = String(STATE.userData?.subscriptionTier || '').toLowerCase();
+  if (raw === 'free' || raw === 'basic' || raw === 'premium') return raw;
+  return STATE.userData?.isPremium === true ? 'premium' : 'free';
 }
 
 function isPremiumUnlockedForCourse() {
@@ -630,7 +639,8 @@ function isPremiumUnlockedForCourse() {
   if (role === 'admin' || role === 'instructor' || role === 'מרצה') return true;
   const settings = STATE.courseAccessSettings || DEFAULT_COURSE_ACCESS_SETTINGS;
   if (settings.tier !== 'premium') return true;
-  return STATE.userData?.isPremium === true;
+  const userTier = getUserSubscriptionTier();
+  return userTier === 'basic' || userTier === 'premium';
 }
 
 function getCourseFreeLimit(featureKey) {
@@ -644,18 +654,160 @@ function getCourseFreeAllowedSubjectsSet() {
   return new Set((settings.freeAllowedSubjects || []).map(s => normalizeQuestionSubject(s)).filter(Boolean));
 }
 
-function renderPremiumLockIcon(title = 'זמין למנויי פרימיום') {
-  return `<span class="feature-lock-icon" title="${esc(title)}" aria-label="${esc(title)}">🔒</span>`;
+function isVideoLockedForCurrentCourse(accessTier = 'free') {
+  const role = STATE.userData?.role || 'student';
+  if (role === 'admin' || role === 'instructor' || role === 'מרצה') return false;
+  const userTier = getUserSubscriptionTier();
+  const settings = STATE.courseAccessSettings || DEFAULT_COURSE_ACCESS_SETTINGS;
+  if (settings.tier === 'premium') return userTier !== 'premium';
+  return accessTier === 'premium' && userTier !== 'premium';
 }
 
-function isDoneLockedForCurrentCourse(examId) {
+function shouldShowUpgradeCta() {
+  const settings = STATE.courseAccessSettings || DEFAULT_COURSE_ACCESS_SETTINGS;
+  if (settings.tier !== 'premium') return false;
+  return getUserSubscriptionTier() !== 'premium';
+}
+
+function renderCourseUpgradeCta() {
+  if (!shouldShowUpgradeCta()) return '';
+  return `<button class="course-upgrade-side-btn" onclick="openCourseUpgradeModal()">⬆️ שדרוג</button>`;
+}
+
+function closeCourseUpgradeModal() {
+  document.getElementById('course-upgrade-modal')?.remove();
+  document.body.style.overflow = '';
+}
+
+function closeCourseUpgradePaymentPanel() {
+  const panel = document.getElementById('course-upgrade-payment-panel');
+  if (!panel) return;
+  panel.style.display = 'none';
+}
+
+function openCourseUpgradePaymentPanel(planName, priceValue, phoneValue) {
+  const panel = document.getElementById('course-upgrade-payment-panel');
+  if (!panel) return;
+  const titleEl = document.getElementById('course-upgrade-payment-title');
+  const priceEl = document.getElementById('course-upgrade-payment-price');
+  const bitEl = document.getElementById('course-upgrade-payment-bit');
+  const phoneLink = document.getElementById('course-upgrade-payment-phone-link');
+  const phone = String(phoneValue || '').trim() || '053-4218878';
+  const normalizedPrice = Number.parseInt(String(priceValue ?? '0'), 10);
+  const safePrice = Number.isNaN(normalizedPrice) || normalizedPrice < 0 ? 0 : normalizedPrice;
+
+  if (titleEl) titleEl.textContent = `הצטרפות ל${planName || 'מסלול'}`;
+  if (priceEl) priceEl.textContent = `₪${safePrice}`;
+  if (bitEl) bitEl.style.display = safePrice > 0 ? 'block' : 'none';
+  if (phoneLink) {
+    phoneLink.textContent = phone;
+    phoneLink.setAttribute('href', `tel:${phone.replace(/[^\d+]/g, '')}`);
+  }
+  panel.style.display = 'block';
+}
+
+function openCourseUpgradeModal() {
+  if (!shouldShowUpgradeCta()) return;
+  document.getElementById('course-upgrade-modal')?.remove();
+
+  const settings = STATE.courseAccessSettings || DEFAULT_COURSE_ACCESS_SETTINGS;
+  const customHtml = String(settings.upgradeContentHtml || '').trim();
+  const fallbackHtml = `
+    <div class="course-upgrade-fallback">
+      <h3>שדרוג למסלול פרימיום</h3>
+      <p>כדי לפתוח את כל הפיצ'רים בקורס זה, אפשר לשדרג למסלול פרימיום.</p>
+      <p>להתאמה אישית מלאה של תוכן זה, היכנס למסך ניהול קורסים בפאנל הניהול.</p>
+    </div>`;
+
+  const overlay = document.createElement('div');
+  overlay.id = 'course-upgrade-modal';
+  overlay.className = 'modal-overlay';
+  overlay.innerHTML = `
+    <div class="modal-card course-upgrade-modal-card">
+      <div class="modal-header">
+        <h3 style="margin:0;font-size:1.08rem">שדרוג לקורס פרימיום</h3>
+        <button class="modal-close" onclick="closeCourseUpgradeModal()">✕</button>
+      </div>
+      <div class="course-upgrade-modal-body">
+        <div id="course-upgrade-custom-host"></div>
+      </div>
+      <div class="course-upgrade-modal-footer">
+        <button class="btn btn-secondary" onclick="closeCourseUpgradeModal()">סגור</button>
+      </div>
+      <div id="course-upgrade-payment-panel" class="course-upgrade-payment-panel" style="display:none">
+        <button class="course-upgrade-payment-close" onclick="closeCourseUpgradePaymentPanel()">✕</button>
+        <div id="course-upgrade-payment-title" class="course-upgrade-payment-title">סיום תהליך ההרשמה</div>
+        <p class="course-upgrade-payment-text">על מנת להשלים את הרישום למסלול ולפתוח את הגישה לתכנים, אנא צרו עמנו קשר בטלפון:</p>
+        <div class="course-upgrade-payment-phone">
+          <a id="course-upgrade-payment-phone-link" href="tel:0534218878">053-4218878</a>
+        </div>
+        <div id="course-upgrade-payment-bit" class="course-upgrade-payment-bit">
+          <p style="margin:0 0 .4rem;font-size:.85rem;color:#334155">ניתן להעביר את סכום המסלול ב-bit:</p>
+          <div id="course-upgrade-payment-price" class="course-upgrade-payment-price">₪0</div>
+          <p style="margin:.45rem 0 0;font-size:.78rem;color:#be185d;font-weight:700">חובה לציין את אימייל המשתמש בהערות ההעברה.</p>
+        </div>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+  document.body.style.overflow = 'hidden';
+  const host = document.getElementById('course-upgrade-custom-host');
+  const markup = customHtml || fallbackHtml;
+  if (host && host.attachShadow) {
+    const shadow = host.attachShadow({ mode: 'open' });
+    shadow.innerHTML = markup;
+    shadow.addEventListener('click', (event) => {
+      const target = event.target instanceof Element ? event.target.closest('.plan-btn') : null;
+      if (!target) return;
+      const planName = target.getAttribute('data-plan') || target.textContent?.trim() || 'מסלול';
+      const priceValue = target.getAttribute('data-price') || '0';
+      const phoneValue = target.getAttribute('data-phone') || '';
+      openCourseUpgradePaymentPanel(planName, priceValue, phoneValue);
+    });
+  } else if (host) {
+    host.innerHTML = markup;
+    host.addEventListener('click', (event) => {
+      const target = event.target instanceof Element ? event.target.closest('.plan-btn') : null;
+      if (!target) return;
+      const planName = target.getAttribute('data-plan') || target.textContent?.trim() || 'מסלול';
+      const priceValue = target.getAttribute('data-price') || '0';
+      const phoneValue = target.getAttribute('data-phone') || '';
+      openCourseUpgradePaymentPanel(planName, priceValue, phoneValue);
+    });
+  }
+  overlay.addEventListener('click', e => { if (e.target === overlay) closeCourseUpgradeModal(); });
+}
+
+window.openCourseUpgradeModal = openCourseUpgradeModal;
+window.closeCourseUpgradeModal = closeCourseUpgradeModal;
+window.closeCourseUpgradePaymentPanel = closeCourseUpgradePaymentPanel;
+
+function renderPremiumLockIcon(title = 'זמין למנויי פרימיום', extraClass = '') {
+  const cls = `feature-lock-icon${extraClass ? ' ' + extraClass : ''}`;
+  return `<span class="${cls}" title="${esc(title)}" aria-label="${esc(title)}">🔒</span>`;
+}
+
+function getCurrentCourseExamIdsSet() {
+  return new Set((STATE.exams[STATE.courseId] || []).map(exam => exam.id));
+}
+
+function countMarkedExamsForCurrentCourse() {
+  const courseExamIds = getCurrentCourseExamIdsSet();
+  const marked = new Set();
+  (STATE.doneExams || []).forEach(id => {
+    if (courseExamIds.has(id)) marked.add(id);
+  });
+  (STATE.inProgressExams || []).forEach(id => {
+    if (courseExamIds.has(id)) marked.add(id);
+  });
+  return marked.size;
+}
+
+function isExamMarkLockedForCurrentCourse(examId) {
   if (isPremiumUnlockedForCourse()) return false;
-  const maxDone = getCourseFreeLimit('maxDoneExams');
-  if (maxDone < 0) return false;
-  if (STATE.doneExams.includes(examId)) return false;
-  const courseExamIds = new Set((STATE.exams[STATE.courseId] || []).map(exam => exam.id));
-  const inCourseDone = (STATE.doneExams || []).filter(id => courseExamIds.has(id)).length;
-  return inCourseDone >= maxDone;
+  const maxMarks = getCourseFreeLimit('maxDoneExams');
+  if (maxMarks < 0) return false;
+  if (STATE.doneExams.includes(examId) || STATE.inProgressExams.includes(examId)) return false;
+  return countMarkedExamsForCurrentCourse() >= maxMarks;
 }
 
 function isStarLockedForCurrentCourse(questionId, starred = []) {
@@ -1777,7 +1929,8 @@ async function doLogout() {
   await auth.signOut();
   STATE = { page: 'home', courseId: null, examId: null, tab: 'exams',
             fireUser: null, userData: null, courses: null, exams: {}, examVotes: {},
-            doneExams: [], inProgressExams: [], savedFilters: {} };
+            doneExams: [], inProgressExams: [], savedFilters: {}, subjectFilters: {},
+            courseAccessSettings: null, isAnalyticsOn: true, courseCode: '', examLabel: '', examQuestions: [] };
   renderAuth();
 }
 
@@ -2297,6 +2450,7 @@ function _renderCourseCards() {
   const saved = STATE.userData?.savedCourses || [];
   const courses = STATE.courses || [];
   const visible = courses.filter(c => saved.includes(c.id));
+  const isPremiumUser = getUserSubscriptionTier() === 'premium';
 
   const role = STATE.userData?.role;
   const showAnalytics = role === 'instructor' || role === 'admin';
@@ -2343,8 +2497,11 @@ function _renderCourseCards() {
     return;
   }
 
-  grid.innerHTML = visible.map(c => `
-    <div class="course-card" onclick="goCourse('${c.id}')">
+  grid.innerHTML = visible.map(c => {
+    const isPremiumCourse = normalizeCourseAccessSettings(c.accessSettings).tier === 'premium';
+    const premiumClass = (isPremiumUser && isPremiumCourse) ? ' premium-user-course-card' : '';
+    return `
+    <div class="course-card${premiumClass}" onclick="goCourse('${c.id}')">
       <button class="save-course-btn saved"
         onclick="removeSavedCourse('${c.id}', event)"
         title="הסר מהאזור האישי">✕</button>
@@ -2352,7 +2509,8 @@ function _renderCourseCards() {
       <div class="cn">${esc(c.name)}</div>
       <div class="cc">${esc(c.code)}</div>
       <div class="cm">לחץ לצפייה במבחנים</div>
-    </div>`).join('');
+    </div>`;
+  }).join('');
 }
 
 function goLecturerAnalytics() {
@@ -2825,6 +2983,8 @@ async function renderCourse() {
     
     const course = { ...courseDoc.data(), id: courseDoc.id };
     STATE.courseAccessSettings = normalizeCourseAccessSettings(course.accessSettings);
+    if (!STATE.subjectFilters) STATE.subjectFilters = {};
+    if (!STATE.savedFilters) STATE.savedFilters = {};
     
     // Check access:
     // - draft: no one can access (only visible in admin panel)
@@ -2889,6 +3049,7 @@ async function renderCourse() {
 
     page.innerHTML = `
       <div class="container">
+        ${renderCourseUpgradeCta()}
         <div class="breadcrumb">
           <a onclick="goHome()">🏠 ראשי</a><span>›</span><span>${esc(course.name)}</span>
         </div>
@@ -3065,7 +3226,6 @@ function applyFilters(fromUser = false) {
   el.innerHTML = filtered.map(e => {
     const isDone       = STATE.doneExams.includes(e.id);
     const isInProgress = STATE.inProgressExams.includes(e.id);
-    const doneLocked   = isDoneLockedForCurrentCourse(e.id);
     const statusClass  = isDone ? 'exam-done' : isInProgress ? 'exam-inprogress' : '';
     return `
     <div class="exam-item ${statusClass}" onclick="goExam('${STATE.courseId}','${e.id}')">
@@ -3101,7 +3261,6 @@ function applyFilters(fromUser = false) {
         title="${isDone ? 'בטל סימון בוצע' : 'סמן כבוצע'}">
         ${isDone ? '✓' : '○'}
       </button>
-      ${doneLocked ? renderPremiumLockIcon('השלמת מבחן נוסף זמינה למנויי פרימיום') : ''}
       <span class="exam-arrow">←</span>
     </div>`;
   }).join('');
@@ -3148,14 +3307,10 @@ async function toggleDone(examId) {
   const adding  = idx === -1;
 
   if (adding && !isPremiumUnlockedForCourse()) {
-    const maxDone = getCourseFreeLimit('maxDoneExams');
-    if (maxDone >= 0) {
-      const courseExamIds = new Set((STATE.exams[STATE.courseId] || []).map(exam => exam.id));
-      const inCourseDone = done.filter(id => courseExamIds.has(id)).length;
-      if (inCourseDone >= maxDone) {
-        toast(`מסלול חינם מאפשר לסמן עד ${maxDone} מבחנים כבוצעו בקורס זה`, 'error');
-        return;
-      }
+    const maxMarks = getCourseFreeLimit('maxDoneExams');
+    if (maxMarks >= 0 && isExamMarkLockedForCurrentCourse(examId)) {
+      toast(`מסלול חינם מאפשר לסמן עד ${maxMarks} מבחנים (בוצע/בתהליך) בקורס זה`, 'error');
+      return;
     }
   }
 
@@ -3208,6 +3363,14 @@ async function toggleInProgress(examId) {
   const ip    = [...STATE.inProgressExams];
   const idx   = ip.indexOf(examId);
   const adding = idx === -1;
+
+  if (adding && !isPremiumUnlockedForCourse()) {
+    const maxMarks = getCourseFreeLimit('maxDoneExams');
+    if (maxMarks >= 0 && isExamMarkLockedForCurrentCourse(examId)) {
+      toast(`מסלול חינם מאפשר לסמן עד ${maxMarks} מבחנים (בוצע/בתהליך) בקורס זה`, 'error');
+      return;
+    }
+  }
 
   if (adding) {
     ip.push(examId);
@@ -3438,10 +3601,15 @@ async function renderVideosTab(exams) {
   const html = entries.map((entry, idx) => {
     const { q, qi, examLabel } = entry;
     const title = `${examLabel} שאלה ${qi + 1}`;
+    const hasLockedVideo = (
+      isVideoLockedForCurrentCourse(videoMap[q.id]?.accessTier || 'free') ||
+      (q.subs || q.parts || []).some(s => isVideoLockedForCurrentCourse(videoMap[s.id]?.accessTier || 'free'))
+    );
     return `<details class="vt-item" data-qid="${esc(q.id)}" data-idx="${idx}">
       <summary class="vt-summary">
         <span class="vt-title">${esc(title)}</span>
         <span class="vt-chev">▾</span>
+        ${hasLockedVideo ? renderPremiumLockIcon('סרטון זה זמין למנויי פרימיום', 'vt-summary-lock') : ''}
       </summary>
       <div class="vt-body"></div>
     </details>`;
@@ -3507,6 +3675,7 @@ async function renderExam() {
     if (!courseDoc.exists) return goHome();
     
     const course = { ...courseDoc.data(), id: courseDoc.id };
+    STATE.courseAccessSettings = normalizeCourseAccessSettings(course.accessSettings);
     
     // Check access:
     // - draft: no one can access
@@ -3551,10 +3720,10 @@ async function renderExam() {
     ].filter(Boolean);
     const metaLine  = metaParts.join(' • ');
     const examTitle = exam.title || exam.id || '';
-    const doneLockedInExam = isDoneLockedForCurrentCourse(exam.id);
 
     page.innerHTML = `
       <div class="ev-wrap">
+        ${renderCourseUpgradeCta()}
         <div class="ev-topbar">
           <button class="ev-back" onclick="_examBackNav('${course.id}')">← חזרה</button>
           <div class="ev-topbar-meta">
@@ -3582,7 +3751,6 @@ async function renderExam() {
               title="${STATE.doneExams.includes(exam.id) ? 'בטל סימון בוצע' : 'סמן כבוצע'}">
               ${STATE.doneExams.includes(exam.id) ? '✓' : '○'}
             </button>
-            ${doneLockedInExam ? renderPremiumLockIcon('השלמת מבחן נוסף זמינה למנויי פרימיום') : ''}
           </div>
           <div class="ev-banner-text">
             <h1 class="ev-banner-title">${esc(examTitle)}</h1>
@@ -3620,7 +3788,7 @@ async function renderExam() {
   }
 }
 
-function renderQuestionCard(q, qi, starred, userVotes = {}, videoMap = {}, isAdmin = false, examId = '', examTitle = '') {
+function renderQuestionCard(q, qi, starred, userVotes = {}, videoMap = {}, isAdmin = false, examId = '', examTitle = '', opts = {}) {
   // Lecturers (Hebrew or English role) and admins can upload a video for any question.
   const _roleLocal = STATE.userData?.role;
   const _canUploadVideo = isAdmin || _roleLocal === 'admin' || _roleLocal === 'instructor' || _roleLocal === 'מרצה';
@@ -3640,6 +3808,7 @@ function renderQuestionCard(q, qi, starred, userVotes = {}, videoMap = {}, isAdm
   const qCopyId    = 'copy-q-' + q.id;
   const _role      = STATE.userData?.role;
   const canGenerate = _role === 'instructor' || _role === 'admin';
+  const hideQuestionLabel = opts?.hideQuestionLabel === true;
 
   // Top copy button copies the full question: stem + all sub-parts
   const fullQText = hasSubs
@@ -3677,7 +3846,7 @@ function renderQuestionCard(q, qi, starred, userVotes = {}, videoMap = {}, isAdm
       const sAllowAI = s.allowAIGen === true;
       const sIsBonus = s.isBonus === true;
       const sVideo = videoMap[s.id] || null;
-      const sVideoLocked = Boolean(sVideo) && !isPremiumUnlockedForCourse() && (sVideo.accessTier || 'free') === 'premium';
+      const sVideoLocked = Boolean(sVideo) && isVideoLockedForCurrentCourse(sVideo.accessTier || 'free');
       return `<div class="qv-part${sIsBonus ? ' qv-part-bonus' : ''}" id="si-${s.id}">
         <div class="qv-part-head">
           <span class="qv-part-lbl">${sIsBonus ? '⭐ ' : ''}${rawLabel}</span>
@@ -3697,12 +3866,12 @@ function renderQuestionCard(q, qi, starred, userVotes = {}, videoMap = {}, isAdm
   }
 
   const qVideo = videoMap[q.id] || null;
-  const qVideoLocked = Boolean(qVideo) && !isPremiumUnlockedForCourse() && (qVideo.accessTier || 'free') === 'premium';
+  const qVideoLocked = Boolean(qVideo) && isVideoLockedForCurrentCourse(qVideo.accessTier || 'free');
 
   return `<div class="qv-card${isBonus ? ' qv-card-bonus' : ''}" id="qc-${q.id}" data-subject="${esc(subject)}" data-subjects="${esc(subjectTags.join('|'))}">
     <div class="qv-head${isBonus ? ' qv-head-bonus' : ''}">
       <div class="qv-head-right">
-        <span class="qv-num">${isBonus ? 'שאלת בונוס' : 'שאלה ' + (qi + 1)}</span>
+        ${hideQuestionLabel ? '' : `<span class="qv-num">${isBonus ? 'שאלת בונוס' : 'שאלה ' + (qi + 1)}</span>`}
         ${points}
         ${bonusBadge}
       </div>
@@ -3820,6 +3989,7 @@ function renderSubjectQuestionsTab(course, subjectEntries, subjectOptions) {
   const userVotes = STATE.userData?.difficultyVotes || {};
   const isAdmin   = STATE.userData?.role === 'admin';
   const isPremium = isPremiumUnlockedForCourse();
+  const isPremiumCourse = normalizeCourseAccessSettings(course?.accessSettings).tier === 'premium';
   const freeAllowedSubjects = getCourseFreeAllowedSubjectsSet();
   const subjectLimit = getCourseFreeLimit('maxSubjectSelections');
   const freeSubjectMap = STATE.userData?.freeSubjectAccess || {};
@@ -3877,9 +4047,9 @@ function renderSubjectQuestionsTab(course, subjectEntries, subjectOptions) {
         ${filtered.map((entry, idx) => `
           <details class="vt-item" data-subject-entry="${idx}">
             <summary class="vt-summary vt-summary-subjects">
-              <span class="vt-title">${esc(entry.examTitle)} · שאלה ${entry.qi + 1}${esc(subSuffix(entry))}</span>
+              <span class="vt-title">${isPremiumCourse ? `${esc(entry.examTitle)}${esc(subSuffix(entry))}` : `${esc(entry.examTitle)} · שאלה ${entry.qi + 1}${esc(subSuffix(entry))}`}</span>
               <span class="vt-chev">▾</span>
-              <span class="vt-subject-pill">${esc(entry.subject)}</span>
+              ${isPremium ? `<span class="vt-subject-pill">${esc(entry.subject)}</span>` : ''}
             </summary>
             <div class="vt-body"></div>
           </details>
@@ -3898,7 +4068,7 @@ function renderSubjectQuestionsTab(course, subjectEntries, subjectOptions) {
       const idx = Number(d.dataset.subjectEntry);
       const entry = filtered[idx];
       if (!entry) return;
-      const questionHtml = renderQuestionCard(entry.q, entry.qi, starred, userVotes, {}, isAdmin, entry.exam.id, entry.examTitle);
+      const questionHtml = renderQuestionCard(entry.q, entry.qi, starred, userVotes, {}, isAdmin, entry.exam.id, entry.examTitle, { hideQuestionLabel: isPremiumCourse });
       body.innerHTML = questionHtml;
       const qEl = body.querySelector(`#qc-${entry.q.id} .qv-text`);
       if (qEl) qEl.innerHTML = formatMathText(entry.q.text || '', entry.q.inlineImages || null);
@@ -5167,7 +5337,7 @@ function openVideoModalFromBtn(btn) {
   const entityId = btn?.dataset?.entityId || '';
   const entityLabel = btn?.dataset?.entityLabel || '';
   const accessTier = (btn?.dataset?.accessTier || 'free') === 'premium' ? 'premium' : 'free';
-  if (accessTier === 'premium' && !isPremiumUnlockedForCourse()) {
+  if (isVideoLockedForCurrentCourse(accessTier)) {
     toast('הסרטון זמין למנויי פרימיום בלבד בקורס זה', 'error');
     return;
   }

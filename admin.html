@@ -507,7 +507,7 @@
           <div class="form-row">
             <div class="form-group">
               <label>מגבלת סרטונים לחינם</label>
-              <input id="c-limit-videos" type="number" min="-1" step="1" value="1">
+              <input id="c-limit-videos" type="number" min="-1" step="1" value="0">
               <small style="color:var(--muted)">-1 = ללא הגבלה</small>
             </div>
             <div class="form-group">
@@ -533,6 +533,13 @@
               <label>נושאים שמותרים לסינון בחינם (אופציונלי)</label>
               <textarea id="c-free-subjects" rows="3" placeholder="כל שורה = נושא אחד&#10;אם ריק: כל הנושאים מותרים"></textarea>
               <small style="color:var(--muted)">בשדה זה מגדירים allowlist לנושאים שמסלול חינם יוכל לסנן</small>
+            </div>
+          </div>
+          <div class="form-row">
+            <div class="form-group" style="flex:1">
+              <label>תוכן חלון שדרוג (HTML, אופציונלי)</label>
+              <textarea id="c-upgrade-content" rows="5" placeholder="<h3>בחר מסלול</h3>&#10;<div class='plans-grid'>...</div>"></textarea>
+              <small style="color:var(--muted)">יופיע בחלון “שדרוג” למשתמשי חינם בקורס פרימיום. אפשר להזין HTML מלא (למשל 3/2/1 עמודות).</small>
             </div>
           </div>
           <div style="display:flex;justify-content:flex-end">

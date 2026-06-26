@@ -4070,7 +4070,10 @@ async function renderManageUsers() {
           : `<span class="consent-badge consent-badge-pending">⏳ טרם</span>`;
 
       const currentRole = u.role || 'student';
-      const isPremium = u.isPremium === true;
+      const currentTierRaw = String(u.subscriptionTier || '').toLowerCase();
+      const currentTier = ['free', 'basic', 'premium'].includes(currentTierRaw)
+        ? currentTierRaw
+        : (u.isPremium === true ? 'premium' : 'free');
       const dupIds = (dupIdsByKept.get(u._docId) || []).join(',');
 
       const roleSelect = `
@@ -4083,10 +4086,11 @@ async function renderManageUsers() {
         </select>`;
       const premiumSelect = `
         <select onchange="updateUserPremium('${esc(docId)}', this.value, this)"
-                data-prev="${isPremium ? 'premium' : 'free'}"
+                data-prev="${esc(currentTier)}"
                 style="font-size:.78rem;padding:.2rem .35rem;border:1px solid #cbd5e1;border-radius:5px;background:#fff;cursor:pointer">
-          <option value="free" ${!isPremium ? 'selected' : ''}>חינם</option>
-          <option value="premium" ${isPremium ? 'selected' : ''}>פרימיום</option>
+          <option value="free" ${currentTier === 'free' ? 'selected' : ''}>חינם</option>
+          <option value="basic" ${currentTier === 'basic' ? 'selected' : ''}>בסיסי</option>
+          <option value="premium" ${currentTier === 'premium' ? 'selected' : ''}>פרימיום</option>
         </select>`;
 
       const deleteBtn = `<button class="btn btn-sm" onclick="deleteUserDoc('${esc(uid)}','${esc(u.email || '')}','${esc(docId)}','${esc(u.email || uid || docId)}','${esc(dupIds)}')" title="מחק משתמש (Firestore + Auth)" style="padding:.25rem .55rem;font-size:.85rem;background:#fef2f2;color:#991b1b;border:1px solid #fca5a5">🗑️</button>`;
@@ -4231,13 +4235,14 @@ async function updateUserRole(docId, newRole, selectEl) {
 }
 
 async function updateUserPremium(docId, newTier, selectEl) {
-  const allowed = ['free', 'premium'];
+  const allowed = ['free', 'basic', 'premium'];
   if (!allowed.includes(newTier)) return;
   const prev = selectEl?.dataset?.prev || 'free';
   if (newTier === prev) return;
+  const labels = { free: 'חינם', basic: 'בסיסי', premium: 'פרימיום' };
   const isPremium = newTier === 'premium';
 
-  if (!confirm(`להגדיר משתמש כ-${isPremium ? 'פרימיום' : 'חינם'}?`)) {
+  if (!confirm(`להגדיר משתמש כמסלול ${labels[newTier]}?`)) {
     if (selectEl) selectEl.value = prev;
     return;
   }
@@ -4245,9 +4250,12 @@ async function updateUserPremium(docId, newTier, selectEl) {
   const wasDisabled = selectEl?.disabled;
   if (selectEl) selectEl.disabled = true;
   try {
-    await db.collection('users').doc(docId).update({ isPremium });
+    await db.collection('users').doc(docId).update({
+      subscriptionTier: newTier,
+      isPremium,
+    });
     if (selectEl) selectEl.dataset.prev = newTier;
-    toast?.(`המנוי עודכן ל-${isPremium ? 'פרימיום' : 'חינם'}`);
+    toast?.(`המנוי עודכן ל-${labels[newTier]}`);
   } catch (e) {
     console.error('updateUserPremium error:', e);
     alert('שגיאה בעדכון המנוי: ' + (e.message || e));
@@ -4733,12 +4741,13 @@ function cancelEdit() {
 const DEFAULT_COURSE_ACCESS_SETTINGS = Object.freeze({
   tier: 'free',
   freeLimits: {
-    maxVideoOpens: 1,
+    maxVideoOpens: 0,
     maxSubjectSelections: 1,
     maxStarredQuestions: 3,
     maxDoneExams: 3,
   },
   freeAllowedSubjects: [],
+  upgradeContentHtml: '',
 });
 const _adminCoursesCache = new Map();
 
@@ -4755,6 +4764,7 @@ function normalizeCourseAccessSettings(raw) {
   const freeAllowedSubjects = [...new Set((Array.isArray(raw?.freeAllowedSubjects) ? raw.freeAllowedSubjects : [])
     .map(s => normalizeQuestionSubject(s))
     .filter(Boolean))];
+  const upgradeContentHtml = String(raw?.upgradeContentHtml || '').trim();
   return {
     tier,
     freeLimits: {
@@ -4764,6 +4774,7 @@ function normalizeCourseAccessSettings(raw) {
       maxDoneExams: parseCourseFeatureLimit(freeLimits.maxDoneExams, DEFAULT_COURSE_ACCESS_SETTINGS.freeLimits.maxDoneExams),
     },
     freeAllowedSubjects,
+    upgradeContentHtml,
   };
 }
 
@@ -4781,7 +4792,8 @@ function describeCourseAccess(settings) {
   const allowlistPart = cfg.freeAllowedSubjects.length
     ? ` · allowlist נושאים ${cfg.freeAllowedSubjects.length}`
     : '';
-  return `פרימיום · וידאו ${fmt(cfg.freeLimits.maxVideoOpens)} · נושאים ${fmt(cfg.freeLimits.maxSubjectSelections)} · מסומנות ${fmt(cfg.freeLimits.maxStarredQuestions)} · בוצעו ${fmt(cfg.freeLimits.maxDoneExams)}${allowlistPart}`;
+  const upgradePart = cfg.upgradeContentHtml ? ' · חלון שדרוג מותאם' : '';
+  return `פרימיום · וידאו ${fmt(cfg.freeLimits.maxVideoOpens)} · נושאים ${fmt(cfg.freeLimits.maxSubjectSelections)} · מסומנות ${fmt(cfg.freeLimits.maxStarredQuestions)} · בוצעו ${fmt(cfg.freeLimits.maxDoneExams)}${allowlistPart}${upgradePart}`;
 }
 
 async function adminAddCourse() {
@@ -4799,6 +4811,7 @@ async function adminAddCourse() {
       maxDoneExams: document.getElementById('c-limit-done')?.value,
     },
     freeAllowedSubjects: parseFreeAllowedSubjectsInput(document.getElementById('c-free-subjects')?.value || ''),
+    upgradeContentHtml: document.getElementById('c-upgrade-content')?.value || '',
   });
   if (!name || !code) { toast('נא למלא שם וקוד', 'error'); return; }
   if (creditsRaw === '' || isNaN(credits) || credits < 0) { toast('נא למלא נקודות זכות תקינות', 'error'); return; }
@@ -4819,11 +4832,12 @@ async function adminAddCourse() {
     document.getElementById('c-code').value = '';
     document.getElementById('c-credits').value = '';
     if (document.getElementById('c-access-tier')) document.getElementById('c-access-tier').value = 'free';
-    if (document.getElementById('c-limit-videos')) document.getElementById('c-limit-videos').value = '1';
+    if (document.getElementById('c-limit-videos')) document.getElementById('c-limit-videos').value = '0';
     if (document.getElementById('c-limit-subjects')) document.getElementById('c-limit-subjects').value = '1';
     if (document.getElementById('c-limit-stars')) document.getElementById('c-limit-stars').value = '3';
     if (document.getElementById('c-limit-done')) document.getElementById('c-limit-done').value = '3';
     if (document.getElementById('c-free-subjects')) document.getElementById('c-free-subjects').value = '';
+    if (document.getElementById('c-upgrade-content')) document.getElementById('c-upgrade-content').value = '';
     toast('✅ קורס נוסף (בסטטוס טיוטה)', 'success');
     await renderCoursesList();
     await populateAllSelects();
@@ -4963,13 +4977,15 @@ function openEditCourse(id) {
   modal.style.cssText = `
     position:fixed;inset:0;z-index:9999;
     background:rgba(0,0,0,.55);
-    display:flex;align-items:center;justify-content:center;
-    padding:1rem;
+    display:flex;align-items:flex-start;justify-content:center;
+    padding:1.2rem;
+    overflow-y:auto;
   `;
   modal.innerHTML = `
     <div style="background:var(--card,#fff);border-radius:16px;padding:2rem;
-                width:100%;max-width:480px;box-shadow:0 8px 32px rgba(0,0,0,.2);
-                direction:rtl;position:relative">
+                width:min(96vw,980px);max-height:88vh;overflow-y:auto;overscroll-behavior:contain;
+                box-shadow:0 8px 32px rgba(0,0,0,.2);
+                direction:rtl;position:relative;margin:auto 0">
       <button onclick="document.getElementById('edit-course-modal').remove()"
               style="position:absolute;top:1rem;left:1rem;background:none;border:none;
                      font-size:1.3rem;cursor:pointer;color:var(--muted,#888)">✕</button>
@@ -5041,6 +5057,11 @@ function openEditCourse(id) {
         <textarea id="edit-course-free-subjects" rows="3"
           placeholder="כל שורה = נושא אחד&#10;אם ריק: כל הנושאים מותרים">${esc((accessSettings.freeAllowedSubjects || []).join('\n'))}</textarea>
       </div>
+      <div class="form-group">
+        <label style="font-weight:600">תוכן חלון שדרוג (HTML, אופציונלי)</label>
+        <textarea id="edit-course-upgrade-content" rows="5"
+          placeholder="<h3>בחר מסלול</h3>&#10;<div class='plans-grid'>...</div>">${esc(accessSettings.upgradeContentHtml || '')}</textarea>
+      </div>
 
       <div style="display:flex;gap:.75rem;justify-content:flex-end;margin-top:1.5rem">
         <button class="btn btn-secondary"
@@ -5078,6 +5099,7 @@ async function saveEditCourse() {
       maxDoneExams: document.getElementById('edit-course-limit-done')?.value,
     },
     freeAllowedSubjects: parseFreeAllowedSubjectsInput(document.getElementById('edit-course-free-subjects')?.value || ''),
+    upgradeContentHtml: document.getElementById('edit-course-upgrade-content')?.value || '',
   });
 
   if (!name || !code) { toast('נא למלא שם וקוד', 'error'); return; }

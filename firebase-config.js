@@ -72,7 +72,10 @@ async function fetchUserData(uid, email) {
       } catch(e) { console.warn('fetchUserData: could not backfill email', e); }
       return { ...data, email: normalizedEmail };
     }
-    return data;
+    const normalizedTier = ['free', 'basic', 'premium'].includes(String(data.subscriptionTier || '').toLowerCase())
+      ? String(data.subscriptionTier).toLowerCase()
+      : (data.isPremium === true ? 'premium' : 'free');
+    return { ...data, subscriptionTier: normalizedTier };
   }
   // First time — create user doc with email so it is always identifiable in admin
   const defaults = {
@@ -80,6 +83,7 @@ async function fetchUserData(uid, email) {
     email: email ? email.toLowerCase().trim() : null,
     role: 'student',
     isPremium: false,
+    subscriptionTier: 'free',
     starredQuestions: [],
     difficultyVotes: {},
     freeSubjectAccess: {},
@@ -98,7 +102,7 @@ const ALLOWED_USER_FIELDS = [
   'copyCount', 'lastCopyReset', 'createdAt', 'savedCourses', 'aiQuestions',
   'analyticsConsent', 'consentDate', 'faculty', 'studyYear',
   'dismissedBroadcasts', 'readBroadcasts',
-  'freeSubjectAccess', 'freeVideoAccessByCourse'
+  'freeSubjectAccess', 'freeVideoAccessByCourse', 'subscriptionTier'
 ];
 
 async function saveUserData(uid, data) {
