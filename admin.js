@@ -4070,7 +4070,10 @@ async function renderManageUsers() {
           : `<span class="consent-badge consent-badge-pending">⏳ טרם</span>`;
 
       const currentRole = u.role || 'student';
-      const isPremium = u.isPremium === true;
+      const currentTierRaw = String(u.subscriptionTier || '').toLowerCase();
+      const currentTier = ['free', 'basic', 'premium'].includes(currentTierRaw)
+        ? currentTierRaw
+        : (u.isPremium === true ? 'premium' : 'free');
       const dupIds = (dupIdsByKept.get(u._docId) || []).join(',');
 
       const roleSelect = `
@@ -4083,10 +4086,11 @@ async function renderManageUsers() {
         </select>`;
       const premiumSelect = `
         <select onchange="updateUserPremium('${esc(docId)}', this.value, this)"
-                data-prev="${isPremium ? 'premium' : 'free'}"
+                data-prev="${esc(currentTier)}"
                 style="font-size:.78rem;padding:.2rem .35rem;border:1px solid #cbd5e1;border-radius:5px;background:#fff;cursor:pointer">
-          <option value="free" ${!isPremium ? 'selected' : ''}>חינם</option>
-          <option value="premium" ${isPremium ? 'selected' : ''}>פרימיום</option>
+          <option value="free" ${currentTier === 'free' ? 'selected' : ''}>חינם</option>
+          <option value="basic" ${currentTier === 'basic' ? 'selected' : ''}>בסיסי</option>
+          <option value="premium" ${currentTier === 'premium' ? 'selected' : ''}>פרימיום</option>
         </select>`;
 
       const deleteBtn = `<button class="btn btn-sm" onclick="deleteUserDoc('${esc(uid)}','${esc(u.email || '')}','${esc(docId)}','${esc(u.email || uid || docId)}','${esc(dupIds)}')" title="מחק משתמש (Firestore + Auth)" style="padding:.25rem .55rem;font-size:.85rem;background:#fef2f2;color:#991b1b;border:1px solid #fca5a5">🗑️</button>`;
@@ -4231,13 +4235,14 @@ async function updateUserRole(docId, newRole, selectEl) {
 }
 
 async function updateUserPremium(docId, newTier, selectEl) {
-  const allowed = ['free', 'premium'];
+  const allowed = ['free', 'basic', 'premium'];
   if (!allowed.includes(newTier)) return;
   const prev = selectEl?.dataset?.prev || 'free';
   if (newTier === prev) return;
+  const labels = { free: 'חינם', basic: 'בסיסי', premium: 'פרימיום' };
   const isPremium = newTier === 'premium';
 
-  if (!confirm(`להגדיר משתמש כ-${isPremium ? 'פרימיום' : 'חינם'}?`)) {
+  if (!confirm(`להגדיר משתמש כמסלול ${labels[newTier]}?`)) {
     if (selectEl) selectEl.value = prev;
     return;
   }
@@ -4245,9 +4250,12 @@ async function updateUserPremium(docId, newTier, selectEl) {
   const wasDisabled = selectEl?.disabled;
   if (selectEl) selectEl.disabled = true;
   try {
-    await db.collection('users').doc(docId).update({ isPremium });
+    await db.collection('users').doc(docId).update({
+      subscriptionTier: newTier,
+      isPremium,
+    });
     if (selectEl) selectEl.dataset.prev = newTier;
-    toast?.(`המנוי עודכן ל-${isPremium ? 'פרימיום' : 'חינם'}`);
+    toast?.(`המנוי עודכן ל-${labels[newTier]}`);
   } catch (e) {
     console.error('updateUserPremium error:', e);
     alert('שגיאה בעדכון המנוי: ' + (e.message || e));
@@ -4733,7 +4741,7 @@ function cancelEdit() {
 const DEFAULT_COURSE_ACCESS_SETTINGS = Object.freeze({
   tier: 'free',
   freeLimits: {
-    maxVideoOpens: 1,
+    maxVideoOpens: 0,
     maxSubjectSelections: 1,
     maxStarredQuestions: 3,
     maxDoneExams: 3,
@@ -4824,7 +4832,7 @@ async function adminAddCourse() {
     document.getElementById('c-code').value = '';
     document.getElementById('c-credits').value = '';
     if (document.getElementById('c-access-tier')) document.getElementById('c-access-tier').value = 'free';
-    if (document.getElementById('c-limit-videos')) document.getElementById('c-limit-videos').value = '1';
+    if (document.getElementById('c-limit-videos')) document.getElementById('c-limit-videos').value = '0';
     if (document.getElementById('c-limit-subjects')) document.getElementById('c-limit-subjects').value = '1';
     if (document.getElementById('c-limit-stars')) document.getElementById('c-limit-stars').value = '3';
     if (document.getElementById('c-limit-done')) document.getElementById('c-limit-done').value = '3';

@@ -593,7 +593,7 @@ let STATE = {
 const DEFAULT_COURSE_ACCESS_SETTINGS = Object.freeze({
   tier: 'free',
   freeLimits: {
-    maxVideoOpens: 1,
+    maxVideoOpens: 0,
     maxSubjectSelections: 1,
     maxStarredQuestions: 3,
     maxDoneExams: 3,
@@ -628,12 +628,19 @@ function normalizeCourseAccessSettings(raw) {
   };
 }
 
+function getUserSubscriptionTier() {
+  const raw = String(STATE.userData?.subscriptionTier || '').toLowerCase();
+  if (raw === 'free' || raw === 'basic' || raw === 'premium') return raw;
+  return STATE.userData?.isPremium === true ? 'premium' : 'free';
+}
+
 function isPremiumUnlockedForCourse() {
   const role = STATE.userData?.role || 'student';
   if (role === 'admin' || role === 'instructor' || role === 'מרצה') return true;
   const settings = STATE.courseAccessSettings || DEFAULT_COURSE_ACCESS_SETTINGS;
   if (settings.tier !== 'premium') return true;
-  return STATE.userData?.isPremium === true;
+  const userTier = getUserSubscriptionTier();
+  return userTier === 'basic' || userTier === 'premium';
 }
 
 function getCourseFreeLimit(featureKey) {
@@ -647,9 +654,19 @@ function getCourseFreeAllowedSubjectsSet() {
   return new Set((settings.freeAllowedSubjects || []).map(s => normalizeQuestionSubject(s)).filter(Boolean));
 }
 
+function isVideoLockedForCurrentCourse(accessTier = 'free') {
+  const role = STATE.userData?.role || 'student';
+  if (role === 'admin' || role === 'instructor' || role === 'מרצה') return false;
+  const userTier = getUserSubscriptionTier();
+  const settings = STATE.courseAccessSettings || DEFAULT_COURSE_ACCESS_SETTINGS;
+  if (settings.tier === 'premium') return userTier !== 'premium';
+  return accessTier === 'premium' && userTier !== 'premium';
+}
+
 function shouldShowUpgradeCta() {
   const settings = STATE.courseAccessSettings || DEFAULT_COURSE_ACCESS_SETTINGS;
-  return settings.tier === 'premium' && !isPremiumUnlockedForCourse();
+  if (settings.tier !== 'premium') return false;
+  return getUserSubscriptionTier() !== 'premium';
 }
 
 function renderCourseUpgradeCta() {
@@ -2368,7 +2385,7 @@ function _renderCourseCards() {
   const saved = STATE.userData?.savedCourses || [];
   const courses = STATE.courses || [];
   const visible = courses.filter(c => saved.includes(c.id));
-  const isPremiumUser = STATE.userData?.isPremium === true;
+  const isPremiumUser = getUserSubscriptionTier() === 'premium';
 
   const role = STATE.userData?.role;
   const showAnalytics = role === 'instructor' || role === 'admin';
@@ -3521,8 +3538,8 @@ async function renderVideosTab(exams) {
     const { q, qi, examLabel } = entry;
     const title = `${examLabel} שאלה ${qi + 1}`;
     const hasLockedVideo = !isUnlocked && (
-      ((videoMap[q.id]?.accessTier || 'free') === 'premium') ||
-      (q.subs || q.parts || []).some(s => ((videoMap[s.id]?.accessTier || 'free') === 'premium'))
+      isVideoLockedForCurrentCourse(videoMap[q.id]?.accessTier || 'free') ||
+      (q.subs || q.parts || []).some(s => isVideoLockedForCurrentCourse(videoMap[s.id]?.accessTier || 'free'))
     );
     return `<details class="vt-item" data-qid="${esc(q.id)}" data-idx="${idx}">
       <summary class="vt-summary">
@@ -3765,7 +3782,7 @@ function renderQuestionCard(q, qi, starred, userVotes = {}, videoMap = {}, isAdm
       const sAllowAI = s.allowAIGen === true;
       const sIsBonus = s.isBonus === true;
       const sVideo = videoMap[s.id] || null;
-      const sVideoLocked = Boolean(sVideo) && !isPremiumUnlockedForCourse() && (sVideo.accessTier || 'free') === 'premium';
+      const sVideoLocked = Boolean(sVideo) && isVideoLockedForCurrentCourse(sVideo.accessTier || 'free');
       return `<div class="qv-part${sIsBonus ? ' qv-part-bonus' : ''}" id="si-${s.id}">
         <div class="qv-part-head">
           <span class="qv-part-lbl">${sIsBonus ? '⭐ ' : ''}${rawLabel}</span>
@@ -3785,7 +3802,7 @@ function renderQuestionCard(q, qi, starred, userVotes = {}, videoMap = {}, isAdm
   }
 
   const qVideo = videoMap[q.id] || null;
-  const qVideoLocked = Boolean(qVideo) && !isPremiumUnlockedForCourse() && (qVideo.accessTier || 'free') === 'premium';
+  const qVideoLocked = Boolean(qVideo) && isVideoLockedForCurrentCourse(qVideo.accessTier || 'free');
 
   return `<div class="qv-card${isBonus ? ' qv-card-bonus' : ''}" id="qc-${q.id}" data-subject="${esc(subject)}" data-subjects="${esc(subjectTags.join('|'))}">
     <div class="qv-head${isBonus ? ' qv-head-bonus' : ''}">
@@ -5256,7 +5273,7 @@ function openVideoModalFromBtn(btn) {
   const entityId = btn?.dataset?.entityId || '';
   const entityLabel = btn?.dataset?.entityLabel || '';
   const accessTier = (btn?.dataset?.accessTier || 'free') === 'premium' ? 'premium' : 'free';
-  if (accessTier === 'premium' && !isPremiumUnlockedForCourse()) {
+  if (isVideoLockedForCurrentCourse(accessTier)) {
     toast('הסרטון זמין למנויי פרימיום בלבד בקורס זה', 'error');
     return;
   }

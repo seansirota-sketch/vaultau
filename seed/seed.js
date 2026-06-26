@@ -336,8 +336,9 @@ const EXAMS = [
 ];
 
 const USERS_SEED = [
-  { email: 'student1@tau.ac.il', password: 'Test1234', displayName: 'סטודנט לדוגמה 1', role: 'student', isPremium: false },
-  { email: 'student2@tau.ac.il', password: 'Test1234', displayName: 'סטודנט לדוגמה 2', role: 'student', isPremium: true },
+  { email: 'student1@tau.ac.il', password: 'Test1234', displayName: 'סטודנט לדוגמה 1', role: 'student', subscriptionTier: 'free' },
+  { email: 'student2@tau.ac.il', password: 'Test1234', displayName: 'סטודנט לדוגמה 2', role: 'student', subscriptionTier: 'basic' },
+  { email: 'student3@tau.ac.il', password: 'Test1234', displayName: 'סטודנט לדוגמה 3', role: 'student', subscriptionTier: 'premium' },
   { email: 'admin@admin.com',    password: 'Test1234', displayName: 'מנהל מערכת',       role: 'admin'   },
 ];
 
@@ -395,7 +396,8 @@ async function main() {
       email:            u.email,
       displayName:      u.displayName,
       role:             u.role,
-      isPremium:        u.isPremium === true,
+      subscriptionTier: (u.subscriptionTier === 'basic' || u.subscriptionTier === 'premium') ? u.subscriptionTier : 'free',
+      isPremium:        u.subscriptionTier === 'premium',
       starredQuestions: [],
       difficultyVotes:  {},
       freeSubjectAccess: {},
