@@ -2313,6 +2313,7 @@ function _renderCourseCards() {
   const saved = STATE.userData?.savedCourses || [];
   const courses = STATE.courses || [];
   const visible = courses.filter(c => saved.includes(c.id));
+  const isPremiumUser = STATE.userData?.isPremium === true;
 
   const role = STATE.userData?.role;
   const showAnalytics = role === 'instructor' || role === 'admin';
@@ -2360,7 +2361,7 @@ function _renderCourseCards() {
   }
 
   grid.innerHTML = visible.map(c => `
-    <div class="course-card" onclick="goCourse('${c.id}')">
+    <div class="course-card${isPremiumUser ? ' premium-user-course-card' : ''}" onclick="goCourse('${c.id}')">
       <button class="save-course-btn saved"
         onclick="removeSavedCourse('${c.id}', event)"
         title="הסר מהאזור האישי">✕</button>
@@ -3083,7 +3084,6 @@ function applyFilters(fromUser = false) {
   el.innerHTML = filtered.map(e => {
     const isDone       = STATE.doneExams.includes(e.id);
     const isInProgress = STATE.inProgressExams.includes(e.id);
-    const markLocked   = isExamMarkLockedForCurrentCourse(e.id);
     const statusClass  = isDone ? 'exam-done' : isInProgress ? 'exam-inprogress' : '';
     return `
     <div class="exam-item ${statusClass}" onclick="goExam('${STATE.courseId}','${e.id}')">
@@ -3114,13 +3114,11 @@ function applyFilters(fromUser = false) {
         title="${isInProgress ? 'בטל בתהליך' : 'סמן כבתהליך'}">
         ${isInProgress ? '⏳' : '◑'}
       </button>
-      ${markLocked ? renderPremiumLockIcon('סימון מבחן נוסף זמין למנויי פרימיום') : ''}
       <button class="done-toggle-btn ${isDone ? 'done-active' : ''}"
         onclick="event.stopPropagation(); toggleDone('${e.id}')"
         title="${isDone ? 'בטל סימון בוצע' : 'סמן כבוצע'}">
         ${isDone ? '✓' : '○'}
       </button>
-      ${markLocked ? renderPremiumLockIcon('סימון מבחן נוסף זמין למנויי פרימיום') : ''}
       <span class="exam-arrow">←</span>
     </div>`;
   }).join('');
@@ -3580,7 +3578,6 @@ async function renderExam() {
     ].filter(Boolean);
     const metaLine  = metaParts.join(' • ');
     const examTitle = exam.title || exam.id || '';
-    const markLockedInExam = isExamMarkLockedForCurrentCourse(exam.id);
 
     page.innerHTML = `
       <div class="ev-wrap">
@@ -3605,14 +3602,12 @@ async function renderExam() {
               title="${STATE.inProgressExams.includes(exam.id) ? 'בטל בתהליך' : 'סמן כבתהליך'}">
               ${STATE.inProgressExams.includes(exam.id) ? '⏳' : '◑'}
             </button>
-            ${markLockedInExam ? renderPremiumLockIcon('סימון מבחן נוסף זמין למנויי פרימיום') : ''}
             <button class="done-toggle-btn ${STATE.doneExams.includes(exam.id) ? 'done-active' : ''}"
               id="ev-done-btn"
               onclick="toggleDoneFromExam('${exam.id}')"
               title="${STATE.doneExams.includes(exam.id) ? 'בטל סימון בוצע' : 'סמן כבוצע'}">
               ${STATE.doneExams.includes(exam.id) ? '✓' : '○'}
             </button>
-            ${markLockedInExam ? renderPremiumLockIcon('סימון מבחן נוסף זמין למנויי פרימיום') : ''}
           </div>
           <div class="ev-banner-text">
             <h1 class="ev-banner-title">${esc(examTitle)}</h1>
@@ -3911,7 +3906,7 @@ function renderSubjectQuestionsTab(course, subjectEntries, subjectOptions) {
             <summary class="vt-summary vt-summary-subjects">
               <span class="vt-title">${isPremiumCourse ? `${esc(entry.examTitle)}${esc(subSuffix(entry))}` : `${esc(entry.examTitle)} · שאלה ${entry.qi + 1}${esc(subSuffix(entry))}`}</span>
               <span class="vt-chev">▾</span>
-              <span class="vt-subject-pill">${esc(entry.subject)}</span>
+              ${isPremium ? `<span class="vt-subject-pill">${esc(entry.subject)}</span>` : ''}
             </summary>
             <div class="vt-body"></div>
           </details>

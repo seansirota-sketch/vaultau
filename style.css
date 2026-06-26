@@ -417,6 +417,16 @@ body {
 }
 .course-card:hover { box-shadow: 0 2px 12px rgba(0,0,0,.07); border-color: #d0d3d8; }
 .course-card:hover::after { transform: scaleX(1); }
+.premium-user-course-card {
+  background: #fff7e6;
+  border-color: #f3d18d;
+}
+.premium-user-course-card::after {
+  background: #d97706;
+}
+.premium-user-course-card:hover {
+  border-color: #e3b14f;
+}
 .analytics-card {
   background: linear-gradient(135deg, #eef2ff 0%, #e0e7ff 100%);
   border-color: #c7d2fe;
