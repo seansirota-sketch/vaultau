@@ -1800,7 +1800,7 @@ mjx-container { direction: ltr; }
   border-color: #d48b2c;
 }
 .course-upgrade-modal-card {
-  width: min(96vw, 980px);
+  width: min(98vw, 1200px);
   max-height: 88vh;
   display: flex;
   flex-direction: column;

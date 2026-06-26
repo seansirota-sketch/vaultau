@@ -4977,13 +4977,15 @@ function openEditCourse(id) {
   modal.style.cssText = `
     position:fixed;inset:0;z-index:9999;
     background:rgba(0,0,0,.55);
-    display:flex;align-items:center;justify-content:center;
-    padding:1rem;
+    display:flex;align-items:flex-start;justify-content:center;
+    padding:1.2rem;
+    overflow-y:auto;
   `;
   modal.innerHTML = `
     <div style="background:var(--card,#fff);border-radius:16px;padding:2rem;
-                width:100%;max-width:480px;box-shadow:0 8px 32px rgba(0,0,0,.2);
-                direction:rtl;position:relative">
+                width:min(96vw,980px);max-height:88vh;overflow-y:auto;overscroll-behavior:contain;
+                box-shadow:0 8px 32px rgba(0,0,0,.2);
+                direction:rtl;position:relative;margin:auto 0">
       <button onclick="document.getElementById('edit-course-modal').remove()"
               style="position:absolute;top:1rem;left:1rem;background:none;border:none;
                      font-size:1.3rem;cursor:pointer;color:var(--muted,#888)">✕</button>
