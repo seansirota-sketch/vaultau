@@ -1777,7 +1777,8 @@ async function doLogout() {
   await auth.signOut();
   STATE = { page: 'home', courseId: null, examId: null, tab: 'exams',
             fireUser: null, userData: null, courses: null, exams: {}, examVotes: {},
-            doneExams: [], inProgressExams: [], savedFilters: {} };
+            doneExams: [], inProgressExams: [], savedFilters: {}, subjectFilters: {},
+            courseAccessSettings: null, isAnalyticsOn: true, courseCode: '', examLabel: '', examQuestions: [] };
   renderAuth();
 }
 
@@ -2825,6 +2826,8 @@ async function renderCourse() {
     
     const course = { ...courseDoc.data(), id: courseDoc.id };
     STATE.courseAccessSettings = normalizeCourseAccessSettings(course.accessSettings);
+    if (!STATE.subjectFilters) STATE.subjectFilters = {};
+    if (!STATE.savedFilters) STATE.savedFilters = {};
     
     // Check access:
     // - draft: no one can access (only visible in admin panel)
