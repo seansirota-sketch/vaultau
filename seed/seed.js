@@ -68,8 +68,20 @@ async function createDoc(collection, data) {
 // ── Seed Data ──────────────────────────────────────────────────────────────
 
 const COURSES = [
-  { id: 'calculus',    name: 'חשבון דיפרנציאלי ואינטגרלי', icon: '🧮', status: 'published' },
-  { id: 'datastructs', name: 'מבני נתונים ואלגוריתמים',     icon: '💻', status: 'published' },
+  {
+    id: 'calculus',
+    name: 'חשבון דיפרנציאלי ואינטגרלי',
+    icon: '🧮',
+    status: 'published',
+    accessSettings: { tier: 'free', freeLimits: { maxVideoOpens: -1, maxSubjectSelections: -1, maxStarredQuestions: -1, maxDoneExams: -1 }, freeAllowedSubjects: [] },
+  },
+  {
+    id: 'datastructs',
+    name: 'מבני נתונים ואלגוריתמים',
+    icon: '💻',
+    status: 'published',
+    accessSettings: { tier: 'premium', freeLimits: { maxVideoOpens: 1, maxSubjectSelections: 1, maxStarredQuestions: 3, maxDoneExams: 3 }, freeAllowedSubjects: ['סיבוכיות'] },
+  },
 ];
 
 const EXAMS = [
@@ -324,8 +336,8 @@ const EXAMS = [
 ];
 
 const USERS_SEED = [
-  { email: 'student1@tau.ac.il', password: 'Test1234', displayName: 'סטודנט לדוגמה 1', role: 'student' },
-  { email: 'student2@tau.ac.il', password: 'Test1234', displayName: 'סטודנט לדוגמה 2', role: 'student' },
+  { email: 'student1@tau.ac.il', password: 'Test1234', displayName: 'סטודנט לדוגמה 1', role: 'student', isPremium: false },
+  { email: 'student2@tau.ac.il', password: 'Test1234', displayName: 'סטודנט לדוגמה 2', role: 'student', isPremium: true },
   { email: 'admin@admin.com',    password: 'Test1234', displayName: 'מנהל מערכת',       role: 'admin'   },
 ];
 
@@ -383,8 +395,11 @@ async function main() {
       email:            u.email,
       displayName:      u.displayName,
       role:             u.role,
+      isPremium:        u.isPremium === true,
       starredQuestions: [],
       difficultyVotes:  {},
+      freeSubjectAccess: {},
+      freeVideoAccessByCourse: {},
     });
 
     console.log(`   ✓ ${u.email} (uid: ${uid})`);

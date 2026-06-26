@@ -496,6 +496,44 @@
               <label>נקודות זכות</label>
               <input id="c-credits" type="number" min="0" max="20" step="0.5" placeholder="3">
             </div>
+            <div class="form-group">
+              <label>סוג גישה</label>
+              <select id="c-access-tier">
+                <option value="free">חינם לכולם</option>
+                <option value="premium">קורס פרימיום (עם מגבלות לחינם)</option>
+              </select>
+            </div>
+          </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label>מגבלת סרטונים לחינם</label>
+              <input id="c-limit-videos" type="number" min="-1" step="1" value="1">
+              <small style="color:var(--muted)">-1 = ללא הגבלה</small>
+            </div>
+            <div class="form-group">
+              <label>מגבלת נושאים לחינם</label>
+              <input id="c-limit-subjects" type="number" min="-1" step="1" value="1">
+              <small style="color:var(--muted)">-1 = ללא הגבלה</small>
+            </div>
+          </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label>מגבלת סימון שאלות לחינם</label>
+              <input id="c-limit-stars" type="number" min="-1" step="1" value="3">
+              <small style="color:var(--muted)">-1 = ללא הגבלה</small>
+            </div>
+            <div class="form-group">
+              <label>מגבלת סימון מבחנים לחינם</label>
+              <input id="c-limit-done" type="number" min="-1" step="1" value="3">
+              <small style="color:var(--muted)">-1 = ללא הגבלה</small>
+            </div>
+          </div>
+          <div class="form-row">
+            <div class="form-group" style="flex:1">
+              <label>נושאים שמותרים לסינון בחינם (אופציונלי)</label>
+              <textarea id="c-free-subjects" rows="3" placeholder="כל שורה = נושא אחד&#10;אם ריק: כל הנושאים מותרים"></textarea>
+              <small style="color:var(--muted)">בשדה זה מגדירים allowlist לנושאים שמסלול חינם יוכל לסנן</small>
+            </div>
           </div>
           <div style="display:flex;justify-content:flex-end">
             <button class="btn btn-primary" onclick="adminAddCourse()">הוסף</button>

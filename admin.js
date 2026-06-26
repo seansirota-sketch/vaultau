@@ -4070,6 +4070,7 @@ async function renderManageUsers() {
           : `<span class="consent-badge consent-badge-pending">⏳ טרם</span>`;
 
       const currentRole = u.role || 'student';
+      const isPremium = u.isPremium === true;
       const dupIds = (dupIdsByKept.get(u._docId) || []).join(',');
 
       const roleSelect = `
@@ -4079,6 +4080,13 @@ async function renderManageUsers() {
           <option value="student"    ${currentRole==='student'    ? 'selected':''}>סטודנט</option>
           <option value="instructor" ${currentRole==='instructor' ? 'selected':''}>מרצה</option>
           <option value="admin"      ${currentRole==='admin'      ? 'selected':''}>אדמין</option>
+        </select>`;
+      const premiumSelect = `
+        <select onchange="updateUserPremium('${esc(docId)}', this.value, this)"
+                data-prev="${isPremium ? 'premium' : 'free'}"
+                style="font-size:.78rem;padding:.2rem .35rem;border:1px solid #cbd5e1;border-radius:5px;background:#fff;cursor:pointer">
+          <option value="free" ${!isPremium ? 'selected' : ''}>חינם</option>
+          <option value="premium" ${isPremium ? 'selected' : ''}>פרימיום</option>
         </select>`;
 
       const deleteBtn = `<button class="btn btn-sm" onclick="deleteUserDoc('${esc(uid)}','${esc(u.email || '')}','${esc(docId)}','${esc(u.email || uid || docId)}','${esc(dupIds)}')" title="מחק משתמש (Firestore + Auth)" style="padding:.25rem .55rem;font-size:.85rem;background:#fef2f2;color:#991b1b;border:1px solid #fca5a5">🗑️</button>`;
@@ -4099,6 +4107,7 @@ async function renderManageUsers() {
         </td>
         <td style="text-align:center">${consentBadge}</td>
         <td style="text-align:center">${roleSelect}</td>
+        <td style="text-align:center">${premiumSelect}</td>
         <td style="text-align:center">${resetBtn}</td>
         <td style="text-align:center">${deleteBtn}</td>
       </tr>`;
@@ -4128,6 +4137,7 @@ async function renderManageUsers() {
               <th style="text-align:center">📜 הצהרה</th>
               <th style="text-align:center">🔬 הסכמה למעקב</th>
               <th style="text-align:center">👤 תפקיד</th>
+              <th style="text-align:center">💎 מנוי</th>
               <th style="text-align:center" title="כפה איפוס סיסמה">🔑 איפוס סיסמה</th>
               <th style="text-align:center" title="מחק משתמש לצמיתות">🗑️ מחיקה</th>
             </tr>
@@ -4214,6 +4224,33 @@ async function updateUserRole(docId, newRole, selectEl) {
   } catch (e) {
     console.error('updateUserRole error:', e);
     alert('שגיאה בעדכון התפקיד: ' + (e.message || e));
+    if (selectEl) selectEl.value = prev;
+  } finally {
+    if (selectEl) selectEl.disabled = !!wasDisabled;
+  }
+}
+
+async function updateUserPremium(docId, newTier, selectEl) {
+  const allowed = ['free', 'premium'];
+  if (!allowed.includes(newTier)) return;
+  const prev = selectEl?.dataset?.prev || 'free';
+  if (newTier === prev) return;
+  const isPremium = newTier === 'premium';
+
+  if (!confirm(`להגדיר משתמש כ-${isPremium ? 'פרימיום' : 'חינם'}?`)) {
+    if (selectEl) selectEl.value = prev;
+    return;
+  }
+
+  const wasDisabled = selectEl?.disabled;
+  if (selectEl) selectEl.disabled = true;
+  try {
+    await db.collection('users').doc(docId).update({ isPremium });
+    if (selectEl) selectEl.dataset.prev = newTier;
+    toast?.(`המנוי עודכן ל-${isPremium ? 'פרימיום' : 'חינם'}`);
+  } catch (e) {
+    console.error('updateUserPremium error:', e);
+    alert('שגיאה בעדכון המנוי: ' + (e.message || e));
     if (selectEl) selectEl.value = prev;
   } finally {
     if (selectEl) selectEl.disabled = !!wasDisabled;
@@ -4693,11 +4730,76 @@ function cancelEdit() {
    COURSES ADMIN
 ══════════════════════════════════════════════════════════ */
 
+const DEFAULT_COURSE_ACCESS_SETTINGS = Object.freeze({
+  tier: 'free',
+  freeLimits: {
+    maxVideoOpens: 1,
+    maxSubjectSelections: 1,
+    maxStarredQuestions: 3,
+    maxDoneExams: 3,
+  },
+  freeAllowedSubjects: [],
+});
+const _adminCoursesCache = new Map();
+
+function parseCourseFeatureLimit(value, fallback) {
+  const n = Number.parseInt(String(value ?? ''), 10);
+  if (Number.isNaN(n)) return fallback;
+  if (n < 0) return -1;
+  return n;
+}
+
+function normalizeCourseAccessSettings(raw) {
+  const tier = raw?.tier === 'premium' ? 'premium' : 'free';
+  const freeLimits = raw?.freeLimits || {};
+  const freeAllowedSubjects = [...new Set((Array.isArray(raw?.freeAllowedSubjects) ? raw.freeAllowedSubjects : [])
+    .map(s => normalizeQuestionSubject(s))
+    .filter(Boolean))];
+  return {
+    tier,
+    freeLimits: {
+      maxVideoOpens: parseCourseFeatureLimit(freeLimits.maxVideoOpens, DEFAULT_COURSE_ACCESS_SETTINGS.freeLimits.maxVideoOpens),
+      maxSubjectSelections: parseCourseFeatureLimit(freeLimits.maxSubjectSelections, DEFAULT_COURSE_ACCESS_SETTINGS.freeLimits.maxSubjectSelections),
+      maxStarredQuestions: parseCourseFeatureLimit(freeLimits.maxStarredQuestions, DEFAULT_COURSE_ACCESS_SETTINGS.freeLimits.maxStarredQuestions),
+      maxDoneExams: parseCourseFeatureLimit(freeLimits.maxDoneExams, DEFAULT_COURSE_ACCESS_SETTINGS.freeLimits.maxDoneExams),
+    },
+    freeAllowedSubjects,
+  };
+}
+
+function parseFreeAllowedSubjectsInput(value) {
+  return [...new Set(String(value || '')
+    .split(/\r?\n|,/)
+    .map(s => normalizeQuestionSubject(s))
+    .filter(Boolean))];
+}
+
+function describeCourseAccess(settings) {
+  const cfg = normalizeCourseAccessSettings(settings);
+  if (cfg.tier === 'free') return 'חינם מלא';
+  const fmt = n => (n < 0 ? '∞' : String(n));
+  const allowlistPart = cfg.freeAllowedSubjects.length
+    ? ` · allowlist נושאים ${cfg.freeAllowedSubjects.length}`
+    : '';
+  return `פרימיום · וידאו ${fmt(cfg.freeLimits.maxVideoOpens)} · נושאים ${fmt(cfg.freeLimits.maxSubjectSelections)} · מסומנות ${fmt(cfg.freeLimits.maxStarredQuestions)} · בוצעו ${fmt(cfg.freeLimits.maxDoneExams)}${allowlistPart}`;
+}
+
 async function adminAddCourse() {
   const name    = document.getElementById('c-name').value.trim();
   const code    = document.getElementById('c-code').value.trim();
   const creditsRaw = document.getElementById('c-credits').value.trim();
   const credits = parseFloat(creditsRaw);
+  const tier = document.getElementById('c-access-tier')?.value || 'free';
+  const accessSettings = normalizeCourseAccessSettings({
+    tier,
+    freeLimits: {
+      maxVideoOpens: document.getElementById('c-limit-videos')?.value,
+      maxSubjectSelections: document.getElementById('c-limit-subjects')?.value,
+      maxStarredQuestions: document.getElementById('c-limit-stars')?.value,
+      maxDoneExams: document.getElementById('c-limit-done')?.value,
+    },
+    freeAllowedSubjects: parseFreeAllowedSubjectsInput(document.getElementById('c-free-subjects')?.value || ''),
+  });
   if (!name || !code) { toast('נא למלא שם וקוד', 'error'); return; }
   if (creditsRaw === '' || isNaN(credits) || credits < 0) { toast('נא למלא נקודות זכות תקינות', 'error'); return; }
 
@@ -4710,11 +4812,18 @@ async function adminAddCourse() {
       creditPoints: credits,
       icon: randIcon(),
       status: 'draft',  // Default to draft - admin must publish manually
+      accessSettings,
       createdAt: firebase.firestore.FieldValue.serverTimestamp(),
     });
     document.getElementById('c-name').value = '';
     document.getElementById('c-code').value = '';
     document.getElementById('c-credits').value = '';
+    if (document.getElementById('c-access-tier')) document.getElementById('c-access-tier').value = 'free';
+    if (document.getElementById('c-limit-videos')) document.getElementById('c-limit-videos').value = '1';
+    if (document.getElementById('c-limit-subjects')) document.getElementById('c-limit-subjects').value = '1';
+    if (document.getElementById('c-limit-stars')) document.getElementById('c-limit-stars').value = '3';
+    if (document.getElementById('c-limit-done')) document.getElementById('c-limit-done').value = '3';
+    if (document.getElementById('c-free-subjects')) document.getElementById('c-free-subjects').value = '';
     toast('✅ קורס נוסף (בסטטוס טיוטה)', 'success');
     await renderCoursesList();
     await populateAllSelects();
@@ -4733,6 +4842,8 @@ async function renderCoursesList() {
     // Admin always sees all courses (direct query, no filter)
     const snap = await db.collection('courses').orderBy('name').get();
     const courses = snap.docs.map(d => ({ ...d.data(), id: d.id }));
+    _adminCoursesCache.clear();
+    courses.forEach(c => _adminCoursesCache.set(c.id, c));
     
     if (!courses.length) {
       el.innerHTML = '<div class="empty"><span class="ei">📭</span><h3>אין קורסים</h3></div>';
@@ -4749,11 +4860,13 @@ async function renderCoursesList() {
 
     const rows = courses.map(c => {
       const status = c.status || 'draft';
+      const accessLabel = describeCourseAccess(c.accessSettings);
       return `<tr>
       <td style="font-size:1.3rem">${esc(c.icon)}</td>
       <td><strong>${esc(c.name)}</strong></td>
       <td><code>${esc(c.code)}</code></td>
       <td>${examCount[c.id] || 0}</td>
+      <td><span style="font-size:.78rem;color:var(--muted)">${esc(accessLabel)}</span></td>
       <td>
         <div class="status-btn-group" data-course-id="${c.id}">
           <button class="status-btn ${status === 'published' ? 'active' : ''}" 
@@ -4773,12 +4886,12 @@ async function renderCoursesList() {
           </button>
         </div>
       </td>
-      <td><button class="btn btn-secondary btn-sm" onclick="openEditCourse('${c.id}','${esc(c.name)}','${esc(c.code)}','${esc(c.icon || '')}',${c.creditPoints ?? 0})">✏️ עריכה</button></td>
+      <td><button class="btn btn-secondary btn-sm" onclick="openEditCourse('${c.id}')">✏️ עריכה</button></td>
     </tr>`;
     }).join('');
 
     el.innerHTML = `<table class="tbl">
-      <thead><tr><th>אייקון</th><th>שם</th><th>קוד</th><th>מבחנים</th><th>סטטוס</th><th></th></tr></thead>
+      <thead><tr><th>אייקון</th><th>שם</th><th>קוד</th><th>מבחנים</th><th>גישה</th><th>סטטוס</th><th></th></tr></thead>
       <tbody>${rows}</tbody></table>`;
   } catch (e) {
     el.innerHTML = `<p style="color:var(--danger)">שגיאה: ${e.message}</p>`;
@@ -4825,7 +4938,17 @@ const COURSE_ICONS = ['📐','📊','⚛️','🧮','🔬','🧬','💻','🌍',
                       '🎓','🔭','📈','🧪','🔢','📜','🗓️','🖥️','🎯','⚙️',
                       '🔑','🌐','📡','🧲','🔐','🗂️','📋','📌','🏗️','🔍'];
 
-function openEditCourse(id, name, code, icon, creditPoints = 0) {
+function openEditCourse(id) {
+  const course = _adminCoursesCache.get(id);
+  if (!course) {
+    toast('לא נמצא קורס לעריכה. נסה לרענן את הרשימה.', 'error');
+    return;
+  }
+  const name = course.name || '';
+  const code = course.code || '';
+  const icon = course.icon || '🎓';
+  const creditPoints = course.creditPoints ?? 0;
+  const accessSettings = normalizeCourseAccessSettings(course.accessSettings);
   // Remove existing modal if any
   const existing = document.getElementById('edit-course-modal');
   if (existing) existing.remove();
@@ -4884,6 +5007,41 @@ function openEditCourse(id, name, code, icon, creditPoints = 0) {
         </div>
       </div>
 
+      <div class="form-group">
+        <label style="font-weight:600">סוג גישה בקורס</label>
+        <select id="edit-course-tier">
+          <option value="free" ${accessSettings.tier === 'free' ? 'selected' : ''}>חינם לכולם</option>
+          <option value="premium" ${accessSettings.tier === 'premium' ? 'selected' : ''}>פרימיום (עם מגבלות לחינם)</option>
+        </select>
+      </div>
+
+      <div class="form-row">
+        <div class="form-group">
+          <label style="font-weight:600">מגבלת סרטונים לחינם</label>
+          <input id="edit-course-limit-videos" type="number" min="-1" step="1" value="${accessSettings.freeLimits.maxVideoOpens}">
+        </div>
+        <div class="form-group">
+          <label style="font-weight:600">מגבלת נושאים לחינם</label>
+          <input id="edit-course-limit-subjects" type="number" min="-1" step="1" value="${accessSettings.freeLimits.maxSubjectSelections}">
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label style="font-weight:600">מגבלת שאלות מסומנות לחינם</label>
+          <input id="edit-course-limit-stars" type="number" min="-1" step="1" value="${accessSettings.freeLimits.maxStarredQuestions}">
+        </div>
+        <div class="form-group">
+          <label style="font-weight:600">מגבלת מבחנים שבוצעו לחינם</label>
+          <input id="edit-course-limit-done" type="number" min="-1" step="1" value="${accessSettings.freeLimits.maxDoneExams}">
+        </div>
+      </div>
+      <div style="margin-top:-.4rem;color:var(--muted);font-size:.74rem">ערך -1 אומר "ללא הגבלה" למשתמשי חינם</div>
+      <div class="form-group">
+        <label style="font-weight:600">נושאים מותרים לסינון בחינם (אופציונלי)</label>
+        <textarea id="edit-course-free-subjects" rows="3"
+          placeholder="כל שורה = נושא אחד&#10;אם ריק: כל הנושאים מותרים">${esc((accessSettings.freeAllowedSubjects || []).join('\n'))}</textarea>
+      </div>
+
       <div style="display:flex;gap:.75rem;justify-content:flex-end;margin-top:1.5rem">
         <button class="btn btn-secondary"
                 onclick="document.getElementById('edit-course-modal').remove()">ביטול</button>
@@ -4910,6 +5068,17 @@ async function saveEditCourse() {
   const icon         = document.getElementById('edit-course-icon').value;
   const creditsRaw  = document.getElementById('edit-course-credits').value.trim();
   const creditPoints = parseFloat(creditsRaw);
+  const tier = document.getElementById('edit-course-tier')?.value || 'free';
+  const accessSettings = normalizeCourseAccessSettings({
+    tier,
+    freeLimits: {
+      maxVideoOpens: document.getElementById('edit-course-limit-videos')?.value,
+      maxSubjectSelections: document.getElementById('edit-course-limit-subjects')?.value,
+      maxStarredQuestions: document.getElementById('edit-course-limit-stars')?.value,
+      maxDoneExams: document.getElementById('edit-course-limit-done')?.value,
+    },
+    freeAllowedSubjects: parseFreeAllowedSubjectsInput(document.getElementById('edit-course-free-subjects')?.value || ''),
+  });
 
   if (!name || !code) { toast('נא למלא שם וקוד', 'error'); return; }
   if (creditsRaw === '' || isNaN(creditPoints) || creditPoints < 0) { toast('נא למלא נקודות זכות תקינות', 'error'); return; }
@@ -4923,6 +5092,7 @@ async function saveEditCourse() {
       code,
       icon,
       creditPoints,
+      accessSettings,
       updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
       updatedBy: adminUser?.email || 'unknown',
     });
@@ -6049,6 +6219,14 @@ async function openVideoAttachAdminModal(entityId, entityLabel) {
             value="${_esc(existing.title || '')}"
             style="width:100%;box-sizing:border-box;padding:.5rem .7rem;border:1.5px solid var(--border);border-radius:8px;font-size:.9rem;font-family:inherit">
         </div>
+        <div>
+          <label style="font-size:.85rem;color:var(--muted);display:block;margin-bottom:.3rem">גישה לסרטון</label>
+          <select id="vaa-access-tier"
+            style="width:100%;box-sizing:border-box;padding:.5rem .7rem;border:1.5px solid var(--border);border-radius:8px;font-size:.9rem;font-family:inherit">
+            <option value="free" ${(existing.accessTier || 'free') !== 'premium' ? 'selected' : ''}>זמין לכולם</option>
+            <option value="premium" ${(existing.accessTier || '') === 'premium' ? 'selected' : ''}>פרימיום בלבד</option>
+          </select>
+        </div>
         <p style="font-size:.8rem;color:var(--muted);margin:0;background:#f8fafc;padding:.6rem .8rem;border-radius:8px;line-height:1.6">
           📋 <strong>איך מוצאים את המזהים?</strong><br>
           Bunny Dashboard → Stream Library → בחר סרטון → העתק Library ID (מספר) ו-Video ID (GUID).
@@ -6071,6 +6249,7 @@ async function saveVideoAttachAdmin(entityId) {
   const libraryId = (document.getElementById('vaa-lib')?.value || '').trim();
   const videoId   = (document.getElementById('vaa-vid')?.value || '').trim();
   const title     = (document.getElementById('vaa-title')?.value || '').trim();
+  const accessTier = (document.getElementById('vaa-access-tier')?.value || 'free') === 'premium' ? 'premium' : 'free';
   const errEl     = document.getElementById('vaa-err');
 
   if (!libraryId || !videoId) {
@@ -6096,6 +6275,7 @@ async function saveVideoAttachAdmin(entityId) {
       libraryId,
       videoId,
       title: title || '',
+      accessTier,
       updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
     });
     toast('✅ סרטון נשמר בהצלחה', 'success');
