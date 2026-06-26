@@ -4224,7 +4224,20 @@ function renderDifficultyIndicator(qid, voteStats = {}, myVote = null) {
   const hasUserVote = myVote !== undefined && myVote !== null;
   if (!hasUserVote) return '';
   const avg = getQuestionAverageRating(voteStats);
-  const title = avg === null ? 'אין עדיין דירוג קושי' : `ממוצע קושי גלובלי: ${avg}/100`;
+  let avgForTooltip = null;
+  const voteCount = Number(voteStats.voteCount);
+  const ratingSum = Number(voteStats.ratingSum);
+  if (Number.isFinite(voteCount) && voteCount > 0 && Number.isFinite(ratingSum)) {
+    avgForTooltip = Math.max(0, Math.min(100, ratingSum / voteCount));
+  } else if (avg !== null) {
+    avgForTooltip = avg;
+  }
+  const displayAvg = avgForTooltip === null
+    ? null
+    : Number(avgForTooltip.toFixed(1)).toString();
+  const title = displayAvg === null
+    ? 'אין עדיין דירוג קושי ממשתמשים'
+    : `ממוצע דירוג של כלל המשתמשים: ${displayAvg}/100`;
   const color = getDifficultyColor(avg);
   return `<span class="difficulty-indicator" id="difficulty-indicator-${qid}" title="${esc(title)}">
     <span class="difficulty-indicator-dot" style="background:${esc(color)}"></span>
@@ -4234,15 +4247,16 @@ function renderDifficultyIndicator(qid, voteStats = {}, myVote = null) {
 function renderDifficultyControls(qid, myVote, voteStats, topic, isAdminUser = false) {
   const currentScore = normalizeDifficultyScore(myVote);
   const sliderValue = currentScore === null ? 50 : currentScore;
+  const sliderColor = getDifficultyColor(sliderValue);
   const hasExistingVote = myVote !== undefined && myVote !== null;
   const isLocked = !isAdminUser && hasExistingVote;
   const lockTitle = isLocked ? 'ניתן לדרג כל שאלה פעם אחת בלבד' : 'דרגו את רמת הקושי של השאלה';
   return `<div class="qv-difficulty-wrap${isLocked ? ' locked' : ''}" data-topic="${esc(topic || '')}">
-    <span class="qv-difficulty-label">0 = קל · 100 = קשה</span>
     <input class="qv-difficulty-slider" type="range" min="0" max="100" step="1" value="${sliderValue}"
       oninput="onDifficultySliderInput('${qid}', this.value)"
       aria-label="דירוג קושי לשאלה"
       title="${esc(lockTitle)}"
+      style="accent-color:${esc(sliderColor)}"
       ${isLocked ? 'disabled' : ''}>
     <span class="qv-difficulty-value" id="difficulty-value-${qid}">${sliderValue}</span>
     <button class="qv-difficulty-submit" type="button"
@@ -4275,6 +4289,8 @@ function onDifficultySliderInput(qid, value) {
   const score = clampDifficultyScore(value);
   const valueEl = document.getElementById(`difficulty-value-${qid}`);
   if (valueEl && score !== null) valueEl.textContent = String(score);
+  const sliderEl = document.querySelector(`#dw-${qid} .qv-difficulty-slider`);
+  if (sliderEl && score !== null) sliderEl.style.accentColor = getDifficultyColor(score);
 }
 
 function submitDifficultyVote(qid, buttonEl) {
