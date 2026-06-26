@@ -4207,7 +4207,7 @@ function getQuestionAverageRating(voteStats = {}) {
 
 function getDifficultyColor(averageRating) {
   const normalized = clampDifficultyScore(averageRating);
-  if (normalized === null) return 'rgb(148, 163, 184)';
+  if (normalized === null) return '#d1d5db';
   const red = Math.round(255 * (normalized / 100));
   const green = Math.round(255 * (1 - normalized / 100));
   return `rgb(${red}, ${green}, 0)`;

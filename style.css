@@ -1225,9 +1225,8 @@ body {
 .difficulty-indicator::after {
   content: attr(data-tooltip);
   position: absolute;
-  bottom: calc(100% + 8px);
-  left: 50%;
-  transform: translateX(-50%);
+  top: calc(100% + 8px);
+  right: 0;
   background: #0f172a;
   color: #fff;
   padding: .3rem .5rem;
