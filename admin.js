@@ -4739,6 +4739,7 @@ const DEFAULT_COURSE_ACCESS_SETTINGS = Object.freeze({
     maxDoneExams: 3,
   },
   freeAllowedSubjects: [],
+  upgradeContentHtml: '',
 });
 const _adminCoursesCache = new Map();
 
@@ -4755,6 +4756,7 @@ function normalizeCourseAccessSettings(raw) {
   const freeAllowedSubjects = [...new Set((Array.isArray(raw?.freeAllowedSubjects) ? raw.freeAllowedSubjects : [])
     .map(s => normalizeQuestionSubject(s))
     .filter(Boolean))];
+  const upgradeContentHtml = String(raw?.upgradeContentHtml || '').trim();
   return {
     tier,
     freeLimits: {
@@ -4764,6 +4766,7 @@ function normalizeCourseAccessSettings(raw) {
       maxDoneExams: parseCourseFeatureLimit(freeLimits.maxDoneExams, DEFAULT_COURSE_ACCESS_SETTINGS.freeLimits.maxDoneExams),
     },
     freeAllowedSubjects,
+    upgradeContentHtml,
   };
 }
 
@@ -4781,7 +4784,8 @@ function describeCourseAccess(settings) {
   const allowlistPart = cfg.freeAllowedSubjects.length
     ? ` · allowlist נושאים ${cfg.freeAllowedSubjects.length}`
     : '';
-  return `פרימיום · וידאו ${fmt(cfg.freeLimits.maxVideoOpens)} · נושאים ${fmt(cfg.freeLimits.maxSubjectSelections)} · מסומנות ${fmt(cfg.freeLimits.maxStarredQuestions)} · בוצעו ${fmt(cfg.freeLimits.maxDoneExams)}${allowlistPart}`;
+  const upgradePart = cfg.upgradeContentHtml ? ' · חלון שדרוג מותאם' : '';
+  return `פרימיום · וידאו ${fmt(cfg.freeLimits.maxVideoOpens)} · נושאים ${fmt(cfg.freeLimits.maxSubjectSelections)} · מסומנות ${fmt(cfg.freeLimits.maxStarredQuestions)} · בוצעו ${fmt(cfg.freeLimits.maxDoneExams)}${allowlistPart}${upgradePart}`;
 }
 
 async function adminAddCourse() {
@@ -4799,6 +4803,7 @@ async function adminAddCourse() {
       maxDoneExams: document.getElementById('c-limit-done')?.value,
     },
     freeAllowedSubjects: parseFreeAllowedSubjectsInput(document.getElementById('c-free-subjects')?.value || ''),
+    upgradeContentHtml: document.getElementById('c-upgrade-content')?.value || '',
   });
   if (!name || !code) { toast('נא למלא שם וקוד', 'error'); return; }
   if (creditsRaw === '' || isNaN(credits) || credits < 0) { toast('נא למלא נקודות זכות תקינות', 'error'); return; }
@@ -4824,6 +4829,7 @@ async function adminAddCourse() {
     if (document.getElementById('c-limit-stars')) document.getElementById('c-limit-stars').value = '3';
     if (document.getElementById('c-limit-done')) document.getElementById('c-limit-done').value = '3';
     if (document.getElementById('c-free-subjects')) document.getElementById('c-free-subjects').value = '';
+    if (document.getElementById('c-upgrade-content')) document.getElementById('c-upgrade-content').value = '';
     toast('✅ קורס נוסף (בסטטוס טיוטה)', 'success');
     await renderCoursesList();
     await populateAllSelects();
@@ -5041,6 +5047,11 @@ function openEditCourse(id) {
         <textarea id="edit-course-free-subjects" rows="3"
           placeholder="כל שורה = נושא אחד&#10;אם ריק: כל הנושאים מותרים">${esc((accessSettings.freeAllowedSubjects || []).join('\n'))}</textarea>
       </div>
+      <div class="form-group">
+        <label style="font-weight:600">תוכן חלון שדרוג (HTML, אופציונלי)</label>
+        <textarea id="edit-course-upgrade-content" rows="5"
+          placeholder="<h3>בחר מסלול</h3>&#10;<div class='plans-grid'>...</div>">${esc(accessSettings.upgradeContentHtml || '')}</textarea>
+      </div>
 
       <div style="display:flex;gap:.75rem;justify-content:flex-end;margin-top:1.5rem">
         <button class="btn btn-secondary"
@@ -5078,6 +5089,7 @@ async function saveEditCourse() {
       maxDoneExams: document.getElementById('edit-course-limit-done')?.value,
     },
     freeAllowedSubjects: parseFreeAllowedSubjectsInput(document.getElementById('edit-course-free-subjects')?.value || ''),
+    upgradeContentHtml: document.getElementById('edit-course-upgrade-content')?.value || '',
   });
 
   if (!name || !code) { toast('נא למלא שם וקוד', 'error'); return; }

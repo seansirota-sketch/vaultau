@@ -1779,6 +1779,56 @@ mjx-container { direction: ltr; }
   border-radius: 6px; transition: background .15s;
 }
 .modal-close:hover { background: var(--bg2, #f3f4f6); }
+.course-upgrade-side-btn {
+  position: fixed;
+  top: 96px;
+  left: 14px;
+  z-index: 60;
+  border: 1px solid #e3b14f;
+  background: #fff5db;
+  color: #9a5a00;
+  border-radius: 999px;
+  padding: .45rem .8rem;
+  font-size: .82rem;
+  font-weight: 700;
+  font-family: inherit;
+  cursor: pointer;
+  box-shadow: 0 4px 14px rgba(146, 64, 14, .18);
+}
+.course-upgrade-side-btn:hover {
+  background: #ffefc2;
+  border-color: #d48b2c;
+}
+.course-upgrade-modal-card {
+  width: min(96vw, 980px);
+  max-height: 88vh;
+  display: flex;
+  flex-direction: column;
+}
+.course-upgrade-modal-body {
+  padding: 1rem 1.25rem;
+  overflow: auto;
+}
+.course-upgrade-modal-footer {
+  padding: .85rem 1.25rem 1rem;
+  border-top: 1px solid var(--border);
+  display: flex;
+  justify-content: flex-start;
+}
+.course-upgrade-fallback h3 {
+  margin: 0 0 .35rem;
+}
+.course-upgrade-fallback p {
+  margin: .25rem 0;
+  color: var(--muted);
+}
+@media (max-width: 700px) {
+  .course-upgrade-side-btn {
+    top: auto;
+    bottom: 14px;
+    left: 10px;
+  }
+}
 
 /* ── Contact type buttons ────────────────────────────────────── */
 .contact-type-btn {

@@ -599,6 +599,7 @@ const DEFAULT_COURSE_ACCESS_SETTINGS = Object.freeze({
     maxDoneExams: 3,
   },
   freeAllowedSubjects: [],
+  upgradeContentHtml: '',
 });
 
 function normalizeCourseAccessSettings(raw) {
@@ -613,6 +614,7 @@ function normalizeCourseAccessSettings(raw) {
   const freeAllowedSubjects = [...new Set((Array.isArray(raw?.freeAllowedSubjects) ? raw.freeAllowedSubjects : [])
     .map(s => normalizeQuestionSubject(s))
     .filter(Boolean))];
+  const upgradeContentHtml = String(raw?.upgradeContentHtml || '').trim();
   return {
     tier,
     freeLimits: {
@@ -622,6 +624,7 @@ function normalizeCourseAccessSettings(raw) {
       maxDoneExams: toLimit(freeLimits.maxDoneExams, DEFAULT_COURSE_ACCESS_SETTINGS.freeLimits.maxDoneExams),
     },
     freeAllowedSubjects,
+    upgradeContentHtml,
   };
 }
 
@@ -643,6 +646,58 @@ function getCourseFreeAllowedSubjectsSet() {
   const settings = STATE.courseAccessSettings || DEFAULT_COURSE_ACCESS_SETTINGS;
   return new Set((settings.freeAllowedSubjects || []).map(s => normalizeQuestionSubject(s)).filter(Boolean));
 }
+
+function shouldShowUpgradeCta() {
+  const settings = STATE.courseAccessSettings || DEFAULT_COURSE_ACCESS_SETTINGS;
+  return settings.tier === 'premium' && !isPremiumUnlockedForCourse();
+}
+
+function renderCourseUpgradeCta() {
+  if (!shouldShowUpgradeCta()) return '';
+  return `<button class="course-upgrade-side-btn" onclick="openCourseUpgradeModal()">⬆️ שדרוג</button>`;
+}
+
+function closeCourseUpgradeModal() {
+  document.getElementById('course-upgrade-modal')?.remove();
+  document.body.style.overflow = '';
+}
+
+function openCourseUpgradeModal() {
+  if (!shouldShowUpgradeCta()) return;
+  document.getElementById('course-upgrade-modal')?.remove();
+
+  const settings = STATE.courseAccessSettings || DEFAULT_COURSE_ACCESS_SETTINGS;
+  const customHtml = String(settings.upgradeContentHtml || '').trim();
+  const fallbackHtml = `
+    <div class="course-upgrade-fallback">
+      <h3>שדרוג למסלול פרימיום</h3>
+      <p>כדי לפתוח את כל הפיצ'רים בקורס זה, אפשר לשדרג למסלול פרימיום.</p>
+      <p>להתאמה אישית מלאה של תוכן זה, היכנס למסך ניהול קורסים בפאנל הניהול.</p>
+    </div>`;
+
+  const overlay = document.createElement('div');
+  overlay.id = 'course-upgrade-modal';
+  overlay.className = 'modal-overlay';
+  overlay.innerHTML = `
+    <div class="modal-card course-upgrade-modal-card">
+      <div class="modal-header">
+        <h3 style="margin:0;font-size:1.08rem">שדרוג לקורס פרימיום</h3>
+        <button class="modal-close" onclick="closeCourseUpgradeModal()">✕</button>
+      </div>
+      <div class="course-upgrade-modal-body">
+        ${customHtml || fallbackHtml}
+      </div>
+      <div class="course-upgrade-modal-footer">
+        <button class="btn btn-secondary" onclick="closeCourseUpgradeModal()">סגור</button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+  document.body.style.overflow = 'hidden';
+  overlay.addEventListener('click', e => { if (e.target === overlay) closeCourseUpgradeModal(); });
+}
+
+window.openCourseUpgradeModal = openCourseUpgradeModal;
+window.closeCourseUpgradeModal = closeCourseUpgradeModal;
 
 function renderPremiumLockIcon(title = 'זמין למנויי פרימיום', extraClass = '') {
   const cls = `feature-lock-icon${extraClass ? ' ' + extraClass : ''}`;
@@ -2912,6 +2967,7 @@ async function renderCourse() {
 
     page.innerHTML = `
       <div class="container">
+        ${renderCourseUpgradeCta()}
         <div class="breadcrumb">
           <a onclick="goHome()">🏠 ראשי</a><span>›</span><span>${esc(course.name)}</span>
         </div>
@@ -3538,6 +3594,7 @@ async function renderExam() {
     if (!courseDoc.exists) return goHome();
     
     const course = { ...courseDoc.data(), id: courseDoc.id };
+    STATE.courseAccessSettings = normalizeCourseAccessSettings(course.accessSettings);
     
     // Check access:
     // - draft: no one can access
@@ -3585,6 +3642,7 @@ async function renderExam() {
 
     page.innerHTML = `
       <div class="ev-wrap">
+        ${renderCourseUpgradeCta()}
         <div class="ev-topbar">
           <button class="ev-back" onclick="_examBackNav('${course.id}')">← חזרה</button>
           <div class="ev-topbar-meta">
