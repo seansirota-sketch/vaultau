@@ -2360,8 +2360,11 @@ function _renderCourseCards() {
     return;
   }
 
-  grid.innerHTML = visible.map(c => `
-    <div class="course-card${isPremiumUser ? ' premium-user-course-card' : ''}" onclick="goCourse('${c.id}')">
+  grid.innerHTML = visible.map(c => {
+    const isPremiumCourse = normalizeCourseAccessSettings(c.accessSettings).tier === 'premium';
+    const premiumClass = (isPremiumUser && isPremiumCourse) ? ' premium-user-course-card' : '';
+    return `
+    <div class="course-card${premiumClass}" onclick="goCourse('${c.id}')">
       <button class="save-course-btn saved"
         onclick="removeSavedCourse('${c.id}', event)"
         title="הסר מהאזור האישי">✕</button>
@@ -2369,7 +2372,8 @@ function _renderCourseCards() {
       <div class="cn">${esc(c.name)}</div>
       <div class="cc">${esc(c.code)}</div>
       <div class="cm">לחץ לצפייה במבחנים</div>
-    </div>`).join('');
+    </div>`;
+  }).join('');
 }
 
 function goLecturerAnalytics() {
