@@ -1171,6 +1171,7 @@ body {
   font-size: .72rem;
   color: #64748b;
   font-weight: 700;
+  white-space: nowrap;
 }
 .qv-difficulty-slider {
   width: 110px;
@@ -1182,6 +1183,26 @@ body {
 }
 .qv-difficulty-wrap.locked .qv-difficulty-slider {
   cursor: not-allowed;
+}
+.qv-difficulty-submit {
+  width: 24px;
+  height: 24px;
+  border: 1px solid #cbd5e1;
+  background: #f8fafc;
+  color: #0f172a;
+  border-radius: 6px;
+  font-size: .9rem;
+  font-weight: 800;
+  line-height: 1;
+  cursor: pointer;
+}
+.qv-difficulty-submit:hover {
+  background: #e2e8f0;
+  border-color: #94a3b8;
+}
+.qv-difficulty-submit:disabled {
+  cursor: not-allowed;
+  opacity: .6;
 }
 .qv-difficulty-value {
   min-width: 2ch;
