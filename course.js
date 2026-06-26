@@ -3532,12 +3532,11 @@ async function renderVideosTab(exams) {
   const starred   = STATE.userData?.starredQuestions || [];
   const userVotes = STATE.userData?.difficultyVotes  || {};
   const isAdmin   = STATE.userData?.role === 'admin';
-  const isUnlocked = isPremiumUnlockedForCourse();
 
   const html = entries.map((entry, idx) => {
     const { q, qi, examLabel } = entry;
     const title = `${examLabel} שאלה ${qi + 1}`;
-    const hasLockedVideo = !isUnlocked && (
+    const hasLockedVideo = (
       isVideoLockedForCurrentCourse(videoMap[q.id]?.accessTier || 'free') ||
       (q.subs || q.parts || []).some(s => isVideoLockedForCurrentCourse(videoMap[s.id]?.accessTier || 'free'))
     );
