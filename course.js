@@ -644,6 +644,30 @@ function getCourseFreeAllowedSubjectsSet() {
   return new Set((settings.freeAllowedSubjects || []).map(s => normalizeQuestionSubject(s)).filter(Boolean));
 }
 
+function renderPremiumLockIcon(title = 'זמין למנויי פרימיום') {
+  return `<span class="feature-lock-icon" title="${esc(title)}" aria-label="${esc(title)}">🔒</span>`;
+}
+
+function isDoneLockedForCurrentCourse(examId) {
+  if (isPremiumUnlockedForCourse()) return false;
+  const maxDone = getCourseFreeLimit('maxDoneExams');
+  if (maxDone < 0) return false;
+  if (STATE.doneExams.includes(examId)) return false;
+  const courseExamIds = new Set((STATE.exams[STATE.courseId] || []).map(exam => exam.id));
+  const inCourseDone = (STATE.doneExams || []).filter(id => courseExamIds.has(id)).length;
+  return inCourseDone >= maxDone;
+}
+
+function isStarLockedForCurrentCourse(questionId, starred = []) {
+  if (isPremiumUnlockedForCourse()) return false;
+  const maxStars = getCourseFreeLimit('maxStarredQuestions');
+  if (maxStars < 0) return false;
+  if (starred.includes(questionId)) return false;
+  const exams = STATE.exams[STATE.courseId] || [];
+  const inCourseCount = countStarred(exams, starred);
+  return inCourseCount >= maxStars;
+}
+
 let _userInboxUnsub = null;
 let _userInboxReports = [];
 let _userInboxUnread = 0;
@@ -3041,6 +3065,7 @@ function applyFilters(fromUser = false) {
   el.innerHTML = filtered.map(e => {
     const isDone       = STATE.doneExams.includes(e.id);
     const isInProgress = STATE.inProgressExams.includes(e.id);
+    const doneLocked   = isDoneLockedForCurrentCourse(e.id);
     const statusClass  = isDone ? 'exam-done' : isInProgress ? 'exam-inprogress' : '';
     return `
     <div class="exam-item ${statusClass}" onclick="goExam('${STATE.courseId}','${e.id}')">
@@ -3076,6 +3101,7 @@ function applyFilters(fromUser = false) {
         title="${isDone ? 'בטל סימון בוצע' : 'סמן כבוצע'}">
         ${isDone ? '✓' : '○'}
       </button>
+      ${doneLocked ? renderPremiumLockIcon('השלמת מבחן נוסף זמינה למנויי פרימיום') : ''}
       <span class="exam-arrow">←</span>
     </div>`;
   }).join('');
@@ -3525,6 +3551,7 @@ async function renderExam() {
     ].filter(Boolean);
     const metaLine  = metaParts.join(' • ');
     const examTitle = exam.title || exam.id || '';
+    const doneLockedInExam = isDoneLockedForCurrentCourse(exam.id);
 
     page.innerHTML = `
       <div class="ev-wrap">
@@ -3555,6 +3582,7 @@ async function renderExam() {
               title="${STATE.doneExams.includes(exam.id) ? 'בטל סימון בוצע' : 'סמן כבוצע'}">
               ${STATE.doneExams.includes(exam.id) ? '✓' : '○'}
             </button>
+            ${doneLockedInExam ? renderPremiumLockIcon('השלמת מבחן נוסף זמינה למנויי פרימיום') : ''}
           </div>
           <div class="ev-banner-text">
             <h1 class="ev-banner-title">${esc(examTitle)}</h1>
@@ -3597,6 +3625,7 @@ function renderQuestionCard(q, qi, starred, userVotes = {}, videoMap = {}, isAdm
   const _roleLocal = STATE.userData?.role;
   const _canUploadVideo = isAdmin || _roleLocal === 'admin' || _roleLocal === 'instructor' || _roleLocal === 'מרצה';
   const isStarredQ = starred.includes(q.id);
+  const isStarLocked = isStarLockedForCurrentCourse(q.id, starred);
   const isBonus    = q.isBonus === true;
   const subs       = q.subs || q.parts || [];
   const hasSubs    = subs.length > 0;
@@ -3647,6 +3676,8 @@ function renderQuestionCard(q, qi, starred, userVotes = {}, videoMap = {}, isAdm
       COPY_MAP.set(sCopyId, sText);
       const sAllowAI = s.allowAIGen === true;
       const sIsBonus = s.isBonus === true;
+      const sVideo = videoMap[s.id] || null;
+      const sVideoLocked = Boolean(sVideo) && !isPremiumUnlockedForCourse() && (sVideo.accessTier || 'free') === 'premium';
       return `<div class="qv-part${sIsBonus ? ' qv-part-bonus' : ''}" id="si-${s.id}">
         <div class="qv-part-head">
           <span class="qv-part-lbl">${sIsBonus ? '⭐ ' : ''}${rawLabel}</span>
@@ -3654,7 +3685,7 @@ function renderQuestionCard(q, qi, starred, userVotes = {}, videoMap = {}, isAdm
             ${sIsBonus ? `<span class="qv-bonus-badge" style="font-size:.7rem;padding:.15rem .5rem">⭐ סעיף בונוס</span>` : ''}
             <button class="qv-btn" onclick="copyById('${sCopyId}',event)" title="העתק LaTeX">${copySVG}</button>
             ${sAllowAI && canGenerate ? `<button class="qv-btn" onclick="openGeminiModal('${s.id}','sub')" title="צור סעיף דומה">✨</button>` : ''}
-            ${videoMap[s.id] ? `<button class="qv-btn qv-video-btn" data-lib="${esc(videoMap[s.id].libraryId)}" data-vid="${esc(videoMap[s.id].videoId)}" data-title="${esc(videoMap[s.id].title || 'פתרון מוצג')}" data-entity-id="${esc(s.id)}" data-entity-label="${esc('שאלה ' + (qi + 1) + ' ' + rawLabel)}" data-access-tier="${esc(videoMap[s.id].accessTier || 'free')}" onclick="openVideoModalFromBtn(this)" title="צפה בסרטון פתרון">${videoSVG}</button>` : ''}
+            ${sVideo ? `<button class="qv-btn qv-video-btn" data-lib="${esc(sVideo.libraryId)}" data-vid="${esc(sVideo.videoId)}" data-title="${esc(sVideo.title || 'פתרון מוצג')}" data-entity-id="${esc(s.id)}" data-entity-label="${esc('שאלה ' + (qi + 1) + ' ' + rawLabel)}" data-access-tier="${esc(sVideo.accessTier || 'free')}" onclick="openVideoModalFromBtn(this)" title="צפה בסרטון פתרון">${videoSVG}</button>${sVideoLocked ? renderPremiumLockIcon('הסרטון זמין למנויי פרימיום') : ''}` : ''}
             ${(_canUploadVideo && examId) ? `<button class="qv-btn qv-video-upload-btn" data-exam-id="${esc(examId)}" data-question-id="${esc(s.id)}" data-entity-label="${esc(((examTitle ? examTitle + ' — ' : '') + 'שאלה ' + (qi + 1) + ' סעיף ' + (s.letter || String.fromCharCode(0x05D0 + si))))}" onclick="openLecturerVideoUploadFromBtn(this)" title="העלה סרטון להסבר">${videoUploadSVG}</button>` : ''}
           </div>
         </div>
@@ -3664,6 +3695,9 @@ function renderQuestionCard(q, qi, starred, userVotes = {}, videoMap = {}, isAdm
     }).join('');
     partsHtml = `<div class="qv-parts">${partsHtml}</div>`;
   }
+
+  const qVideo = videoMap[q.id] || null;
+  const qVideoLocked = Boolean(qVideo) && !isPremiumUnlockedForCourse() && (qVideo.accessTier || 'free') === 'premium';
 
   return `<div class="qv-card${isBonus ? ' qv-card-bonus' : ''}" id="qc-${q.id}" data-subject="${esc(subject)}" data-subjects="${esc(subjectTags.join('|'))}">
     <div class="qv-head${isBonus ? ' qv-head-bonus' : ''}">
@@ -3677,9 +3711,10 @@ function renderQuestionCard(q, qi, starred, userVotes = {}, videoMap = {}, isAdm
         <div class="qv-actions-sep"></div>
         <button class="qv-btn ${isStarredQ ? 'on' : ''}" id="qb-${q.id}"
           onclick="toggleStar('${q.id}')" title="סמן שאלה">${starSVG(isStarredQ)}</button>
+        ${isStarLocked ? renderPremiumLockIcon('סימון שאלה נוספת במועדפים זמין למנויי פרימיום') : ''}
         <button class="qv-btn" onclick="copyById('${qCopyId}',event)" title="העתק LaTeX">${copySVG}</button>
         ${q.allowAIGen === true && canGenerate ? `<button class="qv-btn" onclick="openGeminiModal('${q.id}','question')" title="צור שאלה דומה">✨</button>` : ''}
-        ${videoMap[q.id] ? `<button class="qv-btn qv-video-btn" data-lib="${esc(videoMap[q.id].libraryId)}" data-vid="${esc(videoMap[q.id].videoId)}" data-title="${esc(videoMap[q.id].title || 'פתרון מוצג')}" data-entity-id="${esc(q.id)}" data-entity-label="${esc('שאלה ' + (qi + 1))}" data-access-tier="${esc(videoMap[q.id].accessTier || 'free')}" onclick="openVideoModalFromBtn(this)" title="צפה בסרטון פתרון">${videoSVG}</button>` : ''}
+        ${qVideo ? `<button class="qv-btn qv-video-btn" data-lib="${esc(qVideo.libraryId)}" data-vid="${esc(qVideo.videoId)}" data-title="${esc(qVideo.title || 'פתרון מוצג')}" data-entity-id="${esc(q.id)}" data-entity-label="${esc('שאלה ' + (qi + 1))}" data-access-tier="${esc(qVideo.accessTier || 'free')}" onclick="openVideoModalFromBtn(this)" title="צפה בסרטון פתרון">${videoSVG}</button>${qVideoLocked ? renderPremiumLockIcon('הסרטון זמין למנויי פרימיום') : ''}` : ''}
         ${(_canUploadVideo && examId) ? `<button class="qv-btn qv-video-upload-btn" data-exam-id="${esc(examId)}" data-question-id="${esc(q.id)}" data-entity-label="${esc(((examTitle ? examTitle + ' — ' : '') + 'שאלה ' + (qi + 1)))}" onclick="openLecturerVideoUploadFromBtn(this)" title="העלה סרטון להסבר">${videoUploadSVG}</button>` : ''}
       </div>
     </div>
@@ -3786,11 +3821,23 @@ function renderSubjectQuestionsTab(course, subjectEntries, subjectOptions) {
   const isAdmin   = STATE.userData?.role === 'admin';
   const isPremium = isPremiumUnlockedForCourse();
   const freeAllowedSubjects = getCourseFreeAllowedSubjectsSet();
-  const selectableSubjectOptions = (!isPremium && freeAllowedSubjects.size > 0)
-    ? subjectOptions.filter(s => freeAllowedSubjects.has(normalizeQuestionSubject(s)))
-    : subjectOptions;
+  const subjectLimit = getCourseFreeLimit('maxSubjectSelections');
+  const freeSubjectMap = STATE.userData?.freeSubjectAccess || {};
+  const unlockedSubjects = Array.isArray(freeSubjectMap[STATE.courseId]) ? freeSubjectMap[STATE.courseId] : [];
+  const lockedSubjectByValue = {};
+  const selectableSubjectOptions = subjectOptions.map((subjectName) => {
+    const normalized = normalizeQuestionSubject(subjectName);
+    const blockedByAllowedList = !isPremium && freeAllowedSubjects.size > 0 && !freeAllowedSubjects.has(normalized);
+    const blockedByLimit = !isPremium && subjectLimit >= 0 && !unlockedSubjects.includes(normalized) && unlockedSubjects.length >= subjectLimit;
+    if (blockedByAllowedList || blockedByLimit) lockedSubjectByValue[normalized] = true;
+    return {
+      value: subjectName,
+      normalized,
+      locked: blockedByAllowedList || blockedByLimit,
+    };
+  });
   let selectedSubject = normalizeQuestionSubject(STATE.subjectFilter || '');
-  if (!isPremium && freeAllowedSubjects.size > 0 && selectedSubject && !freeAllowedSubjects.has(selectedSubject)) {
+  if (selectedSubject && lockedSubjectByValue[selectedSubject]) {
     selectedSubject = '';
     STATE.subjectFilter = '';
     if (STATE.courseId) STATE.subjectFilters[STATE.courseId] = '';
@@ -3813,7 +3860,7 @@ function renderSubjectQuestionsTab(course, subjectEntries, subjectOptions) {
           <label>בחר נושא</label>
           <select id="subject-filter-select" onchange="setCourseSubjectFilter(this.value)">
             <option value="">כל הנושאים</option>
-            ${selectableSubjectOptions.map(s => `<option value="${esc(s)}"${s === selectedSubject ? ' selected' : ''}>${esc(s)}</option>`).join('')}
+            ${selectableSubjectOptions.map(({ value, normalized, locked }) => `<option value="${esc(value)}"${normalized === selectedSubject ? ' selected' : ''}${locked ? ' disabled' : ''}>${locked ? '🔒 ' : ''}${esc(value)}</option>`).join('')}
           </select>
         </div>
         <div style="font-size:.85rem;color:var(--muted)">
