@@ -79,8 +79,11 @@ async function fetchUserData(uid, email) {
     uid,
     email: email ? email.toLowerCase().trim() : null,
     role: 'student',
+    isPremium: false,
     starredQuestions: [],
-    difficultyVotes: {}
+    difficultyVotes: {},
+    freeSubjectAccess: {},
+    freeVideoAccessByCourse: {},
   };
   try {
     await db.collection('users').doc(uid).set(defaults, { merge: true });
@@ -94,7 +97,8 @@ const ALLOWED_USER_FIELDS = [
   'completedExams', 'doneExams', 'inProgressExams',
   'copyCount', 'lastCopyReset', 'createdAt', 'savedCourses', 'aiQuestions',
   'analyticsConsent', 'consentDate', 'faculty', 'studyYear',
-  'dismissedBroadcasts', 'readBroadcasts'
+  'dismissedBroadcasts', 'readBroadcasts',
+  'freeSubjectAccess', 'freeVideoAccessByCourse'
 ];
 
 async function saveUserData(uid, data) {
