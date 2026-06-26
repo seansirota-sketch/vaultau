@@ -679,6 +679,33 @@ function closeCourseUpgradeModal() {
   document.body.style.overflow = '';
 }
 
+function closeCourseUpgradePaymentPanel() {
+  const panel = document.getElementById('course-upgrade-payment-panel');
+  if (!panel) return;
+  panel.style.display = 'none';
+}
+
+function openCourseUpgradePaymentPanel(planName, priceValue, phoneValue) {
+  const panel = document.getElementById('course-upgrade-payment-panel');
+  if (!panel) return;
+  const titleEl = document.getElementById('course-upgrade-payment-title');
+  const priceEl = document.getElementById('course-upgrade-payment-price');
+  const bitEl = document.getElementById('course-upgrade-payment-bit');
+  const phoneLink = document.getElementById('course-upgrade-payment-phone-link');
+  const phone = String(phoneValue || '').trim() || '053-4218878';
+  const normalizedPrice = Number.parseInt(String(priceValue ?? '0'), 10);
+  const safePrice = Number.isNaN(normalizedPrice) || normalizedPrice < 0 ? 0 : normalizedPrice;
+
+  if (titleEl) titleEl.textContent = `הצטרפות ל${planName || 'מסלול'}`;
+  if (priceEl) priceEl.textContent = `₪${safePrice}`;
+  if (bitEl) bitEl.style.display = safePrice > 0 ? 'block' : 'none';
+  if (phoneLink) {
+    phoneLink.textContent = phone;
+    phoneLink.setAttribute('href', `tel:${phone.replace(/[^\d+]/g, '')}`);
+  }
+  panel.style.display = 'block';
+}
+
 function openCourseUpgradeModal() {
   if (!shouldShowUpgradeCta()) return;
   document.getElementById('course-upgrade-modal')?.remove();
@@ -702,19 +729,57 @@ function openCourseUpgradeModal() {
         <button class="modal-close" onclick="closeCourseUpgradeModal()">✕</button>
       </div>
       <div class="course-upgrade-modal-body">
-        ${customHtml || fallbackHtml}
+        <div id="course-upgrade-custom-host"></div>
       </div>
       <div class="course-upgrade-modal-footer">
         <button class="btn btn-secondary" onclick="closeCourseUpgradeModal()">סגור</button>
       </div>
+      <div id="course-upgrade-payment-panel" class="course-upgrade-payment-panel" style="display:none">
+        <button class="course-upgrade-payment-close" onclick="closeCourseUpgradePaymentPanel()">✕</button>
+        <div id="course-upgrade-payment-title" class="course-upgrade-payment-title">סיום תהליך ההרשמה</div>
+        <p class="course-upgrade-payment-text">על מנת להשלים את הרישום למסלול ולפתוח את הגישה לתכנים, אנא צרו עמנו קשר בטלפון:</p>
+        <div class="course-upgrade-payment-phone">
+          <a id="course-upgrade-payment-phone-link" href="tel:0534218878">053-4218878</a>
+        </div>
+        <div id="course-upgrade-payment-bit" class="course-upgrade-payment-bit">
+          <p style="margin:0 0 .4rem;font-size:.85rem;color:#334155">ניתן להעביר את סכום המסלול ב-bit:</p>
+          <div id="course-upgrade-payment-price" class="course-upgrade-payment-price">₪0</div>
+          <p style="margin:.45rem 0 0;font-size:.78rem;color:#be185d;font-weight:700">חובה לציין את אימייל המשתמש בהערות ההעברה.</p>
+        </div>
+      </div>
     </div>`;
   document.body.appendChild(overlay);
   document.body.style.overflow = 'hidden';
+  const host = document.getElementById('course-upgrade-custom-host');
+  const markup = customHtml || fallbackHtml;
+  if (host && host.attachShadow) {
+    const shadow = host.attachShadow({ mode: 'open' });
+    shadow.innerHTML = markup;
+    shadow.addEventListener('click', (event) => {
+      const target = event.target instanceof Element ? event.target.closest('.plan-btn') : null;
+      if (!target) return;
+      const planName = target.getAttribute('data-plan') || target.textContent?.trim() || 'מסלול';
+      const priceValue = target.getAttribute('data-price') || '0';
+      const phoneValue = target.getAttribute('data-phone') || '';
+      openCourseUpgradePaymentPanel(planName, priceValue, phoneValue);
+    });
+  } else if (host) {
+    host.innerHTML = markup;
+    host.addEventListener('click', (event) => {
+      const target = event.target instanceof Element ? event.target.closest('.plan-btn') : null;
+      if (!target) return;
+      const planName = target.getAttribute('data-plan') || target.textContent?.trim() || 'מסלול';
+      const priceValue = target.getAttribute('data-price') || '0';
+      const phoneValue = target.getAttribute('data-phone') || '';
+      openCourseUpgradePaymentPanel(planName, priceValue, phoneValue);
+    });
+  }
   overlay.addEventListener('click', e => { if (e.target === overlay) closeCourseUpgradeModal(); });
 }
 
 window.openCourseUpgradeModal = openCourseUpgradeModal;
 window.closeCourseUpgradeModal = closeCourseUpgradeModal;
+window.closeCourseUpgradePaymentPanel = closeCourseUpgradePaymentPanel;
 
 function renderPremiumLockIcon(title = 'זמין למנויי פרימיום', extraClass = '') {
   const cls = `feature-lock-icon${extraClass ? ' ' + extraClass : ''}`;

@@ -1804,6 +1804,7 @@ mjx-container { direction: ltr; }
   max-height: 88vh;
   display: flex;
   flex-direction: column;
+  position: relative;
 }
 .course-upgrade-modal-body {
   padding: 1rem 1.25rem;
@@ -1814,6 +1815,58 @@ mjx-container { direction: ltr; }
   border-top: 1px solid var(--border);
   display: flex;
   justify-content: flex-start;
+}
+.course-upgrade-payment-panel {
+  position: absolute;
+  inset: 0;
+  background: rgba(255,255,255,.98);
+  padding: 2rem 1.4rem 1.2rem;
+  overflow: auto;
+}
+.course-upgrade-payment-close {
+  position: absolute;
+  top: .7rem;
+  left: .85rem;
+  border: none;
+  background: transparent;
+  font-size: 1.2rem;
+  color: #64748b;
+  cursor: pointer;
+}
+.course-upgrade-payment-title {
+  font-size: 1.2rem;
+  font-weight: 800;
+  margin-bottom: .65rem;
+}
+.course-upgrade-payment-text {
+  margin: 0 0 .8rem;
+  color: #475569;
+  line-height: 1.55;
+}
+.course-upgrade-payment-phone {
+  display: inline-block;
+  background: #f0fdf4;
+  border: 1px dashed #22c55e;
+  padding: .55rem 1rem;
+  border-radius: 12px;
+}
+.course-upgrade-payment-phone a {
+  color: #16a34a;
+  font-weight: 800;
+  font-size: 1.35rem;
+  text-decoration: none;
+}
+.course-upgrade-payment-bit {
+  margin-top: 1rem;
+  padding: .8rem;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  background: #f8fafc;
+}
+.course-upgrade-payment-price {
+  font-size: 1.35rem;
+  font-weight: 800;
+  color: #0f172a;
 }
 .course-upgrade-fallback h3 {
   margin: 0 0 .35rem;
