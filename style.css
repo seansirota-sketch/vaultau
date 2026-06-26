@@ -1175,7 +1175,7 @@ body {
 }
 .qv-difficulty-slider {
   width: 110px;
-  accent-color: #2563eb;
+  accent-color: #d1d5db;
   cursor: pointer;
 }
 .qv-difficulty-wrap.locked {
