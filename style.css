@@ -1219,6 +1219,28 @@ body {
   border: 1px solid #dbe3ec;
   border-radius: 999px;
   background: #fff;
+  position: relative;
+  cursor: help;
+}
+.difficulty-indicator::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 50%;
+  transform: translateX(-50%);
+  background: #0f172a;
+  color: #fff;
+  padding: .3rem .5rem;
+  border-radius: 6px;
+  font-size: .72rem;
+  white-space: nowrap;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity .12s ease;
+  z-index: 30;
+}
+.difficulty-indicator:hover::after {
+  opacity: 1;
 }
 .difficulty-indicator-dot {
   width: 10px;

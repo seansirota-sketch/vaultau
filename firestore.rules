@@ -82,11 +82,14 @@ service cloud.firestore {
     }
 
     // block delete & raw set — votes are aggregate counters.
-    // Only allow known difficulty keys (easy, medium, hard, unsolved).
+    // Allow both legacy bucket fields and numeric aggregate fields.
     match /questionVotes/{questionId} {
       allow read: if isLoggedIn();
       allow create, update: if isLoggedIn()
-        && request.resource.data.keys().hasOnly(['easy', 'medium', 'hard', 'unsolved']);
+        && request.resource.data.keys().hasOnly([
+          'easy', 'medium', 'hard', 'unsolved',
+          'voteCount', 'ratingSum', 'averageRating'
+        ]);
       allow delete: if isAdmin();
     }
 

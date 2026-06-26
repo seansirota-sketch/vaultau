@@ -4235,11 +4235,9 @@ function renderDifficultyIndicator(qid, voteStats = {}, myVote = null) {
   const displayAvg = avgForTooltip === null
     ? null
     : Number(avgForTooltip.toFixed(1)).toString();
-  const title = displayAvg === null
-    ? 'אין עדיין דירוג קושי ממשתמשים'
-    : `ממוצע דירוג של כלל המשתמשים: ${displayAvg}/100`;
+  const title = displayAvg === null ? '--' : `${displayAvg}`;
   const color = getDifficultyColor(avg);
-  return `<span class="difficulty-indicator" id="difficulty-indicator-${qid}" title="${esc(title)}">
+  return `<span class="difficulty-indicator" id="difficulty-indicator-${qid}" title="${esc(title)}" data-tooltip="${esc(title)}">
     <span class="difficulty-indicator-dot" style="background:${esc(color)}"></span>
   </span>`;
 }
@@ -4247,16 +4245,16 @@ function renderDifficultyIndicator(qid, voteStats = {}, myVote = null) {
 function renderDifficultyControls(qid, myVote, voteStats, topic, isAdminUser = false) {
   const currentScore = normalizeDifficultyScore(myVote);
   const sliderValue = currentScore === null ? 50 : currentScore;
-  const sliderColor = getDifficultyColor(sliderValue);
   const hasExistingVote = myVote !== undefined && myVote !== null;
   const isLocked = !isAdminUser && hasExistingVote;
   const lockTitle = isLocked ? 'ניתן לדרג כל שאלה פעם אחת בלבד' : 'דרגו את רמת הקושי של השאלה';
+  const sliderStyle = hasExistingVote ? `style="accent-color:${esc(getDifficultyColor(sliderValue))}"` : '';
   return `<div class="qv-difficulty-wrap${isLocked ? ' locked' : ''}" data-topic="${esc(topic || '')}">
     <input class="qv-difficulty-slider" type="range" min="0" max="100" step="1" value="${sliderValue}"
       oninput="onDifficultySliderInput('${qid}', this.value)"
       aria-label="דירוג קושי לשאלה"
       title="${esc(lockTitle)}"
-      style="accent-color:${esc(sliderColor)}"
+      ${sliderStyle}
       ${isLocked ? 'disabled' : ''}>
     <span class="qv-difficulty-value" id="difficulty-value-${qid}">${sliderValue}</span>
     <button class="qv-difficulty-submit" type="button"
