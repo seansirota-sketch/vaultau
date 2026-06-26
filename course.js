@@ -3874,9 +3874,10 @@ function renderQuestionCard(q, qi, starred, userVotes = {}, videoMap = {}, isAdm
         ${hideQuestionLabel ? '' : `<span class="qv-num">${isBonus ? 'שאלת בונוס' : 'שאלה ' + (qi + 1)}</span>`}
         ${points}
         ${bonusBadge}
+        <span id="difficulty-indicator-slot-${q.id}">${renderDifficultyIndicator(q.id, STATE.examVotes?.[q.id] || {}, userVotes[q.id] ?? null)}</span>
       </div>
       <div class="qv-actions" id="dw-${q.id}">
-        ${renderDifficultyButtons(q.id, userVotes[q.id] || null)}
+        ${renderDifficultyControls(q.id, userVotes[q.id] ?? null, STATE.examVotes?.[q.id] || {}, subject, isAdmin)}
         <div class="qv-actions-sep"></div>
         <button class="qv-btn ${isStarredQ ? 'on' : ''}" id="qb-${q.id}"
           onclick="toggleStar('${q.id}')" title="סמן שאלה">${starSVG(isStarredQ)}</button>
@@ -4144,20 +4145,124 @@ async function toggleStar(id) {
 }
 
 /* ── DIFFICULTY RATING ──────────────────────────────────────── */
-const DIFF_LEVELS = [
-  { key: 'easy',     label: 'קל' },
-  { key: 'medium',   label: 'בינוני' },
-  { key: 'hard',     label: 'קשה' },
-  { key: 'unsolved', label: 'לא פתרתי' },
-];
+const DIFF_BUCKETS = ['easy', 'medium', 'hard', 'unsolved'];
 
-function renderDifficultyButtons(qid, myVote) {
-  return DIFF_LEVELS.map(l => {
-    const active = myVote === l.key;
-    return `<button class="diff-btn diff-${l.key}${active ? ' active' : ''}"
-      onclick="voteDifficulty('${qid}','${l.key}')"
-      title="${l.label}">${l.label}</button>`;
-  }).join('');
+function clampDifficultyScore(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return null;
+  return Math.max(0, Math.min(100, Math.round(n)));
+}
+
+function normalizeDifficultyScore(voteValue) {
+  if (voteValue === 'easy') return 0;
+  if (voteValue === 'medium') return 50;
+  if (voteValue === 'hard') return 100;
+  if (voteValue === 'unsolved') return null;
+  return clampDifficultyScore(voteValue);
+}
+
+function getDifficultyBucketFromScore(score) {
+  if (!Number.isFinite(score)) return null;
+  if (score < 34) return 'easy';
+  if (score < 67) return 'medium';
+  return 'hard';
+}
+
+function getDifficultyBucketFromVote(voteValue) {
+  if (voteValue === 'easy' || voteValue === 'medium' || voteValue === 'hard' || voteValue === 'unsolved') {
+    return voteValue;
+  }
+  const score = normalizeDifficultyScore(voteValue);
+  return score === null ? null : getDifficultyBucketFromScore(score);
+}
+
+function normalizeVoteStats(raw = {}) {
+  const stats = {};
+  DIFF_BUCKETS.forEach(k => { stats[k] = Math.max(0, Number(raw[k]) || 0); });
+  stats.voteCount = Math.max(0, Number(raw.voteCount) || 0);
+  stats.ratingSum = Number.isFinite(Number(raw.ratingSum)) ? Number(raw.ratingSum) : 0;
+  const avg = Number(raw.averageRating);
+  stats.averageRating = Number.isFinite(avg)
+    ? clampDifficultyScore(avg)
+    : (stats.voteCount > 0 ? clampDifficultyScore(stats.ratingSum / stats.voteCount) : null);
+  return stats;
+}
+
+function getQuestionAverageRating(voteStats = {}) {
+  const avg = Number(voteStats.averageRating);
+  if (Number.isFinite(avg)) return clampDifficultyScore(avg);
+  const voteCount = Number(voteStats.voteCount);
+  const ratingSum = Number(voteStats.ratingSum);
+  if (Number.isFinite(voteCount) && voteCount > 0 && Number.isFinite(ratingSum)) {
+    return clampDifficultyScore(ratingSum / voteCount);
+  }
+  const easy = Math.max(0, Number(voteStats.easy) || 0);
+  const medium = Math.max(0, Number(voteStats.medium) || 0);
+  const hard = Math.max(0, Number(voteStats.hard) || 0);
+  const scored = easy + medium + hard;
+  if (!scored) return null;
+  const fallbackAvg = (easy * 0 + medium * 50 + hard * 100) / scored;
+  return clampDifficultyScore(fallbackAvg);
+}
+
+function getDifficultyColor(averageRating) {
+  const normalized = clampDifficultyScore(averageRating);
+  if (normalized === null) return '#d1d5db';
+  const red = Math.round(255 * (normalized / 100));
+  const green = Math.round(255 * (1 - normalized / 100));
+  return `rgb(${red}, ${green}, 0)`;
+}
+
+function calculateSkillWeight(n, M = 2, k = 50) {
+  const solvedCount = Math.max(0, Number(n) || 0);
+  const maxBonus = Number.isFinite(Number(M)) ? Number(M) : 2;
+  const midpoint = Math.max(0.0001, Number(k) || 50);
+  return 1 + ((maxBonus * solvedCount) / (solvedCount + midpoint));
+}
+
+function renderDifficultyIndicator(qid, voteStats = {}, myVote = null) {
+  const hasUserVote = myVote !== undefined && myVote !== null;
+  if (!hasUserVote) return '';
+  const avg = getQuestionAverageRating(voteStats);
+  let avgForTooltip = null;
+  const voteCount = Number(voteStats.voteCount);
+  const ratingSum = Number(voteStats.ratingSum);
+  if (Number.isFinite(voteCount) && voteCount > 0 && Number.isFinite(ratingSum)) {
+    avgForTooltip = Math.max(0, Math.min(100, ratingSum / voteCount));
+  } else if (avg !== null) {
+    avgForTooltip = avg;
+  }
+  const displayAvg = avgForTooltip === null
+    ? null
+    : Number(avgForTooltip.toFixed(1)).toString();
+  const title = displayAvg === null ? '--' : `${displayAvg}`;
+  const color = getDifficultyColor(avg);
+  return `<span class="difficulty-indicator" id="difficulty-indicator-${qid}" title="${esc(title)}" data-tooltip="${esc(title)}">
+    <span class="difficulty-indicator-dot" style="background:${esc(color)}"></span>
+  </span>`;
+}
+
+function renderDifficultyControls(qid, myVote, voteStats, topic, isAdminUser = false) {
+  const currentScore = normalizeDifficultyScore(myVote);
+  const sliderValue = currentScore === null ? 50 : currentScore;
+  const hasExistingVote = myVote !== undefined && myVote !== null;
+  const isLocked = !isAdminUser && hasExistingVote;
+  const lockTitle = isLocked ? 'ניתן לדרג כל שאלה פעם אחת בלבד' : 'דרגו את רמת הקושי של השאלה';
+  const sliderStyle = hasExistingVote ? `style="accent-color:${esc(getDifficultyColor(sliderValue))}"` : '';
+  return `<div class="qv-difficulty-wrap${isLocked ? ' locked' : ''}" data-topic="${esc(topic || '')}">
+    <input class="qv-difficulty-slider" type="range" min="0" max="100" step="1" value="${sliderValue}"
+      oninput="onDifficultySliderInput('${qid}', this.value)"
+      aria-label="דירוג קושי לשאלה"
+      title="${esc(lockTitle)}"
+      ${sliderStyle}
+      ${isLocked ? 'disabled' : ''}>
+    <span class="qv-difficulty-value" id="difficulty-value-${qid}">${sliderValue}</span>
+    <button class="qv-difficulty-submit" type="button"
+      onclick="submitDifficultyVote('${qid}', this)"
+      title="${esc(lockTitle)}"
+      aria-label="אישור דירוג קושי"
+      ${isLocked ? 'disabled' : ''}>✓</button>
+  </div>`;
 }
 
 // Keep renderDifficultyWidget as alias for starred tab (not used there anymore but safe)
@@ -4178,70 +4283,154 @@ async function fetchExamVotes(questions) {
   return votes;
 }
 
-async function voteDifficulty(qid, level) {
+function onDifficultySliderInput(qid, value) {
+  const score = clampDifficultyScore(value);
+  const valueEl = document.getElementById(`difficulty-value-${qid}`);
+  if (valueEl && score !== null) valueEl.textContent = String(score);
+  const sliderEl = document.querySelector(`#dw-${qid} .qv-difficulty-slider`);
+  if (sliderEl && score !== null) sliderEl.style.accentColor = getDifficultyColor(score);
+}
+
+function submitDifficultyVote(qid, buttonEl) {
+  const wrap = buttonEl?.closest('.qv-difficulty-wrap');
+  if (!wrap) return;
+  const slider = wrap.querySelector('.qv-difficulty-slider');
+  if (!slider) return;
+  const topic = wrap.getAttribute('data-topic') || '';
+  voteDifficulty(qid, slider.value, topic);
+}
+
+function resolveDifficultyTopic(topic) {
+  const normalized = normalizeQuestionSubject(topic || '');
+  return normalized || 'general';
+}
+
+function updateSkillWeightForVote(qid, topic, score) {
+  const topicKey = resolveDifficultyTopic(topic);
+  const solvedCounts = { ...(STATE.userData?.topicSolvedCounts || {}) };
+  const skillWeights = { ...(STATE.userData?.topicSkillWeights || {}) };
+  const voteMeta = { ...(STATE.userData?.difficultyVoteMeta || {}) };
+  const previousMeta = voteMeta[qid];
+  const changedTopics = new Set();
+
+  if (previousMeta?.topic && previousMeta.topic !== topicKey) {
+    solvedCounts[previousMeta.topic] = Math.max(0, (Number(solvedCounts[previousMeta.topic]) || 0) - 1);
+    changedTopics.add(previousMeta.topic);
+  }
+  if (!previousMeta || previousMeta.topic !== topicKey) {
+    solvedCounts[topicKey] = (Number(solvedCounts[topicKey]) || 0) + 1;
+    changedTopics.add(topicKey);
+  }
+
+  voteMeta[qid] = { topic: topicKey, score };
+  changedTopics.forEach(changedTopic => {
+    skillWeights[changedTopic] = Number(calculateSkillWeight(Number(solvedCounts[changedTopic]) || 0).toFixed(4));
+  });
+
+  return {
+    topicSolvedCounts: solvedCounts,
+    topicSkillWeights: skillWeights,
+    difficultyVoteMeta: voteMeta,
+  };
+}
+
+async function voteDifficulty(qid, rawScore, topic = '') {
   const uid = STATE.fireUser?.uid;
   if (!uid) return;
+  const score = clampDifficultyScore(rawScore);
+  if (score === null) return;
 
+  const isAdminUser = STATE.userData?.role === 'admin';
   const userVotes = { ...(STATE.userData?.difficultyVotes || {}) };
-  const prev      = userVotes[qid];
-
-  const localCounts = { ...(STATE.examVotes[qid] || {}) };
-
-  if (prev === level) {
-    localCounts[level] = Math.max(0, (localCounts[level] || 0) - 1);
-    delete userVotes[qid];
-  } else {
-    if (prev) localCounts[prev] = Math.max(0, (localCounts[prev] || 0) - 1);
-    localCounts[level] = (localCounts[level] || 0) + 1;
-    userVotes[qid] = level;
+  const prevVote  = userVotes[qid];
+  const prevScore = normalizeDifficultyScore(prevVote);
+  const hasExistingVote = prevVote !== undefined && prevVote !== null;
+  if (!isAdminUser && hasExistingVote) {
+    toast('אפשר לדרג כל שאלה פעם אחת בלבד', 'info');
+    return;
   }
+  if (prevScore !== null && prevScore === score) return;
+  const prevBucket = getDifficultyBucketFromVote(prevVote);
+  const nextBucket = getDifficultyBucketFromScore(score);
+
+  const localCounts = normalizeVoteStats(STATE.examVotes[qid] || {});
+
+  if (prevBucket) {
+    localCounts[prevBucket] = Math.max(0, (localCounts[prevBucket] || 0) - 1);
+  }
+  if (nextBucket) {
+    localCounts[nextBucket] = (localCounts[nextBucket] || 0) + 1;
+  }
+  if (prevScore === null) {
+    localCounts.voteCount = Math.max(0, (localCounts.voteCount || 0) + 1);
+    localCounts.ratingSum = (localCounts.ratingSum || 0) + score;
+  } else {
+    localCounts.ratingSum = (localCounts.ratingSum || 0) + (score - prevScore);
+  }
+  localCounts.averageRating = localCounts.voteCount > 0 ? clampDifficultyScore(localCounts.ratingSum / localCounts.voteCount) : null;
+  userVotes[qid] = score;
+
+  const skillUpdates = updateSkillWeightForVote(qid, topic, score);
 
   STATE.examVotes[qid] = localCounts;
-  STATE.userData = { ...STATE.userData, difficultyVotes: userVotes };
+  STATE.userData = {
+    ...STATE.userData,
+    difficultyVotes: userVotes,
+    ...skillUpdates,
+  };
 
-  _ga('rate_content', { course_code: _cc(), exam_id: _eid(), question_id: _questionRef(qid), rating_category: 'difficulty', rating_value: userVotes[qid] || 'removed' });
+  _ga('rate_content', { course_code: _cc(), exam_id: _eid(), question_id: _questionRef(qid), rating_category: 'difficulty', rating_value: score });
 
-  // Debounce difficulty_voted: cancel any pending timer for this question.
-  // If the user toggled their vote off, cancel and log nothing.
-  // Otherwise, (re)start a 10 s timer that reads the *final* state at fire-time.
   clearTimeout(_difficultyDebounceTimers[qid]);
-  if (prev === level) {
-    // toggled off — no vote to log
+  _difficultyDebounceTimers[qid] = setTimeout(() => {
     delete _difficultyDebounceTimers[qid];
-  } else {
-    _difficultyDebounceTimers[qid] = setTimeout(() => {
-      delete _difficultyDebounceTimers[qid];
-      const finalLevel = STATE.userData?.difficultyVotes?.[qid];
-      if (!finalLevel) return; // vote was removed in a later click
-      _logEvent('difficulty_voted', {
-        questionId: _questionRef(qid),
-        level:      finalLevel,
-        courseCode: STATE.courseCode || STATE.courseId,
-        examId:     STATE.examLabel || STATE.examId || '',
-      });
-    }, 10_000);
-  }
+    const finalScore = normalizeDifficultyScore(STATE.userData?.difficultyVotes?.[qid]);
+    if (finalScore === null) return;
+    _logEvent('difficulty_voted', {
+      questionId: _questionRef(qid),
+      score:      finalScore,
+      courseCode: STATE.courseCode || STATE.courseId,
+      examId:     STATE.examLabel || STATE.examId || '',
+    });
+  }, 10_000);
 
-  // Re-render just the diff buttons inside the existing dw- container
   const container = document.getElementById('dw-' + qid);
   if (container) {
-    container.querySelectorAll('.diff-btn').forEach(b => b.remove());
-    const sep = container.querySelector('.qv-actions-sep');
-    const newBtns = renderDifficultyButtons(qid, userVotes[qid] || null);
-    sep.insertAdjacentHTML('beforebegin', newBtns);
+    const wrap = container.querySelector('.qv-difficulty-wrap');
+    if (wrap) {
+      wrap.outerHTML = renderDifficultyControls(
+        qid,
+        userVotes[qid] ?? null,
+        localCounts,
+        topic || wrap.getAttribute('data-topic') || '',
+        isAdminUser
+      );
+    }
+  }
+  const indicatorSlot = document.getElementById(`difficulty-indicator-slot-${qid}`);
+  if (indicatorSlot) {
+    indicatorSlot.innerHTML = renderDifficultyIndicator(qid, localCounts, userVotes[qid] ?? null);
   }
 
   try {
     const inc = firebase.firestore.FieldValue.increment;
     const updates = {};
-    if (prev === level) {
-      updates[level] = inc(-1);
+    if (prevBucket) updates[prevBucket] = inc(-1);
+    if (nextBucket) updates[nextBucket] = inc(1);
+    if (prevScore === null) {
+      updates.voteCount = inc(1);
+      updates.ratingSum = inc(score);
     } else {
-      if (prev) updates[prev] = inc(-1);
-      updates[level] = inc(1);
+      updates.ratingSum = inc(score - prevScore);
     }
+    updates.averageRating = localCounts.averageRating;
     await db.collection('questionVotes').doc(qid).set(updates, { merge: true });
-    await saveUserData(uid, { difficultyVotes: userVotes });
+    await saveUserData(uid, {
+      difficultyVotes: userVotes,
+      topicSolvedCounts: skillUpdates.topicSolvedCounts,
+      topicSkillWeights: skillUpdates.topicSkillWeights,
+      difficultyVoteMeta: skillUpdates.difficultyVoteMeta,
+    });
   } catch(e) {
     console.error('voteDifficulty error:', e);
     toast('שגיאה בשמירת דירוג', 'error');

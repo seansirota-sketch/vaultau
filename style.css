@@ -1157,23 +1157,101 @@ body {
   margin: .4rem 1.25rem; text-align: center;
 }
 
-/* ── Difficulty rating buttons (inline in qv-head) ── */
-.diff-btn {
-  display: inline-flex; align-items: center;
-  padding: .22rem .58rem;
-  border: 1px solid #e2e5ea; border-radius: 3px;
-  background: #f4f5f7; color: #8a94a0;
-  font-size: .75rem; font-weight: 500;
-  cursor: pointer; transition: all .12s;
-  font-family: inherit; white-space: nowrap; line-height: 1.4;
+/* ── Difficulty slider + indicator (inline in qv-head) ── */
+.qv-difficulty-wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: .35rem;
+  padding: .22rem .4rem;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #fff;
 }
-.diff-btn:hover { border-color: #b8c0cc; color: #2c3e55; background: #eceef1; }
-
-/* Active states per level */
-.diff-btn.diff-easy.active    { background: #dcfce7; border-color: #86efac; color: #166534; font-weight: 700; }
-.diff-btn.diff-medium.active  { background: #fff7ed; border-color: #fdba74; color: #9a3412; font-weight: 700; }
-.diff-btn.diff-hard.active    { background: #fee2e2; border-color: #fca5a5; color: #991b1b; font-weight: 700; }
-.diff-btn.diff-unsolved.active { background: #1f2937; border-color: #1f2937; color: #fff; font-weight: 700; }
+.qv-difficulty-label {
+  font-size: .72rem;
+  color: #64748b;
+  font-weight: 700;
+  white-space: nowrap;
+}
+.qv-difficulty-slider {
+  width: 110px;
+  accent-color: #d1d5db;
+  cursor: pointer;
+}
+.qv-difficulty-wrap.locked {
+  opacity: .78;
+}
+.qv-difficulty-wrap.locked .qv-difficulty-slider {
+  cursor: not-allowed;
+}
+.qv-difficulty-submit {
+  width: 24px;
+  height: 24px;
+  border: 1px solid #cbd5e1;
+  background: #f8fafc;
+  color: #0f172a;
+  border-radius: 6px;
+  font-size: .9rem;
+  font-weight: 800;
+  line-height: 1;
+  cursor: pointer;
+}
+.qv-difficulty-submit:hover {
+  background: #e2e8f0;
+  border-color: #94a3b8;
+}
+.qv-difficulty-submit:disabled {
+  cursor: not-allowed;
+  opacity: .6;
+}
+.qv-difficulty-value {
+  min-width: 2ch;
+  text-align: center;
+  font-size: .75rem;
+  color: #0f172a;
+  font-weight: 700;
+}
+.difficulty-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: .32rem;
+  padding: .2rem .45rem;
+  border: 1px solid #dbe3ec;
+  border-radius: 999px;
+  background: #fff;
+  position: relative;
+  cursor: help;
+}
+.difficulty-indicator::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  background: #0f172a;
+  color: #fff;
+  padding: .3rem .5rem;
+  border-radius: 6px;
+  font-size: .72rem;
+  white-space: nowrap;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity .12s ease;
+  z-index: 30;
+}
+.difficulty-indicator:hover::after {
+  opacity: 1;
+}
+.difficulty-indicator-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  box-shadow: inset 0 0 0 1px rgba(15, 23, 42, 0.12);
+}
+.difficulty-indicator-value {
+  font-size: .72rem;
+  color: #334155;
+  font-weight: 700;
+}
 
 /* Separator between diff buttons and star/copy */
 .qv-actions-sep {

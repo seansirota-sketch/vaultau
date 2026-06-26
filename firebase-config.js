@@ -75,7 +75,13 @@ async function fetchUserData(uid, email) {
     const normalizedTier = ['free', 'basic', 'premium'].includes(String(data.subscriptionTier || '').toLowerCase())
       ? String(data.subscriptionTier).toLowerCase()
       : (data.isPremium === true ? 'premium' : 'free');
-    return { ...data, subscriptionTier: normalizedTier };
+    return {
+      ...data,
+      subscriptionTier: normalizedTier,
+      topicSolvedCounts: data.topicSolvedCounts || {},
+      topicSkillWeights: data.topicSkillWeights || {},
+      difficultyVoteMeta: data.difficultyVoteMeta || {},
+    };
   }
   // First time — create user doc with email so it is always identifiable in admin
   const defaults = {
@@ -86,6 +92,9 @@ async function fetchUserData(uid, email) {
     subscriptionTier: 'free',
     starredQuestions: [],
     difficultyVotes: {},
+    topicSolvedCounts: {},
+    topicSkillWeights: {},
+    difficultyVoteMeta: {},
     freeSubjectAccess: {},
     freeVideoAccessByCourse: {},
   };
@@ -97,6 +106,7 @@ async function fetchUserData(uid, email) {
 
 const ALLOWED_USER_FIELDS = [
   'displayName', 'starredQuestions', 'difficultyVotes',
+  'topicSolvedCounts', 'topicSkillWeights', 'difficultyVoteMeta',
   'acceptedTerms', 'acceptedTermsAt', 'surveyDone',
   'completedExams', 'doneExams', 'inProgressExams',
   'copyCount', 'lastCopyReset', 'createdAt', 'savedCourses', 'aiQuestions',
