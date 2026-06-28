@@ -62,10 +62,31 @@ function normalizeSiteUrl(value) {
   }
 }
 
+function hostFromUrl(value) {
+  try {
+    return new URL(value).hostname.toLowerCase();
+  } catch {
+    return '';
+  }
+}
+
 function resolveSiteUrl(event) {
   const headers = event.headers || {};
+  const fallbackUrl = 'https://vaultau.netlify.app';
+  const envCandidates = [
+    process.env.SITE_URL,
+    process.env.URL,
+    process.env.DEPLOY_PRIME_URL,
+    process.env.DEPLOY_URL,
+    fallbackUrl,
+  ]
+    .map(normalizeSiteUrl)
+    .filter(Boolean);
+
+  const approvedHosts = new Set(envCandidates.map(hostFromUrl).filter(Boolean));
+
   const origin = normalizeSiteUrl(headers.origin);
-  if (origin) return origin;
+  if (origin && approvedHosts.has(hostFromUrl(origin))) return origin;
 
   const referer = headers.referer || headers.referrer || '';
   const refererOrigin = (() => {
@@ -75,27 +96,16 @@ function resolveSiteUrl(event) {
       return '';
     }
   })();
-  if (refererOrigin) return refererOrigin;
+  if (refererOrigin && approvedHosts.has(hostFromUrl(refererOrigin))) return refererOrigin;
 
   const forwardedHost = String(headers['x-forwarded-host'] || headers.host || '').trim();
   if (forwardedHost) {
     const forwardedProto = String(headers['x-forwarded-proto'] || 'https').trim() || 'https';
     const forwardedOrigin = normalizeSiteUrl(`${forwardedProto}://${forwardedHost}`);
-    if (forwardedOrigin) return forwardedOrigin;
+    if (forwardedOrigin && approvedHosts.has(hostFromUrl(forwardedOrigin))) return forwardedOrigin;
   }
 
-  const envCandidates = [
-    process.env.URL,
-    process.env.DEPLOY_PRIME_URL,
-    process.env.DEPLOY_URL,
-    process.env.SITE_URL,
-  ];
-  for (const candidate of envCandidates) {
-    const normalized = normalizeSiteUrl(candidate);
-    if (normalized) return normalized;
-  }
-
-  return 'https://vaultau.netlify.app';
+  return envCandidates[0] || fallbackUrl;
 }
 
 /* ── HTML email template ── */

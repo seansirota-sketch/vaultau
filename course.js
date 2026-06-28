@@ -657,10 +657,9 @@ function getCourseFreeAllowedSubjectsSet() {
 function isVideoLockedForCurrentCourse(accessTier = 'free') {
   const role = STATE.userData?.role || 'student';
   if (role === 'admin' || role === 'instructor' || role === 'מרצה') return false;
+  if (accessTier !== 'premium') return false;
   const userTier = getUserSubscriptionTier();
-  const settings = STATE.courseAccessSettings || DEFAULT_COURSE_ACCESS_SETTINGS;
-  if (settings.tier === 'premium') return userTier !== 'premium';
-  return accessTier === 'premium' && userTier !== 'premium';
+  return userTier !== 'premium';
 }
 
 function shouldShowUpgradeCta() {
@@ -5530,7 +5529,7 @@ function openVideoModalFromBtn(btn) {
     toast('הסרטון זמין למנויי פרימיום בלבד בקורס זה', 'error');
     return;
   }
-  if (!isPremiumUnlockedForCourse()) {
+  if (accessTier === 'premium' && !isPremiumUnlockedForCourse()) {
     const maxVideos = getCourseFreeLimit('maxVideoOpens');
     if (maxVideos >= 0) {
       const courseId = STATE.courseId || '';
