@@ -47,6 +47,57 @@ function getAdmin() {
   return admin;
 }
 
+function normalizeSiteUrl(value) {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+  try {
+    const parsed = new URL(raw);
+    if (!['https:', 'http:'].includes(parsed.protocol)) return '';
+    parsed.hash = '';
+    parsed.search = '';
+    parsed.pathname = parsed.pathname.replace(/\/+$/, '');
+    return parsed.toString().replace(/\/$/, '');
+  } catch {
+    return '';
+  }
+}
+
+function resolveSiteUrl(event) {
+  const headers = event.headers || {};
+  const origin = normalizeSiteUrl(headers.origin);
+  if (origin) return origin;
+
+  const referer = headers.referer || headers.referrer || '';
+  const refererOrigin = (() => {
+    try {
+      return normalizeSiteUrl(new URL(referer).origin);
+    } catch {
+      return '';
+    }
+  })();
+  if (refererOrigin) return refererOrigin;
+
+  const forwardedHost = String(headers['x-forwarded-host'] || headers.host || '').trim();
+  if (forwardedHost) {
+    const forwardedProto = String(headers['x-forwarded-proto'] || 'https').trim() || 'https';
+    const forwardedOrigin = normalizeSiteUrl(`${forwardedProto}://${forwardedHost}`);
+    if (forwardedOrigin) return forwardedOrigin;
+  }
+
+  const envCandidates = [
+    process.env.URL,
+    process.env.DEPLOY_PRIME_URL,
+    process.env.DEPLOY_URL,
+    process.env.SITE_URL,
+  ];
+  for (const candidate of envCandidates) {
+    const normalized = normalizeSiteUrl(candidate);
+    if (normalized) return normalized;
+  }
+
+  return 'https://vaultau.netlify.app';
+}
+
 /* ── HTML email template ── */
 function buildResetHtml({ resetUrl, email }) {
   const displayName = email.split('@')[0];
@@ -164,7 +215,7 @@ exports.handler = async (event) => {
   /* ── Env vars guard ── */
   const apiKey      = process.env.SENDGRID_API_KEY;
   const senderEmail = process.env.SENDER_EMAIL;
-  const siteUrl     = process.env.SITE_URL || 'https://vaultau.netlify.app';
+  const siteUrl     = resolveSiteUrl(event);
 
   if (!apiKey || !senderEmail) {
     console.error('Missing env vars: SENDGRID_API_KEY or SENDER_EMAIL');
@@ -217,7 +268,8 @@ exports.handler = async (event) => {
     // Extract the oobCode from Firebase's link and build our custom URL
     const linkUrl  = new URL(firebaseLink);
     const oobCode  = linkUrl.searchParams.get('oobCode');
-    const resetUrl = `${siteUrl}/?mode=resetPassword&oobCode=${encodeURIComponent(oobCode)}`;
+    if (!oobCode) throw new Error('Missing oobCode in generated reset link');
+    const resetUrl = new URL(`/?mode=resetPassword&oobCode=${encodeURIComponent(oobCode)}`, `${siteUrl}/`).toString();
 
     // Send via SendGrid
     sgMail.setApiKey(apiKey);
@@ -230,7 +282,7 @@ exports.handler = async (event) => {
       html: buildResetHtml({ resetUrl, email }),
     });
 
-    console.log(`Password reset email sent to ${email}`);
+    console.log(`Password reset email sent to ${email} via ${siteUrl}`);
   } catch (err) {
     // Log the real error but ALWAYS return success to prevent email enumeration
     console.error('Password reset error (suppressed):', err.code || err.message);
