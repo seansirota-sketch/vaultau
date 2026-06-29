@@ -647,6 +647,257 @@ function onAddExamCourseChange() {
 }
 window.onAddExamCourseChange = onAddExamCourseChange;
 
+const _subjectAiMapperState = {
+  running: false,
+  stopRequested: false,
+};
+
+function _setSubjectAiStatus(text, isError = false) {
+  const el = document.getElementById('asm-status');
+  if (!el) return;
+  el.textContent = text || '';
+  el.style.color = isError ? '#b91c1c' : 'var(--muted)';
+}
+
+function _logSubjectAi(text, type = '') {
+  const log = document.getElementById('asm-log');
+  if (!log) return;
+  const row = document.createElement('div');
+  row.textContent = text;
+  if (type === 'error') row.style.color = '#b91c1c';
+  if (type === 'success') row.style.color = '#166534';
+  log.prepend(row);
+}
+
+function _parseSubjectList(raw) {
+  return [...new Set(
+    String(raw || '')
+      .split(/\r?\n/)
+      .map(s => normalizeQuestionSubject(s))
+      .filter(Boolean)
+  )];
+}
+
+function _extractJsonPayload(rawText) {
+  const text = String(rawText || '').trim();
+  if (!text) return null;
+  const withoutFence = text.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim();
+  try {
+    return JSON.parse(withoutFence);
+  } catch (_) {}
+  const start = withoutFence.indexOf('{');
+  const end = withoutFence.lastIndexOf('}');
+  if (start >= 0 && end > start) {
+    try {
+      return JSON.parse(withoutFence.slice(start, end + 1));
+    } catch (_) {}
+  }
+  return null;
+}
+
+function _extractAllowedSubject(rawSubject, byKey) {
+  const normalized = normalizeQuestionSubject(rawSubject || '');
+  if (!normalized) return '';
+  const key = _normalizeSubjectKey(normalized);
+  return byKey.get(key) || '';
+}
+
+function _collectSubjectItemsForExam(exam) {
+  const items = [];
+  (exam.questions || []).forEach((q, qi) => {
+    const questionText = normalizeQuestionSubject(q.text || '');
+    const parts = q.subs || q.parts || [];
+    const partsText = parts.map((part, si) => {
+      const txt = normalizeQuestionSubject(part.text || '');
+      if (!txt) return '';
+      return `${normalizeSubLabel(part.label || part.letter || '', si)} ${txt}`.trim();
+    }).filter(Boolean).join('\n');
+    items.push({
+      id: `q:${qi}`,
+      scope: 'question',
+      text: [questionText, partsText].filter(Boolean).join('\n'),
+    });
+    parts.forEach((part, si) => {
+      items.push({
+        id: `s:${qi}:${si}`,
+        scope: 'sub',
+        text: [questionText, normalizeQuestionSubject(part.text || '')].filter(Boolean).join('\n'),
+      });
+    });
+  });
+  return items;
+}
+
+async function _classifyExamSubjectsWithAi({ courseName, exam, items, allowedSubjects }) {
+  const subjectList = allowedSubjects.map((subject, idx) => `${idx + 1}. ${subject}`).join('\n');
+  const itemsText = items.map(item =>
+    `- id: ${item.id}\n  scope: ${item.scope}\n  text: ${item.text || '—'}`
+  ).join('\n');
+
+  const prompt = [
+    'אתה ממיין נושאים לשאלות במבחן.',
+    'מותר לבחור אך ורק נושא אחד מהרשימה שניתנה.',
+    'אם אין התאמה טובה - החזר subject ריק "".',
+    'החזר JSON תקין בלבד בלי הסברים בפורמט:',
+    '{"assignments":[{"id":"q:0","subject":"..."}]}',
+    '',
+    `שם הקורס: ${courseName || 'לא ידוע'}`,
+    `שם המבחן: ${normalizeQuestionSubject(exam.title || '') || 'ללא כותרת'}`,
+    '',
+    'רשימת נושאים אפשריים:',
+    subjectList,
+    '',
+    'פריטים לסיווג:',
+    itemsText,
+  ].join('\n');
+
+  const raw = await callGenerateQuestionApi(prompt);
+  const parsed = _extractJsonPayload(raw);
+  if (!parsed || !Array.isArray(parsed.assignments)) return new Map();
+
+  const byKey = new Map(allowedSubjects.map(subject => [_normalizeSubjectKey(subject), subject]));
+  const result = new Map();
+  parsed.assignments.forEach(entry => {
+    const id = normalizeQuestionSubject(entry?.id || '');
+    if (!id) return;
+    result.set(id, _extractAllowedSubject(entry?.subject || '', byKey));
+  });
+  return result;
+}
+
+function _applyExamSubjectAssignments(exam, assignments) {
+  let changed = 0;
+  const questions = Array.isArray(exam.questions) ? exam.questions : [];
+  questions.forEach((q, qi) => {
+    const questionId = `q:${qi}`;
+    if (assignments.has(questionId)) {
+      const nextQuestionSubject = assignments.get(questionId) || '';
+      const currentQuestionSubject = normalizeQuestionSubject(q.subject || q.topic || '');
+      if (currentQuestionSubject !== nextQuestionSubject) {
+        q.subject = nextQuestionSubject;
+        changed++;
+      }
+    }
+    const parts = q.subs || q.parts || [];
+    parts.forEach((part, si) => {
+      const partId = `s:${qi}:${si}`;
+      if (assignments.has(partId)) {
+        const nextPartSubject = assignments.get(partId) || '';
+        const currentPartSubject = normalizeQuestionSubject(part.subject || part.topic || '');
+        if (currentPartSubject !== nextPartSubject) {
+          part.subject = nextPartSubject;
+          changed++;
+        }
+      }
+    });
+  });
+  return changed;
+}
+
+function renderSubjectAiMapperSection() {
+  const log = document.getElementById('asm-log');
+  if (log && !log.children.length) {
+    log.innerHTML = '<div style="color:var(--muted)">בחר קורס והזן רשימת נושאים כדי להתחיל שיוך.</div>';
+  }
+  _setSubjectAiStatus(_subjectAiMapperState.running ? 'שיוך נושאים רץ...' : 'מוכן לשיוך נושאים');
+}
+
+function stopSubjectAiMapper() {
+  if (!_subjectAiMapperState.running) return;
+  _subjectAiMapperState.stopRequested = true;
+  _logSubjectAi('⏹️ התקבלה בקשת עצירה — מסיים את המבחן הנוכחי...', 'error');
+  _setSubjectAiStatus('עוצר אחרי המבחן הנוכחי...');
+}
+
+async function runSubjectAiMapper() {
+  if (_subjectAiMapperState.running) return;
+  const courseId = document.getElementById('asm-course')?.value || '';
+  const courseName = document.getElementById('asm-course')?.selectedOptions?.[0]?.textContent?.trim() || '';
+  const subjects = _parseSubjectList(document.getElementById('asm-subjects')?.value || '');
+  if (!courseId) {
+    toast('יש לבחור קורס יעד', 'error');
+    return;
+  }
+  if (!subjects.length) {
+    toast('יש להזין לפחות נושא אחד ברשימה', 'error');
+    return;
+  }
+
+  const startBtn = document.getElementById('asm-start-btn');
+  const stopBtn = document.getElementById('asm-stop-btn');
+  _subjectAiMapperState.running = true;
+  _subjectAiMapperState.stopRequested = false;
+  if (startBtn) startBtn.disabled = true;
+  if (stopBtn) stopBtn.style.display = 'inline-flex';
+  _setSubjectAiStatus('טוען מבחנים...');
+  _logSubjectAi(`🚀 התחלת שיוך נושאים עם AI עבור הקורס: ${courseName || courseId}`);
+
+  let updatedExams = 0;
+  let touchedFields = 0;
+  try {
+    const snap = await db.collection('exams').where('courseId', '==', courseId).get();
+    const exams = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    _logSubjectAi(`ℹ️ נמצאו ${exams.length} מבחנים בקורס`);
+    for (let i = 0; i < exams.length; i++) {
+      if (_subjectAiMapperState.stopRequested) break;
+      const exam = exams[i];
+      const questions = Array.isArray(exam.questions) ? exam.questions : [];
+      if (!questions.length) {
+        _logSubjectAi(`⏭️ דילוג על מבחן "${exam.title || exam.id}" — אין שאלות`);
+        continue;
+      }
+
+      const items = _collectSubjectItemsForExam(exam);
+      if (!items.length) {
+        _logSubjectAi(`⏭️ דילוג על מבחן "${exam.title || exam.id}" — אין טקסט לסיווג`);
+        continue;
+      }
+
+      _setSubjectAiStatus(`מעבד מבחן ${i + 1}/${exams.length}: ${exam.title || exam.id}`);
+      const assignments = await _classifyExamSubjectsWithAi({
+        courseName,
+        exam,
+        items,
+        allowedSubjects: subjects,
+      });
+
+      const changed = _applyExamSubjectAssignments(exam, assignments);
+      if (changed > 0) {
+        await db.collection('exams').doc(exam.id).set({
+          questions: exam.questions || [],
+          updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+        }, { merge: true });
+        updatedExams++;
+        touchedFields += changed;
+        _logSubjectAi(`✅ עודכן מבחן "${exam.title || exam.id}" (${changed} שדות נושא)`, 'success');
+      } else {
+        _logSubjectAi(`ℹ️ אין שינוי במבחן "${exam.title || exam.id}"`);
+      }
+    }
+    if (_subjectAiMapperState.stopRequested) {
+      toast(`השיוך נעצר. עודכנו ${updatedExams} מבחנים`, 'error');
+      _setSubjectAiStatus(`נעצר. עודכנו ${updatedExams} מבחנים (${touchedFields} שדות)`);
+    } else {
+      toast(`השיוך הושלם. עודכנו ${updatedExams} מבחנים`, 'success');
+      _setSubjectAiStatus(`הושלם. עודכנו ${updatedExams} מבחנים (${touchedFields} שדות)`);
+    }
+  } catch (err) {
+    console.error('runSubjectAiMapper error:', err);
+    toast('שגיאה בשיוך נושאים: ' + err.message, 'error');
+    _setSubjectAiStatus('שגיאה בשיוך נושאים', true);
+    _logSubjectAi(`❌ שגיאה: ${err.message}`, 'error');
+  } finally {
+    _subjectAiMapperState.running = false;
+    _subjectAiMapperState.stopRequested = false;
+    if (startBtn) startBtn.disabled = false;
+    if (stopBtn) stopBtn.style.display = 'none';
+  }
+}
+
+window.renderSubjectAiMapperSection = renderSubjectAiMapperSection;
+window.runSubjectAiMapper = runSubjectAiMapper;
+window.stopSubjectAiMapper = stopSubjectAiMapper;
+
 function _sampleQuestionsForPrompt(questions, limit = 3) {
   return (questions || []).slice(0, limit).map((q, i) => ({
     number: q.number || q.index || i + 1,
@@ -1182,6 +1433,7 @@ function _applySectionUI(name) {
   if (name === 'survey')      renderSurveyManager();
   if (name === 'reports')     renderReportsSection();
   if (name === 'ai-monitor')  renderAIMonitor();
+  if (name === 'subject-ai')  renderSubjectAiMapperSection();
   if (name === 'broadcast')   renderBroadcastSection();
 }
 
@@ -1197,7 +1449,7 @@ async function populateAllSelects() {
     const opts = courses.map(c =>
       `<option value="${c.id}">${esc(c.name)} (${esc(c.code)})</option>`
     ).join('');
-    ['ae-course', 'manage-filter', 'an-filter', 'bulk-course', 'bc-course'].forEach(id => {
+    ['ae-course', 'manage-filter', 'an-filter', 'bulk-course', 'bc-course', 'asm-course'].forEach(id => {
       const el = document.getElementById(id);
       if (el) el.innerHTML =
         (id === 'manage-filter' || id === 'an-filter' ? '<option value="">כל הקורסים</option>' :

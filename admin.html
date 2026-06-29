@@ -151,6 +151,10 @@
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
           ניתוח קושי
         </a>
+        <a id="nav-subject-ai" onclick="showSection('subject-ai')">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2a4 4 0 0 1 4 4c0 1.95-2 3-2 8h-4c0-5-2-6.05-2-8a4 4 0 0 1 4-4z"/><line x1="10" y1="17" x2="14" y2="17"/><line x1="10" y1="20" x2="14" y2="20"/><line x1="11" y1="23" x2="13" y2="23"/></svg>
+          שיוך נושאים עם AI
+        </a>
         <a id="nav-courses" onclick="showSection('courses')">
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
           קורסים
@@ -405,6 +409,7 @@
             <button class="btn btn-danger btn-sm" onclick="showHardQuestionsReport()">10 השאלות הקשות ביותר</button>
             <button class="btn btn-secondary btn-sm" onclick="renderAnalytics()">רענן</button>
           </div>
+
         </div>
 
         <!-- Hard questions report (hidden by default) -->
@@ -437,6 +442,39 @@
             <button class="btn btn-secondary btn-sm" onclick="document.getElementById('exam-detail-panel').style.display='none'">סגור</button>
           </div>
           <div id="exam-detail-body" style="padding:1rem 1.25rem"></div>
+        </div>
+      </div>
+
+      <!-- ── AI SUBJECT MAPPER ─────────────────────────────────── -->
+      <div class="adm-section" id="sec-subject-ai">
+        <div class="sec-header">
+          <h2 class="sec-title">שיוך נושאים אוטומטי (AI)</h2>
+          <button class="btn btn-secondary btn-sm" onclick="renderSubjectAiMapperSection()">רענן</button>
+        </div>
+        <div class="ac">
+          <div class="ac-title">בחירת קורס ורשימת נושאים</div>
+          <div style="padding:1.25rem;display:flex;flex-direction:column;gap:1rem">
+            <div class="form-group" style="margin:0;max-width:360px">
+              <label>קורס יעד</label>
+              <select id="asm-course">
+                <option value="">-- בחר קורס --</option>
+              </select>
+            </div>
+            <div class="form-group" style="margin:0">
+              <label>רשימת נושאים אפשריים (כל שורה = נושא)</label>
+              <textarea id="asm-subjects" rows="8" placeholder="אינטגרלים&#10;טורים&#10;משוואות דיפרנציאליות"></textarea>
+              <small style="color:var(--muted)">AI יבחר רק מתוך הרשימה הזאת. אם אין התאמה, הנושא יישאר ריק.</small>
+            </div>
+            <div style="display:flex;gap:.75rem;justify-content:flex-end">
+              <button id="asm-stop-btn" class="btn btn-danger" style="display:none" onclick="stopSubjectAiMapper()">עצור</button>
+              <button id="asm-start-btn" class="btn btn-primary" onclick="runSubjectAiMapper()">התחל שיוך אוטומטי</button>
+            </div>
+            <div id="asm-status" style="font-size:.9rem;color:var(--muted)"></div>
+          </div>
+        </div>
+        <div class="ac">
+          <div class="ac-title">יומן ריצה</div>
+          <div id="asm-log" style="padding:1rem 1.25rem;max-height:340px;overflow-y:auto;display:flex;flex-direction:column;gap:.35rem;font-size:.84rem"></div>
         </div>
       </div>
 
