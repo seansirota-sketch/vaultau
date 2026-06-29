@@ -515,7 +515,9 @@ async function callGenerateQuestionApi(prompt) {
 
   if (!res.ok) {
     const errData = await res.json().catch(() => ({}));
-    throw new Error(errData?.error || `Server error: ${res.status}`);
+    const error = new Error(errData?.error || `Server error: ${res.status}`);
+    error.status = res.status;
+    throw error;
   }
 
   let fullText = '';
@@ -545,6 +547,40 @@ async function callGenerateQuestionApi(prompt) {
   }
 
   return fullText;
+}
+
+const SUBJECT_AI_CHUNK_SIZE = 18;
+const SUBJECT_AI_ITEM_TEXT_LIMIT = 900;
+const SUBJECT_AI_MAX_ATTEMPTS = 3;
+
+function _chunkArray(items, chunkSize) {
+  const source = Array.isArray(items) ? items : [];
+  const result = [];
+  for (let i = 0; i < source.length; i += chunkSize) {
+    result.push(source.slice(i, i + chunkSize));
+  }
+  return result;
+}
+
+function _isRetryableAiError(error) {
+  const status = Number(error?.status || 0);
+  if ([408, 429, 500, 502, 503, 504].includes(status)) return true;
+  const msg = String(error?.message || '').toLowerCase();
+  return msg.includes('502') || msg.includes('bad gateway') || msg.includes('timeout');
+}
+
+async function _callGenerateQuestionApiWithRetry(prompt, maxAttempts = SUBJECT_AI_MAX_ATTEMPTS) {
+  let lastError = null;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      return await callGenerateQuestionApi(prompt);
+    } catch (error) {
+      lastError = error;
+      if (!_isRetryableAiError(error) || attempt === maxAttempts) throw error;
+      await new Promise(resolve => setTimeout(resolve, 350 * attempt));
+    }
+  }
+  throw lastError || new Error('AI request failed');
 }
 
 async function requestSubjectAISuggestion() {
@@ -729,39 +765,47 @@ function _collectSubjectItemsForExam(exam) {
 }
 
 async function _classifyExamSubjectsWithAi({ courseName, exam, items, allowedSubjects }) {
-  const subjectList = allowedSubjects.map((subject, idx) => `${idx + 1}. ${subject}`).join('\n');
-  const itemsText = items.map(item =>
-    `- id: ${item.id}\n  scope: ${item.scope}\n  text: ${item.text || '—'}`
-  ).join('\n');
-
-  const prompt = [
-    'אתה ממיין נושאים לשאלות במבחן.',
-    'מותר לבחור אך ורק נושא אחד מהרשימה שניתנה.',
-    'אם אין התאמה טובה - החזר subject ריק "".',
-    'החזר JSON תקין בלבד בלי הסברים בפורמט:',
-    '{"assignments":[{"id":"q:0","subject":"..."}]}',
-    '',
-    `שם הקורס: ${courseName || 'לא ידוע'}`,
-    `שם המבחן: ${normalizeQuestionSubject(exam.title || '') || 'ללא כותרת'}`,
-    '',
-    'רשימת נושאים אפשריים:',
-    subjectList,
-    '',
-    'פריטים לסיווג:',
-    itemsText,
-  ].join('\n');
-
-  const raw = await callGenerateQuestionApi(prompt);
-  const parsed = _extractJsonPayload(raw);
-  if (!parsed || !Array.isArray(parsed.assignments)) return new Map();
-
   const byKey = new Map(allowedSubjects.map(subject => [_normalizeSubjectKey(subject), subject]));
+  const subjectList = allowedSubjects.map((subject, idx) => `${idx + 1}. ${subject}`).join('\n');
+  const chunks = _chunkArray(items, SUBJECT_AI_CHUNK_SIZE);
   const result = new Map();
-  parsed.assignments.forEach(entry => {
-    const id = normalizeQuestionSubject(entry?.id || '');
-    if (!id) return;
-    result.set(id, _extractAllowedSubject(entry?.subject || '', byKey));
-  });
+
+  for (let chunkIndex = 0; chunkIndex < chunks.length; chunkIndex++) {
+    const chunk = chunks[chunkIndex];
+    chunk.forEach(item => result.set(item.id, ''));
+    const itemsText = chunk.map(item =>
+      `- id: ${item.id}\n  scope: ${item.scope}\n  text: ${normalizeQuestionSubject(item.text || '').slice(0, SUBJECT_AI_ITEM_TEXT_LIMIT) || '—'}`
+    ).join('\n');
+    const chunkIds = new Set(chunk.map(item => item.id));
+    const prompt = [
+      'אתה ממיין נושאים לשאלות במבחן.',
+      'מותר לבחור אך ורק נושא אחד מהרשימה שניתנה.',
+      'אם אין התאמה טובה - החזר subject ריק "".',
+      'חובה להחזיר שיוכים רק עבור מזהים שמופיעים ברשימת הפריטים.',
+      'החזר JSON תקין בלבד בלי הסברים בפורמט:',
+      '{"assignments":[{"id":"q:0","subject":"..."}]}',
+      '',
+      `שם הקורס: ${courseName || 'לא ידוע'}`,
+      `שם המבחן: ${normalizeQuestionSubject(exam.title || '') || 'ללא כותרת'}`,
+      `אצווה: ${chunkIndex + 1}/${chunks.length}`,
+      '',
+      'רשימת נושאים אפשריים:',
+      subjectList,
+      '',
+      'פריטים לסיווג:',
+      itemsText,
+    ].join('\n');
+
+    const raw = await _callGenerateQuestionApiWithRetry(prompt);
+    const parsed = _extractJsonPayload(raw);
+    if (!parsed || !Array.isArray(parsed.assignments)) continue;
+
+    parsed.assignments.forEach(entry => {
+      const id = normalizeQuestionSubject(entry?.id || '');
+      if (!id || !chunkIds.has(id)) return;
+      result.set(id, _extractAllowedSubject(entry?.subject || '', byKey));
+    });
+  }
   return result;
 }
 
@@ -772,9 +816,13 @@ function _applyExamSubjectAssignments(exam, assignments) {
     const questionId = `q:${qi}`;
     if (assignments.has(questionId)) {
       const nextQuestionSubject = assignments.get(questionId) || '';
-      const currentQuestionSubject = normalizeQuestionSubject(q.subject || q.topic || '');
-      if (currentQuestionSubject !== nextQuestionSubject) {
+      const currentQuestionSubject = normalizeQuestionSubject(q.subject || '');
+      const currentQuestionTopic = normalizeQuestionSubject(q.topic || '');
+      if (currentQuestionSubject !== nextQuestionSubject || currentQuestionTopic !== nextQuestionSubject) {
         q.subject = nextQuestionSubject;
+        if (Object.prototype.hasOwnProperty.call(q, 'topic') || currentQuestionTopic) {
+          q.topic = nextQuestionSubject;
+        }
         changed++;
       }
     }
@@ -783,11 +831,44 @@ function _applyExamSubjectAssignments(exam, assignments) {
       const partId = `s:${qi}:${si}`;
       if (assignments.has(partId)) {
         const nextPartSubject = assignments.get(partId) || '';
-        const currentPartSubject = normalizeQuestionSubject(part.subject || part.topic || '');
-        if (currentPartSubject !== nextPartSubject) {
+        const currentPartSubject = normalizeQuestionSubject(part.subject || '');
+        const currentPartTopic = normalizeQuestionSubject(part.topic || '');
+        if (currentPartSubject !== nextPartSubject || currentPartTopic !== nextPartSubject) {
           part.subject = nextPartSubject;
+          if (Object.prototype.hasOwnProperty.call(part, 'topic') || currentPartTopic) {
+            part.topic = nextPartSubject;
+          }
           changed++;
         }
+      }
+    });
+  });
+  return changed;
+}
+
+function _clearExamSubjectAssignments(exam) {
+  let changed = 0;
+  const questions = Array.isArray(exam.questions) ? exam.questions : [];
+  questions.forEach(q => {
+    const currentQuestionSubject = normalizeQuestionSubject(q.subject || '');
+    const currentQuestionTopic = normalizeQuestionSubject(q.topic || '');
+    if (currentQuestionSubject || currentQuestionTopic) {
+      q.subject = '';
+      if (Object.prototype.hasOwnProperty.call(q, 'topic') || currentQuestionTopic) {
+        q.topic = '';
+      }
+      changed++;
+    }
+    const parts = q.subs || q.parts || [];
+    parts.forEach(part => {
+      const currentPartSubject = normalizeQuestionSubject(part.subject || '');
+      const currentPartTopic = normalizeQuestionSubject(part.topic || '');
+      if (currentPartSubject || currentPartTopic) {
+        part.subject = '';
+        if (Object.prototype.hasOwnProperty.call(part, 'topic') || currentPartTopic) {
+          part.topic = '';
+        }
+        changed++;
       }
     });
   });
@@ -814,6 +895,7 @@ async function runSubjectAiMapper() {
   const courseId = document.getElementById('asm-course')?.value || '';
   const courseName = document.getElementById('asm-course')?.selectedOptions?.[0]?.textContent?.trim() || '';
   const subjects = _parseSubjectList(document.getElementById('asm-subjects')?.value || '');
+  const resetBeforeRun = document.getElementById('asm-reset-first')?.checked === true;
   if (!courseId) {
     toast('יש לבחור קורס יעד', 'error');
     return;
@@ -838,6 +920,26 @@ async function runSubjectAiMapper() {
     const snap = await db.collection('exams').where('courseId', '==', courseId).get();
     const exams = snap.docs.map(d => ({ id: d.id, ...d.data() }));
     _logSubjectAi(`ℹ️ נמצאו ${exams.length} מבחנים בקורס`);
+    if (resetBeforeRun) {
+      _setSubjectAiStatus('מוחק שיוכים קיימים לפני ריצה...');
+      _logSubjectAi('🧹 מוחק שיוכים קיימים ומריץ AI מחדש על כל השאלות');
+      let clearedExams = 0;
+      let clearedFields = 0;
+      for (let i = 0; i < exams.length; i++) {
+        if (_subjectAiMapperState.stopRequested) break;
+        const exam = exams[i];
+        const cleared = _clearExamSubjectAssignments(exam);
+        if (cleared > 0) {
+          await db.collection('exams').doc(exam.id).set({
+            questions: exam.questions || [],
+            updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+          }, { merge: true });
+          clearedExams++;
+          clearedFields += cleared;
+        }
+      }
+      _logSubjectAi(`🧹 נמחקו שיוכים ב-${clearedExams} מבחנים (${clearedFields} שדות)`);
+    }
     for (let i = 0; i < exams.length; i++) {
       if (_subjectAiMapperState.stopRequested) break;
       const exam = exams[i];
