@@ -772,6 +772,7 @@ async function _classifyExamSubjectsWithAi({ courseName, exam, items, allowedSub
 
   for (let chunkIndex = 0; chunkIndex < chunks.length; chunkIndex++) {
     const chunk = chunks[chunkIndex];
+    chunk.forEach(item => result.set(item.id, ''));
     const itemsText = chunk.map(item =>
       `- id: ${item.id}\n  scope: ${item.scope}\n  text: ${normalizeQuestionSubject(item.text || '').slice(0, SUBJECT_AI_ITEM_TEXT_LIMIT) || '—'}`
     ).join('\n');
@@ -815,9 +816,13 @@ function _applyExamSubjectAssignments(exam, assignments) {
     const questionId = `q:${qi}`;
     if (assignments.has(questionId)) {
       const nextQuestionSubject = assignments.get(questionId) || '';
-      const currentQuestionSubject = normalizeQuestionSubject(q.subject || q.topic || '');
-      if (currentQuestionSubject !== nextQuestionSubject) {
+      const currentQuestionSubject = normalizeQuestionSubject(q.subject || '');
+      const currentQuestionTopic = normalizeQuestionSubject(q.topic || '');
+      if (currentQuestionSubject !== nextQuestionSubject || currentQuestionTopic !== nextQuestionSubject) {
         q.subject = nextQuestionSubject;
+        if (Object.prototype.hasOwnProperty.call(q, 'topic') || currentQuestionTopic) {
+          q.topic = nextQuestionSubject;
+        }
         changed++;
       }
     }
@@ -826,11 +831,44 @@ function _applyExamSubjectAssignments(exam, assignments) {
       const partId = `s:${qi}:${si}`;
       if (assignments.has(partId)) {
         const nextPartSubject = assignments.get(partId) || '';
-        const currentPartSubject = normalizeQuestionSubject(part.subject || part.topic || '');
-        if (currentPartSubject !== nextPartSubject) {
+        const currentPartSubject = normalizeQuestionSubject(part.subject || '');
+        const currentPartTopic = normalizeQuestionSubject(part.topic || '');
+        if (currentPartSubject !== nextPartSubject || currentPartTopic !== nextPartSubject) {
           part.subject = nextPartSubject;
+          if (Object.prototype.hasOwnProperty.call(part, 'topic') || currentPartTopic) {
+            part.topic = nextPartSubject;
+          }
           changed++;
         }
+      }
+    });
+  });
+  return changed;
+}
+
+function _clearExamSubjectAssignments(exam) {
+  let changed = 0;
+  const questions = Array.isArray(exam.questions) ? exam.questions : [];
+  questions.forEach(q => {
+    const currentQuestionSubject = normalizeQuestionSubject(q.subject || '');
+    const currentQuestionTopic = normalizeQuestionSubject(q.topic || '');
+    if (currentQuestionSubject || currentQuestionTopic) {
+      q.subject = '';
+      if (Object.prototype.hasOwnProperty.call(q, 'topic') || currentQuestionTopic) {
+        q.topic = '';
+      }
+      changed++;
+    }
+    const parts = q.subs || q.parts || [];
+    parts.forEach(part => {
+      const currentPartSubject = normalizeQuestionSubject(part.subject || '');
+      const currentPartTopic = normalizeQuestionSubject(part.topic || '');
+      if (currentPartSubject || currentPartTopic) {
+        part.subject = '';
+        if (Object.prototype.hasOwnProperty.call(part, 'topic') || currentPartTopic) {
+          part.topic = '';
+        }
+        changed++;
       }
     });
   });
@@ -857,6 +895,7 @@ async function runSubjectAiMapper() {
   const courseId = document.getElementById('asm-course')?.value || '';
   const courseName = document.getElementById('asm-course')?.selectedOptions?.[0]?.textContent?.trim() || '';
   const subjects = _parseSubjectList(document.getElementById('asm-subjects')?.value || '');
+  const resetBeforeRun = document.getElementById('asm-reset-first')?.checked === true;
   if (!courseId) {
     toast('יש לבחור קורס יעד', 'error');
     return;
@@ -881,6 +920,26 @@ async function runSubjectAiMapper() {
     const snap = await db.collection('exams').where('courseId', '==', courseId).get();
     const exams = snap.docs.map(d => ({ id: d.id, ...d.data() }));
     _logSubjectAi(`ℹ️ נמצאו ${exams.length} מבחנים בקורס`);
+    if (resetBeforeRun) {
+      _setSubjectAiStatus('מוחק שיוכים קיימים לפני ריצה...');
+      _logSubjectAi('🧹 מוחק שיוכים קיימים ומריץ AI מחדש על כל השאלות');
+      let clearedExams = 0;
+      let clearedFields = 0;
+      for (let i = 0; i < exams.length; i++) {
+        if (_subjectAiMapperState.stopRequested) break;
+        const exam = exams[i];
+        const cleared = _clearExamSubjectAssignments(exam);
+        if (cleared > 0) {
+          await db.collection('exams').doc(exam.id).set({
+            questions: exam.questions || [],
+            updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+          }, { merge: true });
+          clearedExams++;
+          clearedFields += cleared;
+        }
+      }
+      _logSubjectAi(`🧹 נמחקו שיוכים ב-${clearedExams} מבחנים (${clearedFields} שדות)`);
+    }
     for (let i = 0; i < exams.length; i++) {
       if (_subjectAiMapperState.stopRequested) break;
       const exam = exams[i];

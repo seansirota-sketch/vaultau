@@ -465,6 +465,10 @@
               <textarea id="asm-subjects" rows="8" placeholder="אינטגרלים&#10;טורים&#10;משוואות דיפרנציאליות"></textarea>
               <small style="color:var(--muted)">AI יבחר רק מתוך הרשימה הזאת. אם אין התאמה, הנושא יישאר ריק.</small>
             </div>
+            <label style="display:flex;gap:.55rem;align-items:flex-start;font-size:.9rem;color:var(--text);cursor:pointer">
+              <input id="asm-reset-first" type="checkbox" style="margin-top:.2rem">
+              <span>מחק שיוכים קיימים לפני הריצה והרץ AI מחדש על כל השאלות</span>
+            </label>
             <div style="display:flex;gap:.75rem;justify-content:flex-end">
               <button id="asm-stop-btn" class="btn btn-danger" style="display:none" onclick="stopSubjectAiMapper()">עצור</button>
               <button id="asm-start-btn" class="btn btn-primary" onclick="runSubjectAiMapper()">התחל שיוך אוטומטי</button>
