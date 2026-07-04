@@ -3461,14 +3461,14 @@ function renderStarredTab(exams, starred) {
     const copyId = 'copy-starred-' + q.id;
     const fullStarredText = subs.length
       ? [q.text || '', ...subs.map((s, si) => {
-          const lbl = s.label || (s.letter ? '(' + s.letter + ')' : '(' + String.fromCharCode(0x05D0 + si) + ')');
+            const lbl = normalizeSubLabel(s.label || s.letter || '', si);
           return lbl + ' ' + (s.text || '');
         })].filter(Boolean).join('\n\n')
       : (q.text || '');
     COPY_MAP.set(copyId, fullStarredText);
 
     const partsHtml = subs.length ? `<div class="qv-parts">${subs.map((s, si) => {
-      const rawLabel = s.label || (s.letter ? '(' + s.letter + ')' : '(' + String.fromCharCode(0x05D0 + si) + ')');
+      const rawLabel = normalizeSubLabel(s.label || s.letter || '', si);
       const sCopyId  = 'copy-starred-s-' + s.id;
       const sImage   = safeUrl(s.imageUrl || '');
       const sAlign   = normalizeImageAlign(s.imageAlign || 'center');
@@ -3812,7 +3812,7 @@ function renderQuestionCard(q, qi, starred, userVotes = {}, videoMap = {}, isAdm
   // Top copy button copies the full question: stem + all sub-parts
   const fullQText = hasSubs
     ? [qText, ...subs.map((s, si) => {
-        const lbl = s.label || (s.letter ? '(' + s.letter + ')' : '(' + String.fromCharCode(0x05D0 + si) + ')');
+        const lbl = normalizeSubLabel(s.label || s.letter || '', si);
         return lbl + ' ' + (s.text || '');
       })].filter(Boolean).join('\n\n')
     : qText;
@@ -3836,7 +3836,7 @@ function renderQuestionCard(q, qi, starred, userVotes = {}, videoMap = {}, isAdm
   let partsHtml = '';
   if (hasSubs) {
     partsHtml = subs.map((s, si) => {
-      const rawLabel   = s.label || (s.letter ? '(' + s.letter + ')' : '(' + String.fromCharCode(0x05D0 + si) + ')');
+      const rawLabel   = normalizeSubLabel(s.label || s.letter || '', si);
       const sText      = s.text || '';
       const sImage     = safeUrl(s.imageUrl || '');
       const sAlign     = normalizeImageAlign(s.imageAlign || 'center');

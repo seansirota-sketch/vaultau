@@ -204,6 +204,10 @@ function _buildDirectPrompt(filenameHint) {
 ▸ subject — אם אפשר לזהות נושא ברור, החזר אותו גם ברמת השאלה וגם ברמת סעיף.
 • LaTeX: $...$ inline, $$...$$ display, \\begin{pmatrix}, \\frac, \\sqrt
 • סעיפים (א)(ב)(ג) / (1)(2)(3) → parts[].letter
+• parts[].letter = אות/ספרה בלבד, בלי סוגריים בכלל (למשל "א" ולא "(א)" ולא "((א))")
+• parts[].text לא יתחיל באות הסעיף — אל תשכפל את התווית בתוך הטקסט
+• חלץ את כל השאלות ואת כל הסעיפים — אל תדלג, אל תאחד שאלות, אל תקצר טקסט
+• שמור על הנוסח העברי המקורי במדויק, כולל נוסחאות
 • שאלת בונוס → isBonus: true
 • אל תכלול הוראות בחינה, לוגו, מספרי עמוד
 
@@ -248,6 +252,89 @@ function normalizeSubLabel(raw, fallbackIndex = 0) {
   return `(${letter})`;
 }
 
+function _escapeRegExp(value) {
+  return String(value || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function normalizeSubText(rawText, rawLabel = '', fallbackIndex = 0) {
+  let text = String(rawText || '').trim();
+  if (!text) return '';
+  const canonicalLabel = normalizeSubLabel(rawLabel, fallbackIndex);
+  const bareLabel = canonicalLabel.replace(/^[\(\[]+/, '').replace(/[\)\]]+$/, '');
+  const escapedBare = _escapeRegExp(bareLabel);
+  const patterns = [
+    new RegExp(`^\\s*[\\(\\[]+\\s*${escapedBare}\\s*[\\)\\]]+\\s*[-–—:.,]?\\s*`, 'u'),
+    new RegExp(`^\\s*${escapedBare}\\s*[\\)\\].:,-]\\s*`, 'u'),
+  ];
+  patterns.forEach(rx => {
+    text = text.replace(rx, '');
+  });
+  return text.trim();
+}
+
+function normalizeSubEntry(rawSub, fallbackIndex = 0) {
+  const sub = rawSub || {};
+  const label = normalizeSubLabel(sub.label || sub.letter || '', fallbackIndex);
+  const text = normalizeSubText(sub.text || '', label, fallbackIndex);
+  return {
+    ...sub,
+    label,
+    text,
+    subject: normalizeQuestionSubject(sub.subject || sub.topic || ''),
+  };
+}
+
+/**
+ * Auto-repair pass for parsed questions:
+ * - drops empty questions/subs
+ * - re-normalizes labels and strips duplicated label prefixes
+ * - merges duplicate sub labels within a question
+ * - fixes missing/duplicate question numbering
+ */
+function repairParsedQuestions(questions) {
+  const repaired = [];
+  const notes = [];
+  (Array.isArray(questions) ? questions : []).forEach(rawQ => {
+    if (!rawQ) return;
+    const q = { ...rawQ };
+    q.text = String(q.text || '').trim();
+
+    const seenLabels = new Set();
+    const subs = [];
+    (q.subs || q.parts || []).forEach((rawSub, si) => {
+      const s = normalizeSubEntry(rawSub, si);
+      if (!s.text) {
+        notes.push('הוסר סעיף ריק');
+        return;
+      }
+      if (seenLabels.has(s.label)) {
+        const prev = subs[subs.length - 1];
+        if (prev) {
+          prev.text = `${prev.text}\n${s.text}`.trim();
+          notes.push(`אוחד סעיף כפול ${s.label}`);
+          return;
+        }
+      }
+      seenLabels.add(s.label);
+      subs.push(s);
+    });
+    q.subs = subs;
+
+    if (!q.text && !q.subs.length) {
+      notes.push('הוסרה שאלה ריקה');
+      return;
+    }
+    repaired.push(q);
+  });
+
+  repaired.forEach((q, i) => {
+    const idx = Number(q.index || q.number || 0);
+    if (!idx || idx <= 0) q.index = i + 1;
+  });
+
+  return { questions: repaired, notes };
+}
+
 function normalizeQuestionSubject(raw) {
   return String(raw || '')
     .trim()
@@ -258,10 +345,7 @@ function normalizeParsedQuestion(q) {
   return {
     ...q,
     subject: normalizeQuestionSubject(q.subject || q.topic || ''),
-    subs: (q.subs || q.parts || []).map(s => ({
-      ...s,
-      subject: normalizeQuestionSubject(s.subject || s.topic || ''),
-    })),
+    subs: (q.subs || q.parts || []).map((s, si) => normalizeSubEntry(s, si)),
   };
 }
 
@@ -1837,36 +1921,71 @@ async function startBulkUpload() {
     bulkLog(`מתחיל: ${file.name}`, 'info');
 
     try {
-      // 1. Parse with the same PDF pipeline as single upload (Vision-first + fallback)
-      let result = await parsePdfWithSharedPipeline(file, {
-        onRenderStart: () => {
-          showSpinner(`🖼️ ${file.name} — ממיר PDF לתמונות...`);
-        },
-        onVisionStart: (pages) => {
-          showSpinner(`🤖 ${file.name} — Claude Vision מנתח ${pages} עמודים...`);
-        },
-        onFallbackStart: () => {
-          showSpinner(`🤖 ${file.name} — Claude מנתח PDF...`);
-        }
-      }, {
-        courseId,
-        filenameHint: file.name,
-        titleHint: file.name,
-      });
-      if (!result.questions) result = { questions: result, metadata: null };
-
-      const meta      = result.metadata || {};
-      const questions = (result.questions || []).filter(q => q.text || q.subs?.length);
+      // 1. Parse with the same PDF pipeline as single upload (Vision-first + fallback).
+      //    Retry once automatically when parsing returns nothing or quality is very low.
+      const BULK_PARSE_ATTEMPTS = 2;
+      let result = null;
+      let questions = [];
+      let meta = {};
+      let quality = null;
+      let title = '';
       const known = parseFilenameForBulk(file.name);
-      const title = generateExamTitle(known.year || meta.year, known.semester || meta.semester, known.moed || meta.moed);
-      const quality = computeParseQuality({ questions, metadata: meta }, {
-        filenameHint: file.name,
-        titleHint: title,
-      });
+
+      for (let attempt = 1; attempt <= BULK_PARSE_ATTEMPTS; attempt++) {
+        if (attempt > 1) bulkLog(`  ניסיון פענוח חוזר (${attempt}/${BULK_PARSE_ATTEMPTS})...`, 'warn');
+        result = await parsePdfWithSharedPipeline(file, {
+          onRenderStart: () => {
+            showSpinner(`🖼️ ${file.name} — ממיר PDF לתמונות...`);
+          },
+          onVisionStart: (pages) => {
+            showSpinner(`🤖 ${file.name} — Claude Vision מנתח ${pages} עמודים...`);
+          },
+          onFallbackStart: () => {
+            showSpinner(`🤖 ${file.name} — Claude מנתח PDF...`);
+          }
+        }, {
+          courseId,
+          filenameHint: file.name,
+          titleHint: file.name,
+        });
+        if (!result.questions) result = { questions: result, metadata: null };
+
+        meta = result.metadata || {};
+
+        // 2. Auto-repair pass: normalize labels, strip duplicated prefixes,
+        //    merge duplicate sub labels, drop empties, fix numbering.
+        const normalized = (result.questions || []).map(normalizeParsedQuestion);
+        const repair = repairParsedQuestions(normalized);
+        questions = repair.questions;
+        if (repair.notes.length) {
+          const summary = [...new Set(repair.notes)].join(' | ');
+          bulkLog(`  🛠️ תיקונים אוטומטיים: ${summary}`, 'info');
+        }
+
+        title = generateExamTitle(known.year || meta.year, known.semester || meta.semester, known.moed || meta.moed);
+        quality = computeParseQuality({ questions, metadata: meta }, {
+          filenameHint: file.name,
+          titleHint: title,
+        });
+
+        // Good enough — stop retrying
+        if (questions.length && quality.confidence !== 'low') break;
+        if (attempt < BULK_PARSE_ATTEMPTS) {
+          bulkLog(`  איכות פענוח נמוכה (${quality.score}/100) — מנסה שוב`, 'warn');
+        }
+      }
 
       // 3. Normalize lecturer names against manual list + Firestore
       let lecturers = meta.lecturers || [];
       lecturers = await normalizeLecturerNames(lecturers, manualLecturers);
+
+      // Guard: nothing extracted even after retry — skip instead of saving an empty exam
+      if (!questions.length) {
+        setBulkFileStatus(i, '❌', '#991b1b');
+        bulkLog(`  לא זוהו שאלות גם אחרי ניסיון חוזר — דולג (העלה ידנית)`, 'error');
+        failed++;
+        continue;
+      }
 
       // 4. Build title from filename
       bulkLog(`  זוהו ${questions.length} שאלות | כותרת: ${title || '(ללא)'} | מרצים: ${lecturers.join(', ') || '—'} | מודל: ${result.model || '?'}`, 'info');
@@ -1923,13 +2042,16 @@ async function startBulkUpload() {
           text: q.text,
           subject: normalizeQuestionSubject(q.subject || ''),
           isBonus: q.isBonus === true,
-          subs: (q.subs || []).map(s => ({
+          subs: (q.subs || []).map((s, si) => {
+            const normalized = normalizeSubEntry(s, si);
+            return ({
             id: s.id || genId(),
-            label: s.label,
-            text: s.text,
-            subject: normalizeQuestionSubject(s.subject || ''),
+            label: normalized.label,
+            text: normalized.text,
+            subject: normalized.subject,
             isBonus: s.isBonus === true
-          }))
+            });
+          })
         })),
         createdAt: firebase.firestore.FieldValue.serverTimestamp(),
         updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
@@ -2093,7 +2215,10 @@ function parseExamText(raw) {
       id:      genId(),
       index,
       text:    mainText.trim(),
-      subs:    subs.map(s => ({ id: genId(), label: s.label, text: s.text })),
+      subs:    subs.map((s, si) => ({
+        id: genId(),
+        ...normalizeSubEntry({ label: s.label, text: s.text }, si),
+      })),
       isBonus: isBonus || BONUS_REGEX.test(mainText),
     };
   }).filter(q => q.text.length > 1 || q.subs.length > 0);
@@ -2565,11 +2690,13 @@ function _normalizeResult(parsed) {
       subject: normalizeQuestionSubject(q.subject || q.topic || ''),
       inlineImages: {},
       isBonus: bonus,
-      subs:    (q.parts || []).map(p => ({
+      subs:    (q.parts || []).map((p, pi) => ({
         id:    genId(),
-        label: normalizeSubLabel(p.letter || p.label || '', 0),
-        text:  stripPoints(p.text || ''),
-        subject: normalizeQuestionSubject(p.subject || p.topic || ''),
+        ...normalizeSubEntry({
+          label: p.letter || p.label || '',
+          text: stripPoints(p.text || ''),
+          subject: p.subject || p.topic || '',
+        }, pi),
         inlineImages: {},
       }))
     };
@@ -2761,7 +2888,7 @@ async function handleFileInput(file) {
 
     setProgress(95);
 
-    parsedQuestions = (result.questions || []).map(normalizeParsedQuestion);
+    parsedQuestions = repairParsedQuestions((result.questions || []).map(normalizeParsedQuestion)).questions;
     _parsedModel   = result.model || null;
     _lastParseQuality = computeParseQuality(result, {
       filenameHint: file.name,
@@ -3420,7 +3547,7 @@ async function runParser() {
 
     setProgress(100);
     parsedQuestions = Array.isArray(questions)
-      ? questions.map(normalizeParsedQuestion)
+      ? repairParsedQuestions(questions.map(normalizeParsedQuestion)).questions
       : [];
     _lastParseQuality = computeParseQuality({ questions: parsedQuestions, metadata: result.metadata || null }, {
       titleHint,
@@ -3866,20 +3993,23 @@ async function submitAddExam() {
         ),
         isBonus: q.isBonus === true,
         allowAIGen: q.allowAIGen === true,
-        subs:    (q.subs || []).map(s => ({
+        subs:    (q.subs || []).map((s, si) => {
+          const normalized = normalizeSubEntry(s, si);
+          return ({
           id:    s.id || genId(),
-          label: s.label,
-          text:  s.text,
-          subject: normalizeQuestionSubject(s.subject || ''),
+          label: normalized.label,
+          text:  normalized.text,
+          subject: normalized.subject,
           inlineImages: Object.fromEntries(
-            Object.entries(filterInlineImagesForText(s.text, s.inlineImages)).map(([k, v]) => {
+            Object.entries(filterInlineImagesForText(normalized.text, s.inlineImages)).map(([k, v]) => {
               const url = typeof v === 'string' ? normalizeHttpUrl(v) : normalizeHttpUrl(v?.url || '');
               return [k, url || ''];
             }).filter(([, url]) => !!url)
           ),
           allowAIGen: s.allowAIGen === true,
           isBonus: s.isBonus === true,
-        }))
+          });
+        })
       })),
       updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
       createdBy: adminUser?.email || 'admin',
@@ -5054,10 +5184,10 @@ async function editExam(courseId, examId) {
     parsedQuestions = (exam.questions || []).map(q => ({
       ...migrateLegacyImageToInlineText({ ...q, inlineImages: normalizeInlineImagesMap(q.inlineImages) }, 'question-image'),
       subject: normalizeQuestionSubject(q.subject || q.topic || ''),
-      subs: (q.subs || q.parts || []).map(s => (
+      subs: (q.subs || q.parts || []).map((s, si) => (
         migrateLegacyImageToInlineText({
           ...s,
-          subject: normalizeQuestionSubject(s.subject || s.topic || ''),
+          ...normalizeSubEntry(s, si),
           inlineImages: normalizeInlineImagesMap(s.inlineImages)
         }, 'sub-image')
       ))
