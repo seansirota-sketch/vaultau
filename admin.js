@@ -2008,7 +2008,8 @@ async function startBulkUpload() {
       let lecturers = meta.lecturers || [];
       lecturers = await normalizeLecturerNames(lecturers, manualLecturers);
 
-      // Guard: if repair removed everything, try raw normalized parse before skipping.
+      // Guard: if repair removed everything, try raw normalized parse,
+      // then fall back to legacy local text parser before skipping.
       if (!questions.length) {
         const rawFallback = (result?.questions || [])
           .map(normalizeParsedQuestion)
@@ -2017,10 +2018,24 @@ async function startBulkUpload() {
           questions = rawFallback;
           bulkLog(`  ⚠️ לא זוהו שאלות אחרי תיקון אוטומטי — נשמר פענוח גולמי (${questions.length} שאלות)`, 'warn');
         } else {
-          setBulkFileStatus(i, '❌', '#991b1b');
-          bulkLog(`  לא זוהו שאלות גם אחרי ניסיון חוזר — דולג (העלה ידנית)`, 'error');
-          failed++;
-          continue;
+          try {
+            bulkLog(`  לא זוהו שאלות ב-AI — מנסה פענוח מקומי (PDF→Text)...`, 'warn');
+            const localText = await extractTextFromPDF(file);
+            const localQuestions = parseExamText(localText).map(normalizeParsedQuestion);
+            if (localQuestions.length) {
+              questions = localQuestions;
+              bulkLog(`  ✅ פענוח מקומי הצליח (${questions.length} שאלות)`, 'success');
+            }
+          } catch (localErr) {
+            bulkLog(`  פענוח מקומי נכשל: ${localErr.message}`, 'warn');
+          }
+
+          if (!questions.length) {
+            setBulkFileStatus(i, '❌', '#991b1b');
+            bulkLog(`  לא זוהו שאלות גם אחרי ניסיון חוזר — דולג (העלה ידנית)`, 'error');
+            failed++;
+            continue;
+          }
         }
       }
 
