@@ -1853,12 +1853,41 @@ function setBulkSolFileStatus(i, icon, color) {
   if (el) { el.textContent = icon; el.style.color = color; }
 }
 
-/** Parse solution filename: e.g. 2022AB_sol.pdf → { title: "2022AB", type: "sol" } */
+function _normalizeSolutionExamTitleToken(rawToken) {
+  const token = String(rawToken || '').trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
+  if (!token) return [];
+  const out = new Set();
+
+  // Canonical format: 2022AB
+  if (/^20\d{2}[A-Z]{2}$/.test(token)) out.add(token);
+
+  // Short year format: 22AB -> 2022AB
+  const shortYear = token.match(/^(\d{2})([A-Z]{2})$/);
+  if (shortYear) out.add(`20${shortYear[1]}${shortYear[2]}`);
+
+  // Prefix + canonical/short: DS2022AB / DS22AB -> 2022AB
+  const withPrefixCanonical = token.match(/^[A-Z]{1,6}(20\d{2}[A-Z]{2})$/);
+  if (withPrefixCanonical) out.add(withPrefixCanonical[1]);
+  const withPrefixShort = token.match(/^[A-Z]{1,6}(\d{2}[A-Z]{2})$/);
+  if (withPrefixShort) out.add(`20${withPrefixShort[1]}`);
+
+  // Keep raw token too, for legacy/custom title formats in DB.
+  out.add(token);
+  return [...out];
+}
+
+/** Parse solution filename: e.g. 2022AB_sol.pdf or ds20AA_sol.pdf */
 function parseSolFilename(filename) {
   const f = filename.replace(/\.[^/.]+$/, ''); // strip extension
-  const m = f.match(/^(20\d{2}[A-Za-z]{2})_(sol|all)$/i);
+  const m = f.match(/^(.+?)_(sol|all)$/i);
   if (!m) return null;
-  return { title: m[1].toUpperCase(), type: m[2].toLowerCase() };
+  const candidates = _normalizeSolutionExamTitleToken(m[1]);
+  if (!candidates.length) return null;
+  return {
+    title: candidates[0],
+    candidates,
+    type: m[2].toLowerCase(),
+  };
 }
 
 /** Enable bulk start button when at least one file (exam or solution) is selected */
@@ -1979,12 +2008,20 @@ async function startBulkUpload() {
       let lecturers = meta.lecturers || [];
       lecturers = await normalizeLecturerNames(lecturers, manualLecturers);
 
-      // Guard: nothing extracted even after retry — skip instead of saving an empty exam
+      // Guard: if repair removed everything, try raw normalized parse before skipping.
       if (!questions.length) {
-        setBulkFileStatus(i, '❌', '#991b1b');
-        bulkLog(`  לא זוהו שאלות גם אחרי ניסיון חוזר — דולג (העלה ידנית)`, 'error');
-        failed++;
-        continue;
+        const rawFallback = (result?.questions || [])
+          .map(normalizeParsedQuestion)
+          .filter(q => String(q.text || '').trim() || (q.subs || []).some(s => String(s.text || '').trim()));
+        if (rawFallback.length) {
+          questions = rawFallback;
+          bulkLog(`  ⚠️ לא זוהו שאלות אחרי תיקון אוטומטי — נשמר פענוח גולמי (${questions.length} שאלות)`, 'warn');
+        } else {
+          setBulkFileStatus(i, '❌', '#991b1b');
+          bulkLog(`  לא זוהו שאלות גם אחרי ניסיון חוזר — דולג (העלה ידנית)`, 'error');
+          failed++;
+          continue;
+        }
       }
 
       // 4. Build title from filename
@@ -2110,25 +2147,30 @@ async function startBulkUpload() {
       const parsed = parseSolFilename(file.name);
       if (!parsed) {
         setBulkSolFileStatus(i, '⚠️', '#d97706');
-        bulkLog(`  דולג — שם קובץ לא תקין. נדרש פורמט YYYYXZ_sol או YYYYXZ_all`, 'warn');
+        bulkLog(`  דולג — שם קובץ לא תקין. דוגמאות תקינות: 2022AB_sol, 22AB_sol, ds20AA_sol`, 'warn');
         solFailed++;
         continue;
       }
 
-      // 2. Find the matching exam in this course
-      const examSnap = await db.collection('exams')
-        .where('courseId', '==', courseId)
-        .where('title', '==', parsed.title)
-        .get();
+      // 2. Find the matching exam in this course (try all parsed title candidates)
+      let examDoc = null;
+      for (const candidate of (parsed.candidates || [parsed.title])) {
+        const examSnap = await db.collection('exams')
+          .where('courseId', '==', courseId)
+          .where('title', '==', candidate)
+          .get();
+        if (!examSnap.empty) {
+          examDoc = examSnap.docs[0];
+          break;
+        }
+      }
 
-      if (examSnap.empty) {
+      if (!examDoc) {
         setBulkSolFileStatus(i, '⚠️', '#d97706');
-        bulkLog(`  לא נמצא מבחן "${parsed.title}" בקורס — דולג`, 'warn');
+        bulkLog(`  לא נמצא מבחן תואם (${parsed.title}) בקורס — דולג`, 'warn');
         solFailed++;
         continue;
       }
-
-      const examDoc = examSnap.docs[0];
       const examData = examDoc.data();
 
       // 3. Determine solutionPdfUrl
