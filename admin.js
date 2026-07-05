@@ -2094,6 +2094,7 @@ async function startBulkUpload() {
           text: q.text,
           subject: normalizeQuestionSubject(q.subject || ''),
           isBonus: q.isBonus === true,
+          timerEnabled: q.timerEnabled === true,
           subs: (q.subs || []).map((s, si) => {
             const normalized = normalizeSubEntry(s, si);
             return ({
@@ -2101,6 +2102,7 @@ async function startBulkUpload() {
             label: normalized.label,
             text: normalized.text,
             subject: normalized.subject,
+            timerEnabled: s.timerEnabled === true,
             isBonus: s.isBonus === true
             });
           })
@@ -3672,6 +3674,10 @@ function renderPreview() {
             <input type="checkbox" ${q.isBonus ? 'checked' : ''}
               onchange="toggleBonus(${i}, this.checked)"> בונוס
           </label>
+          <label class="bonus-chk-label" title="אפשר טיימר לשאלה">
+            <input type="checkbox" ${q.timerEnabled === true ? 'checked' : ''}
+              onchange="toggleQuestionTimer(${i}, this.checked)"> ⏱ טיימר
+          </label>
           <label class="bonus-chk-label" title="אפשר יצירת שאלת AI">
             <input type="checkbox" ${q.allowAIGen === true ? 'checked' : ''}
               onchange="toggleAIGen(${i}, this.checked)"> ✨ AI
@@ -3749,6 +3755,10 @@ function renderSubsPreview(subs, qi) {
             <input type="checkbox" ${s.allowAIGen === true ? 'checked' : ''}
               onchange="parsedQuestions[${qi}].subs[${si}].allowAIGen=this.checked"> ✨
           </label>
+          <label class="bonus-chk-label" style="font-size:.72rem;white-space:nowrap" title="אפשר טיימר לסעיף זה">
+            <input type="checkbox" ${s.timerEnabled === true ? 'checked' : ''}
+              onchange="toggleSubTimer(${qi},${si},this.checked)"> ⏱
+          </label>
           <button class="btn-icon btn-sm" id="vbtn-${s.id}" style="background:rgba(239,68,68,.1);color:#dc2626;border:1px solid rgba(239,68,68,.3);padding:.28rem .38rem" onclick="openVideoAttachAdminModal('${s.id}','${esc(s.label||'סעיף '+(si+1))}')" title="צרף סרטון"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="5" width="14" height="14" rx="2.5" ry="2.5"/><polygon points="16 8 22 12 16 16"/></svg></button>
           <button class="btn-icon btn-sm" style="background:var(--danger-l);color:var(--danger);flex-shrink:0"
             onclick="removeSub(${qi},${si})" title="מחק סעיף">✕</button>
@@ -3782,6 +3792,7 @@ function addSubToPreview(qi) {
     label: normalizeSubLabel('', n),
     text: '',
     subject: '',
+    timerEnabled: false,
     inlineImages: {},
   });
   renderPreview();
@@ -3830,6 +3841,18 @@ function toggleAIGen(i, checked) {
   parsedQuestions[i].allowAIGen = checked;
 }
 
+function toggleQuestionTimer(i, checked) {
+  if (!parsedQuestions[i]) return;
+  parsedQuestions[i].timerEnabled = checked === true;
+}
+window.toggleQuestionTimer = toggleQuestionTimer;
+
+function toggleSubTimer(qi, si, checked) {
+  if (!parsedQuestions[qi]?.subs?.[si]) return;
+  parsedQuestions[qi].subs[si].timerEnabled = checked === true;
+}
+window.toggleSubTimer = toggleSubTimer;
+
 function clearImport() {
   const rt = document.getElementById('raw-text');
   if (rt) rt.value = '';
@@ -3851,6 +3874,7 @@ function addManualQuestion() {
     text: '',
     subject: '',
     isBonus: false,
+    timerEnabled: false,
     subs: [],
     inlineImages: {},
   });
@@ -4050,6 +4074,7 @@ async function submitAddExam() {
         ),
         isBonus: q.isBonus === true,
         allowAIGen: q.allowAIGen === true,
+        timerEnabled: q.timerEnabled === true,
         subs:    (q.subs || []).map((s, si) => {
           const normalized = normalizeSubEntry(s, si);
           return ({
@@ -4057,6 +4082,7 @@ async function submitAddExam() {
           label: normalized.label,
           text:  normalized.text,
           subject: normalized.subject,
+          timerEnabled: s.timerEnabled === true,
           inlineImages: Object.fromEntries(
             Object.entries(filterInlineImagesForText(normalized.text, s.inlineImages)).map(([k, v]) => {
               const url = typeof v === 'string' ? normalizeHttpUrl(v) : normalizeHttpUrl(v?.url || '');

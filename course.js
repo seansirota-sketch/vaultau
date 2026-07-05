@@ -94,6 +94,95 @@ function toast(msg, type = '') {
   setTimeout(() => t.remove(), 2500);
 }
 
+const _entityTimers = new Map();
+let _entityTimerInterval = null;
+let _entityTimerMenuListenerBound = false;
+
+function _formatEntityTimerMs(ms) {
+  const totalSec = Math.max(0, Math.floor(ms / 1000));
+  const hh = Math.floor(totalSec / 3600);
+  const mm = Math.floor((totalSec % 3600) / 60);
+  const ss = totalSec % 60;
+  if (hh > 0) return `${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}:${String(ss).padStart(2, '0')}`;
+  return `${String(mm).padStart(2, '0')}:${String(ss).padStart(2, '0')}`;
+}
+
+function _closeEntityTimerMenus() {
+  document.querySelectorAll('.qv-timer-wrap.open').forEach(el => el.classList.remove('open'));
+}
+
+function _updateEntityTimerDisplays() {
+  const now = Date.now();
+  const finished = [];
+  _entityTimers.forEach((state, entityId) => {
+    if (!state || !state.endsAt || state.endsAt <= now) finished.push(entityId);
+  });
+  finished.forEach(id => _entityTimers.delete(id));
+
+  document.querySelectorAll('[data-timer-display]').forEach(el => {
+    const entityId = el.getAttribute('data-timer-display') || '';
+    const state = _entityTimers.get(entityId);
+    if (!state) {
+      el.textContent = '';
+      el.classList.remove('active');
+      return;
+    }
+    const left = Math.max(0, state.endsAt - now);
+    el.textContent = `⏱ ${_formatEntityTimerMs(left)}`;
+    el.classList.add('active');
+  });
+
+  if (_entityTimers.size === 0 && _entityTimerInterval) {
+    clearInterval(_entityTimerInterval);
+    _entityTimerInterval = null;
+  }
+}
+
+function _ensureEntityTimerInterval() {
+  if (_entityTimerInterval) return;
+  _entityTimerInterval = setInterval(_updateEntityTimerDisplays, 1000);
+}
+
+function toggleEntityTimerMenu(event, btn) {
+  event.stopPropagation();
+  const wrap = btn?.closest('.qv-timer-wrap');
+  if (!wrap) return;
+  const isOpen = wrap.classList.contains('open');
+  _closeEntityTimerMenus();
+  if (!isOpen) wrap.classList.add('open');
+  if (!_entityTimerMenuListenerBound) {
+    document.addEventListener('click', _closeEntityTimerMenus);
+    _entityTimerMenuListenerBound = true;
+  }
+}
+
+function startEntityTimerFromBtn(btn, minutes) {
+  const wrap = btn?.closest('.qv-timer-wrap');
+  const trigger = wrap?.querySelector('[data-timer-trigger]');
+  const entityId = trigger?.getAttribute('data-entity-id') || '';
+  const entityLabel = trigger?.getAttribute('data-entity-label') || 'פריט';
+  if (!entityId) return;
+  const mins = Number(minutes) === 60 ? 60 : 30;
+  _entityTimers.set(entityId, {
+    endsAt: Date.now() + mins * 60 * 1000,
+    entityLabel,
+  });
+  _ensureEntityTimerInterval();
+  _updateEntityTimerDisplays();
+  _closeEntityTimerMenus();
+  toast(`הופעל טיימר ${mins} דקות עבור ${entityLabel}`, 'success');
+}
+
+function clearEntityTimerFromBtn(btn) {
+  const wrap = btn?.closest('.qv-timer-wrap');
+  const trigger = wrap?.querySelector('[data-timer-trigger]');
+  const entityId = trigger?.getAttribute('data-entity-id') || '';
+  if (!entityId) return;
+  _entityTimers.delete(entityId);
+  _updateEntityTimerDisplays();
+  _closeEntityTimerMenus();
+}
+
 /* ── GEMINI – environment detection ────────────────────────── */
 const _isLocalDev = location.hostname === 'localhost' || location.hostname === '127.0.0.1';
 
@@ -3651,6 +3740,7 @@ async function renderVideosTab(exams) {
         if (subEl) subEl.innerHTML = formatMathText(s.text || '', s.inlineImages || null);
       });
       if (window.MathJax) MathJax.typesetPromise([body]);
+      _updateEntityTimerDisplays();
 
       body.dataset.loaded = '1';
     });
@@ -3776,6 +3866,7 @@ async function renderExam() {
     });
 
     if (window.MathJax) MathJax.typesetPromise([page]);
+    _updateEntityTimerDisplays();
 
   } catch (e) {
     page.innerHTML = `<div class="container">
@@ -3824,9 +3915,21 @@ function renderQuestionCard(q, qi, starred, userVotes = {}, videoMap = {}, isAdm
   const copySVG = `<svg width="15" height="15" viewBox="0 0 16 16" fill="#9ca3af">
     <path d="M4 1.5H3a2 2 0 0 0-2 2V14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V3.5a2 2 0 0 0-2-2h-1v1h1a1 1 0 0 1 1 1V14a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V3.5a1 1 0 0 1 1-1h1v-1z"/>
     <path d="M9.5 1a.5.5 0 0 1 .5.5v1a.5.5 0 0 1-.5.5h-3a.5.5 0 0 1-.5-.5v-1a.5.5 0 0 1 .5-.5h3zm-3-1A1.5 1.5 0 0 0 5 1.5v1A1.5 1.5 0 0 0 6.5 4h3A1.5 1.5 0 0 0 11 2.5v-1A1.5 1.5 0 0 0 9.5 0h-3z"/></svg>`;
+  const timerSVG = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="13" r="8"></circle><polyline points="12 9 12 13 14.5 15"></polyline><path d="M9 2h6"></path></svg>`;
   const videoSVG = `<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="5" width="14" height="14" rx="2.5" ry="2.5"/><polygon points="16 8 22 12 16 16"/></svg>`;
   // Upload icon: video frame with up-arrow, used for the lecturer 'submit a video' action.
   const videoUploadSVG = `<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="5" width="14" height="14" rx="2.5" ry="2.5"/><polygon points="16 8 22 12 16 16"/><path d="M9 15v-4M7 13l2-2 2 2"/></svg>`;
+  const renderTimerControl = (entityId, entityLabel) => `
+    <div class="qv-timer-wrap" data-timer-wrap="${esc(entityId)}">
+      <button class="qv-btn qv-timer-btn" data-timer-trigger data-entity-id="${esc(entityId)}" data-entity-label="${esc(entityLabel)}"
+        onclick="toggleEntityTimerMenu(event,this)" title="הפעל טיימר">${timerSVG}</button>
+      <div class="qv-timer-menu" data-timer-menu>
+        <button type="button" onclick="startEntityTimerFromBtn(this,30)">30 דק'</button>
+        <button type="button" onclick="startEntityTimerFromBtn(this,60)">60 דק'</button>
+        <button type="button" class="clear" onclick="clearEntityTimerFromBtn(this)">נקה</button>
+      </div>
+      <span class="qv-timer-badge" data-timer-display="${esc(entityId)}"></span>
+    </div>`;
 
   const points = q.points ? `<span class="qv-pts">(${q.points} נקודות)</span>` : '';
   const bonusBadge = isBonus
@@ -3844,6 +3947,7 @@ function renderQuestionCard(q, qi, starred, userVotes = {}, videoMap = {}, isAdm
       COPY_MAP.set(sCopyId, sText);
       const sAllowAI = s.allowAIGen === true;
       const sIsBonus = s.isBonus === true;
+      const sTimerEnabled = s.timerEnabled === true;
       const sVideo = videoMap[s.id] || null;
       const sVideoLocked = Boolean(sVideo) && isVideoLockedForCurrentCourse(sVideo.accessTier || 'free');
       return `<div class="qv-part${sIsBonus ? ' qv-part-bonus' : ''}" id="si-${s.id}">
@@ -3853,6 +3957,7 @@ function renderQuestionCard(q, qi, starred, userVotes = {}, videoMap = {}, isAdm
             ${sIsBonus ? `<span class="qv-bonus-badge" style="font-size:.7rem;padding:.15rem .5rem">⭐ סעיף בונוס</span>` : ''}
             <button class="qv-btn" onclick="copyById('${sCopyId}',event)" title="העתק LaTeX">${copySVG}</button>
             ${sAllowAI && canGenerate ? `<button class="qv-btn" onclick="openGeminiModal('${s.id}','sub')" title="צור סעיף דומה">✨</button>` : ''}
+            ${sTimerEnabled ? renderTimerControl(s.id, `סעיף ${rawLabel}`) : ''}
             ${sVideo ? `<button class="qv-btn qv-video-btn" data-lib="${esc(sVideo.libraryId)}" data-vid="${esc(sVideo.videoId)}" data-title="${esc(sVideo.title || 'פתרון מוצג')}" data-entity-id="${esc(s.id)}" data-entity-label="${esc('שאלה ' + (qi + 1) + ' ' + rawLabel)}" data-access-tier="${esc(sVideo.accessTier || 'free')}" onclick="openVideoModalFromBtn(this)" title="צפה בסרטון פתרון">${videoSVG}</button>${sVideoLocked ? renderPremiumLockIcon('הסרטון זמין למנויי פרימיום') : ''}` : ''}
             ${(_canUploadVideo && examId) ? `<button class="qv-btn qv-video-upload-btn" data-exam-id="${esc(examId)}" data-question-id="${esc(s.id)}" data-entity-label="${esc(((examTitle ? examTitle + ' — ' : '') + 'שאלה ' + (qi + 1) + ' סעיף ' + (s.letter || String.fromCharCode(0x05D0 + si))))}" onclick="openLecturerVideoUploadFromBtn(this)" title="העלה סרטון להסבר">${videoUploadSVG}</button>` : ''}
           </div>
@@ -3866,6 +3971,7 @@ function renderQuestionCard(q, qi, starred, userVotes = {}, videoMap = {}, isAdm
 
   const qVideo = videoMap[q.id] || null;
   const qVideoLocked = Boolean(qVideo) && isVideoLockedForCurrentCourse(qVideo.accessTier || 'free');
+  const qTimerEnabled = q.timerEnabled === true;
 
   return `<div class="qv-card${isBonus ? ' qv-card-bonus' : ''}" id="qc-${q.id}" data-subject="${esc(subject)}" data-subjects="${esc(subjectTags.join('|'))}">
     <div class="qv-head${isBonus ? ' qv-head-bonus' : ''}">
@@ -3883,6 +3989,7 @@ function renderQuestionCard(q, qi, starred, userVotes = {}, videoMap = {}, isAdm
         ${isStarLocked ? renderPremiumLockIcon('סימון שאלה נוספת במועדפים זמין למנויי פרימיום') : ''}
         <button class="qv-btn" onclick="copyById('${qCopyId}',event)" title="העתק LaTeX">${copySVG}</button>
         ${q.allowAIGen === true && canGenerate ? `<button class="qv-btn" onclick="openGeminiModal('${q.id}','question')" title="צור שאלה דומה">✨</button>` : ''}
+        ${qTimerEnabled ? renderTimerControl(q.id, `שאלה ${qi + 1}`) : ''}
         ${qVideo ? `<button class="qv-btn qv-video-btn" data-lib="${esc(qVideo.libraryId)}" data-vid="${esc(qVideo.videoId)}" data-title="${esc(qVideo.title || 'פתרון מוצג')}" data-entity-id="${esc(q.id)}" data-entity-label="${esc('שאלה ' + (qi + 1))}" data-access-tier="${esc(qVideo.accessTier || 'free')}" onclick="openVideoModalFromBtn(this)" title="צפה בסרטון פתרון">${videoSVG}</button>${qVideoLocked ? renderPremiumLockIcon('הסרטון זמין למנויי פרימיום') : ''}` : ''}
         ${(_canUploadVideo && examId) ? `<button class="qv-btn qv-video-upload-btn" data-exam-id="${esc(examId)}" data-question-id="${esc(q.id)}" data-entity-label="${esc(((examTitle ? examTitle + ' — ' : '') + 'שאלה ' + (qi + 1)))}" onclick="openLecturerVideoUploadFromBtn(this)" title="העלה סרטון להסבר">${videoUploadSVG}</button>` : ''}
       </div>
