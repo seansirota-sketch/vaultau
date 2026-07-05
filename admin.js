@@ -204,6 +204,10 @@ function _buildDirectPrompt(filenameHint) {
 ▸ subject — אם אפשר לזהות נושא ברור, החזר אותו גם ברמת השאלה וגם ברמת סעיף.
 • LaTeX: $...$ inline, $$...$$ display, \\begin{pmatrix}, \\frac, \\sqrt
 • סעיפים (א)(ב)(ג) / (1)(2)(3) → parts[].letter
+• parts[].letter = אות/ספרה בלבד, בלי סוגריים בכלל (למשל "א" ולא "(א)" ולא "((א))")
+• parts[].text לא יתחיל באות הסעיף — אל תשכפל את התווית בתוך הטקסט
+• חלץ את כל השאלות ואת כל הסעיפים — אל תדלג, אל תאחד שאלות, אל תקצר טקסט
+• שמור על הנוסח העברי המקורי במדויק, כולל נוסחאות
 • שאלת בונוס → isBonus: true
 • אל תכלול הוראות בחינה, לוגו, מספרי עמוד
 
@@ -248,6 +252,89 @@ function normalizeSubLabel(raw, fallbackIndex = 0) {
   return `(${letter})`;
 }
 
+function _escapeRegExp(value) {
+  return String(value || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function normalizeSubText(rawText, rawLabel = '', fallbackIndex = 0) {
+  let text = String(rawText || '').trim();
+  if (!text) return '';
+  const canonicalLabel = normalizeSubLabel(rawLabel, fallbackIndex);
+  const bareLabel = canonicalLabel.replace(/^[\(\[]+/, '').replace(/[\)\]]+$/, '');
+  const escapedBare = _escapeRegExp(bareLabel);
+  const patterns = [
+    new RegExp(`^\\s*[\\(\\[]+\\s*${escapedBare}\\s*[\\)\\]]+\\s*[-–—:.,]?\\s*`, 'u'),
+    new RegExp(`^\\s*${escapedBare}\\s*[\\)\\].:,-]\\s*`, 'u'),
+  ];
+  patterns.forEach(rx => {
+    text = text.replace(rx, '');
+  });
+  return text.trim();
+}
+
+function normalizeSubEntry(rawSub, fallbackIndex = 0) {
+  const sub = rawSub || {};
+  const label = normalizeSubLabel(sub.label || sub.letter || '', fallbackIndex);
+  const text = normalizeSubText(sub.text || '', label, fallbackIndex);
+  return {
+    ...sub,
+    label,
+    text,
+    subject: normalizeQuestionSubject(sub.subject || sub.topic || ''),
+  };
+}
+
+/**
+ * Auto-repair pass for parsed questions:
+ * - drops empty questions/subs
+ * - re-normalizes labels and strips duplicated label prefixes
+ * - merges duplicate sub labels within a question
+ * - fixes missing/duplicate question numbering
+ */
+function repairParsedQuestions(questions) {
+  const repaired = [];
+  const notes = [];
+  (Array.isArray(questions) ? questions : []).forEach(rawQ => {
+    if (!rawQ) return;
+    const q = { ...rawQ };
+    q.text = String(q.text || '').trim();
+
+    const seenLabels = new Set();
+    const subs = [];
+    (q.subs || q.parts || []).forEach((rawSub, si) => {
+      const s = normalizeSubEntry(rawSub, si);
+      if (!s.text) {
+        notes.push('הוסר סעיף ריק');
+        return;
+      }
+      if (seenLabels.has(s.label)) {
+        const prev = subs[subs.length - 1];
+        if (prev) {
+          prev.text = `${prev.text}\n${s.text}`.trim();
+          notes.push(`אוחד סעיף כפול ${s.label}`);
+          return;
+        }
+      }
+      seenLabels.add(s.label);
+      subs.push(s);
+    });
+    q.subs = subs;
+
+    if (!q.text && !q.subs.length) {
+      notes.push('הוסרה שאלה ריקה');
+      return;
+    }
+    repaired.push(q);
+  });
+
+  repaired.forEach((q, i) => {
+    const idx = Number(q.index || q.number || 0);
+    if (!idx || idx <= 0) q.index = i + 1;
+  });
+
+  return { questions: repaired, notes };
+}
+
 function normalizeQuestionSubject(raw) {
   return String(raw || '')
     .trim()
@@ -258,10 +345,7 @@ function normalizeParsedQuestion(q) {
   return {
     ...q,
     subject: normalizeQuestionSubject(q.subject || q.topic || ''),
-    subs: (q.subs || q.parts || []).map(s => ({
-      ...s,
-      subject: normalizeQuestionSubject(s.subject || s.topic || ''),
-    })),
+    subs: (q.subs || q.parts || []).map((s, si) => normalizeSubEntry(s, si)),
   };
 }
 
@@ -1769,12 +1853,41 @@ function setBulkSolFileStatus(i, icon, color) {
   if (el) { el.textContent = icon; el.style.color = color; }
 }
 
-/** Parse solution filename: e.g. 2022AB_sol.pdf → { title: "2022AB", type: "sol" } */
+function _normalizeSolutionExamTitleToken(rawToken) {
+  const token = String(rawToken || '').trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
+  if (!token) return [];
+  const out = new Set();
+
+  // Canonical format: 2022AB
+  if (/^20\d{2}[A-Z]{2}$/.test(token)) out.add(token);
+
+  // Short year format: 22AB -> 2022AB
+  const shortYear = token.match(/^(\d{2})([A-Z]{2})$/);
+  if (shortYear) out.add(`20${shortYear[1]}${shortYear[2]}`);
+
+  // Prefix + canonical/short: DS2022AB / DS22AB -> 2022AB
+  const withPrefixCanonical = token.match(/^[A-Z]{1,6}(20\d{2}[A-Z]{2})$/);
+  if (withPrefixCanonical) out.add(withPrefixCanonical[1]);
+  const withPrefixShort = token.match(/^[A-Z]{1,6}(\d{2}[A-Z]{2})$/);
+  if (withPrefixShort) out.add(`20${withPrefixShort[1]}`);
+
+  // Keep raw token too, for legacy/custom title formats in DB.
+  out.add(token);
+  return [...out];
+}
+
+/** Parse solution filename: e.g. 2022AB_sol.pdf or ds20AA_sol.pdf */
 function parseSolFilename(filename) {
   const f = filename.replace(/\.[^/.]+$/, ''); // strip extension
-  const m = f.match(/^(20\d{2}[A-Za-z]{2})_(sol|all)$/i);
+  const m = f.match(/^(.+?)_(sol|all)$/i);
   if (!m) return null;
-  return { title: m[1].toUpperCase(), type: m[2].toLowerCase() };
+  const candidates = _normalizeSolutionExamTitleToken(m[1]);
+  if (!candidates.length) return null;
+  return {
+    title: candidates[0],
+    candidates,
+    type: m[2].toLowerCase(),
+  };
 }
 
 /** Enable bulk start button when at least one file (exam or solution) is selected */
@@ -1837,36 +1950,94 @@ async function startBulkUpload() {
     bulkLog(`מתחיל: ${file.name}`, 'info');
 
     try {
-      // 1. Parse with the same PDF pipeline as single upload (Vision-first + fallback)
-      let result = await parsePdfWithSharedPipeline(file, {
-        onRenderStart: () => {
-          showSpinner(`🖼️ ${file.name} — ממיר PDF לתמונות...`);
-        },
-        onVisionStart: (pages) => {
-          showSpinner(`🤖 ${file.name} — Claude Vision מנתח ${pages} עמודים...`);
-        },
-        onFallbackStart: () => {
-          showSpinner(`🤖 ${file.name} — Claude מנתח PDF...`);
-        }
-      }, {
-        courseId,
-        filenameHint: file.name,
-        titleHint: file.name,
-      });
-      if (!result.questions) result = { questions: result, metadata: null };
-
-      const meta      = result.metadata || {};
-      const questions = (result.questions || []).filter(q => q.text || q.subs?.length);
+      // 1. Parse with the same PDF pipeline as single upload (Vision-first + fallback).
+      //    Retry once automatically when parsing returns nothing or quality is very low.
+      const BULK_PARSE_ATTEMPTS = 2;
+      let result = null;
+      let questions = [];
+      let meta = {};
+      let quality = null;
+      let title = '';
       const known = parseFilenameForBulk(file.name);
-      const title = generateExamTitle(known.year || meta.year, known.semester || meta.semester, known.moed || meta.moed);
-      const quality = computeParseQuality({ questions, metadata: meta }, {
-        filenameHint: file.name,
-        titleHint: title,
-      });
+
+      for (let attempt = 1; attempt <= BULK_PARSE_ATTEMPTS; attempt++) {
+        if (attempt > 1) bulkLog(`  ניסיון פענוח חוזר (${attempt}/${BULK_PARSE_ATTEMPTS})...`, 'warn');
+        result = await parsePdfWithSharedPipeline(file, {
+          onRenderStart: () => {
+            showSpinner(`🖼️ ${file.name} — ממיר PDF לתמונות...`);
+          },
+          onVisionStart: (pages) => {
+            showSpinner(`🤖 ${file.name} — Claude Vision מנתח ${pages} עמודים...`);
+          },
+          onFallbackStart: () => {
+            showSpinner(`🤖 ${file.name} — Claude מנתח PDF...`);
+          }
+        }, {
+          courseId,
+          filenameHint: file.name,
+          titleHint: file.name,
+        });
+        if (!result.questions) result = { questions: result, metadata: null };
+
+        meta = result.metadata || {};
+
+        // 2. Auto-repair pass: normalize labels, strip duplicated prefixes,
+        //    merge duplicate sub labels, drop empties, fix numbering.
+        const normalized = (result.questions || []).map(normalizeParsedQuestion);
+        const repair = repairParsedQuestions(normalized);
+        questions = repair.questions;
+        if (repair.notes.length) {
+          const summary = [...new Set(repair.notes)].join(' | ');
+          bulkLog(`  🛠️ תיקונים אוטומטיים: ${summary}`, 'info');
+        }
+
+        title = generateExamTitle(known.year || meta.year, known.semester || meta.semester, known.moed || meta.moed);
+        quality = computeParseQuality({ questions, metadata: meta }, {
+          filenameHint: file.name,
+          titleHint: title,
+        });
+
+        // Good enough — stop retrying
+        if (questions.length && quality.confidence !== 'low') break;
+        if (attempt < BULK_PARSE_ATTEMPTS) {
+          bulkLog(`  איכות פענוח נמוכה (${quality.score}/100) — מנסה שוב`, 'warn');
+        }
+      }
 
       // 3. Normalize lecturer names against manual list + Firestore
       let lecturers = meta.lecturers || [];
       lecturers = await normalizeLecturerNames(lecturers, manualLecturers);
+
+      // Guard: if repair removed everything, try raw normalized parse,
+      // then fall back to legacy local text parser before skipping.
+      if (!questions.length) {
+        const rawFallback = (result?.questions || [])
+          .map(normalizeParsedQuestion)
+          .filter(q => String(q.text || '').trim() || (q.subs || []).some(s => String(s.text || '').trim()));
+        if (rawFallback.length) {
+          questions = rawFallback;
+          bulkLog(`  ⚠️ לא זוהו שאלות אחרי תיקון אוטומטי — נשמר פענוח גולמי (${questions.length} שאלות)`, 'warn');
+        } else {
+          try {
+            bulkLog(`  לא זוהו שאלות ב-AI — מנסה פענוח מקומי (PDF→Text)...`, 'warn');
+            const localText = await extractTextFromPDF(file);
+            const localQuestions = parseExamText(localText).map(normalizeParsedQuestion);
+            if (localQuestions.length) {
+              questions = localQuestions;
+              bulkLog(`  ✅ פענוח מקומי הצליח (${questions.length} שאלות)`, 'success');
+            }
+          } catch (localErr) {
+            bulkLog(`  פענוח מקומי נכשל: ${localErr.message}`, 'warn');
+          }
+
+          if (!questions.length) {
+            setBulkFileStatus(i, '❌', '#991b1b');
+            bulkLog(`  לא זוהו שאלות גם אחרי ניסיון חוזר — דולג (העלה ידנית)`, 'error');
+            failed++;
+            continue;
+          }
+        }
+      }
 
       // 4. Build title from filename
       bulkLog(`  זוהו ${questions.length} שאלות | כותרת: ${title || '(ללא)'} | מרצים: ${lecturers.join(', ') || '—'} | מודל: ${result.model || '?'}`, 'info');
@@ -1923,13 +2094,18 @@ async function startBulkUpload() {
           text: q.text,
           subject: normalizeQuestionSubject(q.subject || ''),
           isBonus: q.isBonus === true,
-          subs: (q.subs || []).map(s => ({
+          timerEnabled: q.timerEnabled === true,
+          subs: (q.subs || []).map((s, si) => {
+            const normalized = normalizeSubEntry(s, si);
+            return ({
             id: s.id || genId(),
-            label: s.label,
-            text: s.text,
-            subject: normalizeQuestionSubject(s.subject || ''),
+            label: normalized.label,
+            text: normalized.text,
+            subject: normalized.subject,
+            timerEnabled: s.timerEnabled === true,
             isBonus: s.isBonus === true
-          }))
+            });
+          })
         })),
         createdAt: firebase.firestore.FieldValue.serverTimestamp(),
         updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
@@ -1988,25 +2164,30 @@ async function startBulkUpload() {
       const parsed = parseSolFilename(file.name);
       if (!parsed) {
         setBulkSolFileStatus(i, '⚠️', '#d97706');
-        bulkLog(`  דולג — שם קובץ לא תקין. נדרש פורמט YYYYXZ_sol או YYYYXZ_all`, 'warn');
+        bulkLog(`  דולג — שם קובץ לא תקין. דוגמאות תקינות: 2022AB_sol, 22AB_sol, ds20AA_sol`, 'warn');
         solFailed++;
         continue;
       }
 
-      // 2. Find the matching exam in this course
-      const examSnap = await db.collection('exams')
-        .where('courseId', '==', courseId)
-        .where('title', '==', parsed.title)
-        .get();
+      // 2. Find the matching exam in this course (try all parsed title candidates)
+      let examDoc = null;
+      for (const candidate of (parsed.candidates || [parsed.title])) {
+        const examSnap = await db.collection('exams')
+          .where('courseId', '==', courseId)
+          .where('title', '==', candidate)
+          .get();
+        if (!examSnap.empty) {
+          examDoc = examSnap.docs[0];
+          break;
+        }
+      }
 
-      if (examSnap.empty) {
+      if (!examDoc) {
         setBulkSolFileStatus(i, '⚠️', '#d97706');
-        bulkLog(`  לא נמצא מבחן "${parsed.title}" בקורס — דולג`, 'warn');
+        bulkLog(`  לא נמצא מבחן תואם (${parsed.title}) בקורס — דולג`, 'warn');
         solFailed++;
         continue;
       }
-
-      const examDoc = examSnap.docs[0];
       const examData = examDoc.data();
 
       // 3. Determine solutionPdfUrl
@@ -2093,7 +2274,10 @@ function parseExamText(raw) {
       id:      genId(),
       index,
       text:    mainText.trim(),
-      subs:    subs.map(s => ({ id: genId(), label: s.label, text: s.text })),
+      subs:    subs.map((s, si) => ({
+        id: genId(),
+        ...normalizeSubEntry({ label: s.label, text: s.text }, si),
+      })),
       isBonus: isBonus || BONUS_REGEX.test(mainText),
     };
   }).filter(q => q.text.length > 1 || q.subs.length > 0);
@@ -2565,11 +2749,13 @@ function _normalizeResult(parsed) {
       subject: normalizeQuestionSubject(q.subject || q.topic || ''),
       inlineImages: {},
       isBonus: bonus,
-      subs:    (q.parts || []).map(p => ({
+      subs:    (q.parts || []).map((p, pi) => ({
         id:    genId(),
-        label: normalizeSubLabel(p.letter || p.label || '', 0),
-        text:  stripPoints(p.text || ''),
-        subject: normalizeQuestionSubject(p.subject || p.topic || ''),
+        ...normalizeSubEntry({
+          label: p.letter || p.label || '',
+          text: stripPoints(p.text || ''),
+          subject: p.subject || p.topic || '',
+        }, pi),
         inlineImages: {},
       }))
     };
@@ -2761,7 +2947,7 @@ async function handleFileInput(file) {
 
     setProgress(95);
 
-    parsedQuestions = (result.questions || []).map(normalizeParsedQuestion);
+    parsedQuestions = repairParsedQuestions((result.questions || []).map(normalizeParsedQuestion)).questions;
     _parsedModel   = result.model || null;
     _lastParseQuality = computeParseQuality(result, {
       filenameHint: file.name,
@@ -3420,7 +3606,7 @@ async function runParser() {
 
     setProgress(100);
     parsedQuestions = Array.isArray(questions)
-      ? questions.map(normalizeParsedQuestion)
+      ? repairParsedQuestions(questions.map(normalizeParsedQuestion)).questions
       : [];
     _lastParseQuality = computeParseQuality({ questions: parsedQuestions, metadata: result.metadata || null }, {
       titleHint,
@@ -3487,6 +3673,10 @@ function renderPreview() {
           <label class="bonus-chk-label" title="סמן כשאלת בונוס">
             <input type="checkbox" ${q.isBonus ? 'checked' : ''}
               onchange="toggleBonus(${i}, this.checked)"> בונוס
+          </label>
+          <label class="bonus-chk-label" title="אפשר טיימר לשאלה">
+            <input type="checkbox" ${q.timerEnabled === true ? 'checked' : ''}
+              onchange="toggleQuestionTimer(${i}, this.checked)"> ⏱ טיימר
           </label>
           <label class="bonus-chk-label" title="אפשר יצירת שאלת AI">
             <input type="checkbox" ${q.allowAIGen === true ? 'checked' : ''}
@@ -3565,6 +3755,10 @@ function renderSubsPreview(subs, qi) {
             <input type="checkbox" ${s.allowAIGen === true ? 'checked' : ''}
               onchange="parsedQuestions[${qi}].subs[${si}].allowAIGen=this.checked"> ✨
           </label>
+          <label class="bonus-chk-label" style="font-size:.72rem;white-space:nowrap" title="אפשר טיימר לסעיף זה">
+            <input type="checkbox" ${s.timerEnabled === true ? 'checked' : ''}
+              onchange="toggleSubTimer(${qi},${si},this.checked)"> ⏱
+          </label>
           <button class="btn-icon btn-sm" id="vbtn-${s.id}" style="background:rgba(239,68,68,.1);color:#dc2626;border:1px solid rgba(239,68,68,.3);padding:.28rem .38rem" onclick="openVideoAttachAdminModal('${s.id}','${esc(s.label||'סעיף '+(si+1))}')" title="צרף סרטון"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="5" width="14" height="14" rx="2.5" ry="2.5"/><polygon points="16 8 22 12 16 16"/></svg></button>
           <button class="btn-icon btn-sm" style="background:var(--danger-l);color:var(--danger);flex-shrink:0"
             onclick="removeSub(${qi},${si})" title="מחק סעיף">✕</button>
@@ -3598,6 +3792,7 @@ function addSubToPreview(qi) {
     label: normalizeSubLabel('', n),
     text: '',
     subject: '',
+    timerEnabled: false,
     inlineImages: {},
   });
   renderPreview();
@@ -3646,6 +3841,18 @@ function toggleAIGen(i, checked) {
   parsedQuestions[i].allowAIGen = checked;
 }
 
+function toggleQuestionTimer(i, checked) {
+  if (!parsedQuestions[i]) return;
+  parsedQuestions[i].timerEnabled = checked === true;
+}
+window.toggleQuestionTimer = toggleQuestionTimer;
+
+function toggleSubTimer(qi, si, checked) {
+  if (!parsedQuestions[qi]?.subs?.[si]) return;
+  parsedQuestions[qi].subs[si].timerEnabled = checked === true;
+}
+window.toggleSubTimer = toggleSubTimer;
+
 function clearImport() {
   const rt = document.getElementById('raw-text');
   if (rt) rt.value = '';
@@ -3667,6 +3874,7 @@ function addManualQuestion() {
     text: '',
     subject: '',
     isBonus: false,
+    timerEnabled: false,
     subs: [],
     inlineImages: {},
   });
@@ -3866,20 +4074,25 @@ async function submitAddExam() {
         ),
         isBonus: q.isBonus === true,
         allowAIGen: q.allowAIGen === true,
-        subs:    (q.subs || []).map(s => ({
+        timerEnabled: q.timerEnabled === true,
+        subs:    (q.subs || []).map((s, si) => {
+          const normalized = normalizeSubEntry(s, si);
+          return ({
           id:    s.id || genId(),
-          label: s.label,
-          text:  s.text,
-          subject: normalizeQuestionSubject(s.subject || ''),
+          label: normalized.label,
+          text:  normalized.text,
+          subject: normalized.subject,
+          timerEnabled: s.timerEnabled === true,
           inlineImages: Object.fromEntries(
-            Object.entries(filterInlineImagesForText(s.text, s.inlineImages)).map(([k, v]) => {
+            Object.entries(filterInlineImagesForText(normalized.text, s.inlineImages)).map(([k, v]) => {
               const url = typeof v === 'string' ? normalizeHttpUrl(v) : normalizeHttpUrl(v?.url || '');
               return [k, url || ''];
             }).filter(([, url]) => !!url)
           ),
           allowAIGen: s.allowAIGen === true,
           isBonus: s.isBonus === true,
-        }))
+          });
+        })
       })),
       updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
       createdBy: adminUser?.email || 'admin',
@@ -5054,10 +5267,10 @@ async function editExam(courseId, examId) {
     parsedQuestions = (exam.questions || []).map(q => ({
       ...migrateLegacyImageToInlineText({ ...q, inlineImages: normalizeInlineImagesMap(q.inlineImages) }, 'question-image'),
       subject: normalizeQuestionSubject(q.subject || q.topic || ''),
-      subs: (q.subs || q.parts || []).map(s => (
+      subs: (q.subs || q.parts || []).map((s, si) => (
         migrateLegacyImageToInlineText({
           ...s,
-          subject: normalizeQuestionSubject(s.subject || s.topic || ''),
+          ...normalizeSubEntry(s, si),
           inlineImages: normalizeInlineImagesMap(s.inlineImages)
         }, 'sub-image')
       ))
