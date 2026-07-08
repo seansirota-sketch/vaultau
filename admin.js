@@ -80,8 +80,8 @@ async function loadApiKeys() {
 let _parseAbortController = null;
 
 const CLAUDE_MODELS_DISPLAY = [
-  { id: 'claude-opus-4-6',            name: 'Opus' },
   { id: 'claude-sonnet-4-6',          name: 'Sonnet' },
+  { id: 'claude-opus-4-6',            name: 'Opus' },
   { id: 'claude-haiku-4-5-20251001',  name: 'Haiku' },
 ];
 
@@ -2619,6 +2619,28 @@ async function renderPdfToBase64Images(file, maxPages = 15) {
 async function parsePdfWithSharedPipeline(file, hooks = {}, parseOpts = {}) {
   const { onRenderStart, onVisionStart, onFallbackStart } = hooks;
 
+  // ── Digital-PDF short-circuit ─────────────────────────────
+  // If the PDF has a solid text layer, parse it as text (cheaper, more reliable,
+  // no Vision truncation). Fall through to Vision if the layer is weak or the
+  // text parse yields nothing.
+  try {
+    const layer = await assessPdfTextLayer(file);
+    if (layer.digital) {
+      console.log(`📄 Digital text layer detected (${layer.chars} chars, ${layer.pages} pages) — using text mode`);
+      if (onFallbackStart) onFallbackStart();
+      const data = await processWithClaude(layer.text, {
+        filenameHint: file.name,
+        titleHint: parseOpts.titleHint || '',
+        courseId: parseOpts.courseId || '',
+      });
+      const result = typeof data === 'object' && data.questions ? data : { questions: data, metadata: null };
+      if ((result.questions || []).length > 0) return result;
+      console.warn('Text-mode parse returned no questions — falling back to Vision');
+    }
+  } catch (textErr) {
+    console.warn('Digital text-mode parse failed, falling back to Vision:', textErr.message);
+  }
+
   if (onRenderStart) onRenderStart();
 
   let images;
@@ -2794,6 +2816,40 @@ async function extractTextFromPDF(file) {
     fullText += pageText + '\n\n';
   }
   return fullText;
+}
+
+/**
+ * Assess whether a PDF has a reliable digital text layer (vs. a scan/image PDF).
+ * Digital PDFs are parsed far more accurately and cheaply as text than as Vision
+ * images, so we short-circuit to text mode when the layer looks solid.
+ * Returns { digital, text, pages, chars, hebrewRatio } — never throws.
+ */
+async function assessPdfTextLayer(file) {
+  try {
+    if (!pdfjsLib) initPdfJs();
+    if (!pdfjsLib) return { digital: false, text: '', pages: 0, chars: 0, hebrewRatio: 0 };
+    const arrayBuffer = await file.arrayBuffer();
+    const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+    const pages = pdf.numPages;
+    let fullText = '';
+    for (let i = 1; i <= pages; i++) {
+      const page = await pdf.getPage(i);
+      const tc   = await page.getTextContent();
+      fullText  += tc.items.map(item => item.str).join(' ') + '\n\n';
+    }
+    const compact     = fullText.replace(/\s/g, '');
+    const chars       = compact.length;
+    const hebrewCount = (compact.match(/[\u0590-\u05FF]/g) || []).length;
+    const letterCount = (compact.match(/[\u0590-\u05FFa-zA-Z]/g) || []).length;
+    const hebrewRatio = letterCount ? hebrewCount / letterCount : 0;
+    // Heuristic: enough real text per page AND a meaningful amount of Hebrew.
+    // LaTeX PDFs with broken ToUnicode maps yield garbage → low letterCount → treated as scanned.
+    const digital = chars >= Math.max(200, pages * 200) && hebrewCount >= 40;
+    return { digital, text: fullText, pages, chars, hebrewRatio };
+  } catch (e) {
+    console.warn('Text-layer assessment failed:', e.message);
+    return { digital: false, text: '', pages: 0, chars: 0, hebrewRatio: 0 };
+  }
 }
 
 /* ── Progress bar helper ───────────────────────────────── */

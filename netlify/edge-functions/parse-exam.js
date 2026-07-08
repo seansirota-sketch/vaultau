@@ -15,12 +15,72 @@
    ============================================================ */
 
 const CLAUDE_DIRECT_URL  = 'https://api.anthropic.com/v1/messages';
+// Sonnet-first: strong Hebrew + LaTeX at reasonable cost is the default.
+// Opus is the escalation model; Haiku is the last-resort fallback.
 const CLAUDE_MODELS  = [
-  'claude-opus-4-6',
   'claude-sonnet-4-6',
+  'claude-opus-4-6',
   'claude-haiku-4-5-20251001',
 ];
-const CLAUDE_MAX_TOKENS = 8192;
+// Raised from 8192 → 16384 so multi-question exams stop truncating mid-JSON.
+const CLAUDE_MAX_TOKENS = 16384;
+
+// Exponential backoff (ms) for transient 529 (overloaded) / 5xx errors,
+// retried against the SAME model before falling back to the next one.
+const BACKOFF_MS = [1000, 3000, 8000];
+
+// Forced tool use turns free-text JSON into schema-validated tool input,
+// eliminating markdown-fence scraping and most "invalid format" failures.
+const EXAM_TOOL_NAME = 'report_exam';
+const EXAM_TOOL = {
+  name: EXAM_TOOL_NAME,
+  description: 'Report the fully parsed academic exam as structured data. Call this exactly once with every question and sub-question extracted from the exam.',
+  input_schema: {
+    type: 'object',
+    properties: {
+      metadata: {
+        type: 'object',
+        description: 'Exam metadata extracted from the header/first page.',
+        properties: {
+          courseName: { type: ['string', 'null'] },
+          lecturers:  { type: 'array', items: { type: 'string' } },
+          year:       { type: ['number', 'null'] },
+          semester:   { type: ['string', 'null'] },
+          moed:       { type: ['string', 'null'] },
+        },
+      },
+      questions: {
+        type: 'array',
+        description: 'All questions in the exam, in order.',
+        items: {
+          type: 'object',
+          properties: {
+            number:  { type: ['number', 'string'] },
+            text:    { type: 'string' },
+            subject: { type: ['string', 'null'] },
+            isBonus: { type: 'boolean' },
+            parts: {
+              type: 'array',
+              items: {
+                type: 'object',
+                properties: {
+                  letter:  { type: ['string', 'null'] },
+                  text:    { type: 'string' },
+                  subject: { type: ['string', 'null'] },
+                },
+                required: ['text'],
+              },
+            },
+          },
+          required: ['text'],
+        },
+      },
+    },
+    required: ['questions'],
+  },
+};
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 const FIREBASE_PROJECT = 'eaxmbank';
 const ROLE_ALLOWED = new Set(['instructor', 'admin']);
@@ -200,56 +260,85 @@ export default async (request, _context) => {
         model,
         max_tokens: CLAUDE_MAX_TOKENS,
         messages,
+        // Force the model to answer via the tool → schema-validated JSON.
+        tools: [EXAM_TOOL],
+        tool_choice: { type: 'tool', name: EXAM_TOOL_NAME },
       });
 
       const bodySizeMB = (requestBody.length / 1_048_576).toFixed(2);
       console.log(`parse-exam: trying ${model} (${bodySizeMB}MB, attempt ${i + 1}/${modelsToTry.length})`);
 
-      const response = await fetch(claudeApiUrl, {
-        method: 'POST',
-        headers: {
-          'Content-Type':      'application/json',
-          'x-api-key':         apiKey,
-          'anthropic-version': '2023-06-01',
-        },
-        body: requestBody,
-      });
+      // ── Fetch with 529/5xx backoff against the SAME model ────
+      let response = null;
+      let transientErr = null;
+      for (let attempt = 0; attempt <= BACKOFF_MS.length; attempt++) {
+        response = await fetch(claudeApiUrl, {
+          method: 'POST',
+          headers: {
+            'Content-Type':      'application/json',
+            'x-api-key':         apiKey,
+            'anthropic-version': '2023-06-01',
+          },
+          body: requestBody,
+        });
 
-      if (!response.ok) {
+        if (response.ok) { transientErr = null; break; }
+
         const errText = await response.text().catch(() => '');
         let errMsg = `${model}: HTTP ${response.status}`;
         try { const d = JSON.parse(errText); errMsg = d.error?.message || errMsg; } catch (_e) { /* ignore */ }
 
-        // 529 = overloaded, 5xx = server error → try next model
+        // 529 = overloaded, 5xx = server error → retry same model, then fall back
         if (response.status === 529 || response.status >= 500) {
-          console.warn(`⚠️ ${errMsg} — trying next model...`);
-          lastErr = errMsg;
-          // In single-model mode, return retryable error so client can try next
-          if (requestedModel) {
-            return jsonResponse(response.status, { error: errMsg, retryable: true }, request);
+          transientErr = { status: response.status, msg: errMsg };
+          if (attempt < BACKOFF_MS.length) {
+            const wait = BACKOFF_MS[attempt] + Math.floor(Math.random() * 400); // jitter
+            console.warn(`⚠️ ${errMsg} — retrying ${model} in ${wait}ms (${attempt + 1}/${BACKOFF_MS.length})`);
+            await sleep(wait);
+            continue;
           }
-          continue;
+          break; // exhausted retries for this model
         }
+
+        // Non-transient error (4xx) → return immediately, no retry/fallback
         return jsonResponse(response.status, { error: errMsg }, request);
+      }
+
+      if (transientErr) {
+        console.warn(`⚠️ ${transientErr.msg} — trying next model...`);
+        lastErr = transientErr.msg;
+        if (requestedModel) {
+          return jsonResponse(transientErr.status, { error: transientErr.msg, retryable: true }, request);
+        }
+        continue;
       }
 
       const data = await response.json();
 
-      // ── Extract and validate JSON from response ─────────
-      let jsonStr = (data.content?.find(c => c.type === 'text')?.text || '').trim();
+      // ── Truncation guard: never parse a cut-off response ────
+      if (data.stop_reason === 'max_tokens') {
+        console.warn(`⚠️ ${model}: output truncated (max_tokens=${CLAUDE_MAX_TOKENS})`);
+        lastErr = `${model}: exam too large — output truncated`;
+        // Falling back to another model won't help; surface a clear error.
+        return jsonResponse(422, { error: lastErr, truncated: true, retryable: false }, request);
+      }
 
-      // Strip markdown fences
-      const fenceRe = new RegExp('```(?:json)?\\s*([\\s\\S]*?)```');
-      const fence = jsonStr.match(fenceRe);      if (fence) jsonStr = fence[1].trim();
+      // ── Extract structured data: tool_use first, text fallback ──
+      let parsed = data.content?.find(c => c.type === 'tool_use' && c.name === EXAM_TOOL_NAME)?.input || null;
 
-      let parsed;
-      try { parsed = JSON.parse(jsonStr); } catch (_e) {
-        const m = jsonStr.match(/\{[\s\S]*\}/);
-        if (m) try { parsed = JSON.parse(m[0]); } catch (_e2) { /* fall through */ }
+      if (!parsed) {
+        // Legacy fallback: scrape JSON from a text block (fences or raw braces).
+        let jsonStr = (data.content?.find(c => c.type === 'text')?.text || '').trim();
+        const fenceRe = new RegExp('```(?:json)?\\s*([\\s\\S]*?)```');
+        const fence = jsonStr.match(fenceRe);      if (fence) jsonStr = fence[1].trim();
+        try { parsed = JSON.parse(jsonStr); } catch (_e) {
+          const m = jsonStr.match(/\{[\s\S]*\}/);
+          if (m) try { parsed = JSON.parse(m[0]); } catch (_e2) { /* fall through */ }
+        }
       }
 
       if (!parsed || !Array.isArray(parsed.questions)) {
-        console.warn(`⚠️ ${model}: invalid JSON — trying next model...`);
+        console.warn(`⚠️ ${model}: invalid format — trying next model...`);
         lastErr = `${model}: AI returned invalid format`;
         if (requestedModel) {
           return jsonResponse(422, { error: lastErr, retryable: true }, request);
