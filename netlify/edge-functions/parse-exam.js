@@ -71,6 +71,15 @@ const EXAM_TOOL = {
                 required: ['text'],
               },
             },
+            // Chunked parsing (set only when the exam is split across multiple calls).
+            continuesFromPrevious: {
+              type: 'boolean',
+              description: 'True if this question is the continuation of a question that started in the previous chunk.',
+            },
+            continuesToNext: {
+              type: 'boolean',
+              description: 'True if this question is cut off at the end of the chunk and continues into the next chunk.',
+            },
           },
           required: ['text'],
         },

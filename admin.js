@@ -94,21 +94,28 @@ function abortParsing() {
   }
 }
 
-async function callClaudeViaEdge(messages) {
+async function callClaudeViaEdge(messages, opts = {}) {
   _parseAbortController = new AbortController();
   const signal = _parseAbortController.signal;
   const idToken = await auth.currentUser?.getIdToken();
   if (!idToken) throw new Error('לא מחובר — יש להתחבר מחדש');
 
+  // opts.models — restrict/reorder the model fallback list (e.g. Haiku-first for
+  //   the cheap metadata pass). opts.spinnerLabel — override the spinner prefix.
+  const modelList = Array.isArray(opts.models) && opts.models.length
+    ? opts.models
+    : CLAUDE_MODELS_DISPLAY;
+
   let lastErr = null;
 
-  for (let i = 0; i < CLAUDE_MODELS_DISPLAY.length; i++) {
-    const { id: modelId, name: modelName } = CLAUDE_MODELS_DISPLAY[i];
+  for (let i = 0; i < modelList.length; i++) {
+    const { id: modelId, name: modelName } = modelList[i];
     const attempt = i + 1;
-    const total = CLAUDE_MODELS_DISPLAY.length;
+    const total = modelList.length;
 
     // Update spinner with current model attempt
-    showSpinner(`🤖 מנתח עם Claude ${modelName} — ניסיון ${attempt}/${total}`, true);
+    const prefix = opts.spinnerLabel || '🤖 מנתח עם Claude';
+    showSpinner(`${prefix} ${modelName} — ניסיון ${attempt}/${total}`, true);
 
     if (signal.aborted) throw new DOMException('Parsing aborted', 'AbortError');
 
@@ -130,7 +137,7 @@ async function callClaudeViaEdge(messages) {
         const errMsg = errData.error || `HTTP ${response.status}`;
 
         // If retryable (529/5xx/invalid format), try next model
-        if (errData.retryable && i < CLAUDE_MODELS_DISPLAY.length - 1) {
+        if (errData.retryable && i < modelList.length - 1) {
           console.warn(`⚠️ ${modelName}: ${errMsg} — trying next model...`);
           showSpinner(`⚠️ ${modelName} נכשל — עובר למודל הבא...`);
           await new Promise(r => setTimeout(r, 800)); // brief pause so user sees the message
@@ -154,7 +161,7 @@ async function callClaudeViaEdge(messages) {
 
     } catch (err) {
       if (err.name === 'AbortError') throw err;
-      if (err.message && i < CLAUDE_MODELS_DISPLAY.length - 1 && !err.message.startsWith('לא מחובר')) {
+      if (err.message && i < modelList.length - 1 && !err.message.startsWith('לא מחובר')) {
         console.warn(`⚠️ ${modelName}: ${err.message}`);
         lastErr = err.message;
         continue;
@@ -2619,21 +2626,30 @@ async function renderPdfToBase64Images(file, maxPages = 15) {
 async function parsePdfWithSharedPipeline(file, hooks = {}, parseOpts = {}) {
   const { onRenderStart, onVisionStart, onFallbackStart } = hooks;
 
-  // ── Digital-PDF short-circuit ─────────────────────────────
-  // If the PDF has a solid text layer, parse it as text (cheaper, more reliable,
-  // no Vision truncation). Fall through to Vision if the layer is weak or the
-  // text parse yields nothing.
+  // ── Digital-PDF text route ────────────────────────────────
+  // A solid text layer parses more reliably and cheaply as text than as Vision.
+  // Large digital exams go through the chunked pipeline; small ones use one call.
+  // Fall through to Vision if the layer is weak or the text parse yields nothing.
   try {
     const layer = await assessPdfTextLayer(file);
     if (layer.digital) {
-      console.log(`📄 Digital text layer detected (${layer.chars} chars, ${layer.pages} pages) — using text mode`);
+      console.log(`📄 Digital text layer detected (${layer.chars} chars, ${layer.pages} pages)`);
       if (onFallbackStart) onFallbackStart();
-      const data = await processWithClaude(layer.text, {
-        filenameHint: file.name,
-        titleHint: parseOpts.titleHint || '',
-        courseId: parseOpts.courseId || '',
-      });
-      const result = typeof data === 'object' && data.questions ? data : { questions: data, metadata: null };
+      let result;
+      if (layer.text.length > CHUNK_TEXT_THRESHOLD_CHARS) {
+        result = await parseExamChunked('text', layer.text, {
+          filenameHint: file.name,
+          titleHint: parseOpts.titleHint || '',
+          courseId: parseOpts.courseId || '',
+        });
+      } else {
+        const data = await processWithClaude(layer.text, {
+          filenameHint: file.name,
+          titleHint: parseOpts.titleHint || '',
+          courseId: parseOpts.courseId || '',
+        });
+        result = typeof data === 'object' && data.questions ? data : { questions: data, metadata: null };
+      }
       if ((result.questions || []).length > 0) return result;
       console.warn('Text-mode parse returned no questions — falling back to Vision');
     }
@@ -2654,6 +2670,14 @@ async function parsePdfWithSharedPipeline(file, hooks = {}, parseOpts = {}) {
 
   if (images && images.length > 0) {
     if (onVisionStart) onVisionStart(images.length);
+    // Large image exams go through the chunked pipeline; small ones use one call.
+    if (images.length > CHUNK_VISION_PAGE_THRESHOLD) {
+      return await parseExamChunked('vision', images, {
+        filenameHint: file.name,
+        titleHint: parseOpts.titleHint || '',
+        courseId: parseOpts.courseId || '',
+      });
+    }
     return await processWithVision(images, file.name, parseOpts);
   }
 
@@ -2787,6 +2811,267 @@ function _normalizeResult(parsed) {
 
 function _normalizeQuestions(parsed) {
   return _normalizeResult(parsed).questions;
+}
+
+/* ══════════════════════════════════════════════════════════
+   PHASE 2 — CHUNKED PARSING PIPELINE
+   Large exams are split into page/boundary-aligned chunks that are
+   extracted independently, then merged deterministically in code.
+   This removes single-request truncation and multimodal-overload failures.
+   Small exams keep the proven single-call path (see parsePdfWithSharedPipeline).
+   ═══════════════════════════════════════════════════════════ */
+
+// Chunk sizing thresholds — below these an exam parses fine in one call.
+const CHUNK_TEXT_THRESHOLD_CHARS = 12000;  // digital text: chars before we chunk
+const CHUNK_TEXT_MAX_CHARS       = 12000;  // target size of each text chunk
+const CHUNK_VISION_PAGE_THRESHOLD = 3;     // image pages before we chunk
+const CHUNK_VISION_PAGES_PER      = 2;     // pages per vision chunk
+
+const METADATA_MODELS = [
+  { id: 'claude-haiku-4-5-20251001', name: 'Haiku' },
+  { id: 'claude-sonnet-4-6',         name: 'Sonnet' },
+];
+
+/**
+ * Split raw exam text at question boundaries (Hebrew "שאלה N", English, or "N.").
+ * Each returned segment starts at a question header, so chunk edges never fall
+ * mid-question. Returns [wholeText] when no boundaries are found.
+ */
+function splitTextAtQuestionBoundaries(text) {
+  const patterns = [
+    /(?=(?:^|\n)\s*שאלה\s*\d+)/mu,
+    /(?=(?:^|\n)\s*(?:question|problem|exercise|ex\.?)\s*\d+)/mi,
+    /(?=(?:^|\n)\s*\d+\s*[\.)\]]\s)/m,
+  ];
+  for (const re of patterns) {
+    const parts = text.split(re).map(s => s.trim()).filter(Boolean);
+    if (parts.length > 1) return parts;
+  }
+  return [text.trim()].filter(Boolean);
+}
+
+/**
+ * Group boundary segments into chunks under maxChars. A single oversized
+ * segment becomes its own chunk (handled with continuation flags downstream).
+ */
+function chunkExamText(fullText, { maxChars = CHUNK_TEXT_MAX_CHARS } = {}) {
+  const segments = splitTextAtQuestionBoundaries(fullText);
+  const chunks = [];
+  let cur = '';
+  for (const seg of segments) {
+    if (cur && (cur.length + seg.length + 2) > maxChars) {
+      chunks.push(cur);
+      cur = seg;
+    } else {
+      cur = cur ? `${cur}\n\n${seg}` : seg;
+    }
+  }
+  if (cur) chunks.push(cur);
+  return chunks.length ? chunks : [fullText];
+}
+
+/** Group rendered page images into fixed-size page chunks. */
+function chunkImages(images, { pagesPerChunk = CHUNK_VISION_PAGES_PER } = {}) {
+  const chunks = [];
+  for (let i = 0; i < images.length; i += pagesPerChunk) {
+    chunks.push({ images: images.slice(i, i + pagesPerChunk), startPage: i + 1 });
+  }
+  return chunks;
+}
+
+/** Metadata-only prompt for the cheap page-1 pass. */
+function _buildMetadataPrompt(filenameHint) {
+  const k = _parseFilenameHint(filenameHint);
+  const kl = [];
+  if (k.year) kl.push(`year: ${k.year}`);
+  if (k.semester) kl.push(`semester: "${k.semester}"`);
+  if (k.moed) kl.push(`moed: "${k.moed}"`);
+  const kb = kl.length ? `\n⚠️ פרטים משם הקובץ (אל תשנה אותם): ${kl.join(', ')}` : '';
+  return `אתה מחלץ מטאדאטה מכותרת מבחן אקדמי בעברית.${kb}
+
+חלץ אך ורק את פרטי המבחן מהעמוד הראשון:
+▸ courseName — שם הקורס המלא.
+▸ lecturers — "מרצים:"/"מרצה:" → פצל בפסיקים → הסר תארים → שם פרטי + משפחה בלבד.
+▸ year — 4 ספרות.
+▸ semester — "א"/"ב"/"קיץ"/null.
+▸ moed — "א"/"ב"/"ג"/null.
+
+אל תחלץ שאלות. החזר questions כמערך ריק [].`;
+}
+
+/** Per-chunk extraction prompt: reuses the direct rules + continuation guidance. */
+function _buildChunkPrompt(ctx) {
+  const base = _buildDirectPrompt(ctx.filenameHint || '');
+  const posNote = `\n\n════ קטע ${ctx.chunkIndex}/${ctx.chunkCount} ════
+▸ זהו חלק ממבחן גדול שפוצל לקטעים. חלץ אך ורק את השאלות המופיעות בקטע זה.
+▸ השאלה האחרונה שזוהתה עד כה: ${ctx.lastQuestionNumber || 0}. המשך מספור טבעי מכאן.
+▸ אל תחלץ מטאדאטה בקטע זה (מטופלת בנפרד) — החזר metadata ריק אם צריך.
+▸ אם השאלה הראשונה בקטע היא המשך של שאלה שהתחילה בקטע הקודם — סמן continuesFromPrevious=true.
+▸ אם השאלה האחרונה נחתכת בסוף הקטע וממשיכה לקטע הבא — סמן continuesToNext=true.`;
+  return base + posNote;
+}
+
+/**
+ * Cheap metadata pass over page 1 only (Haiku-first). Never throws — returns
+ * null on failure so the question pipeline still runs.
+ */
+async function extractExamMetadataPass(mode, payload, filenameHint) {
+  try {
+    const promptText = _buildMetadataPrompt(filenameHint);
+    let content;
+    if (mode === 'vision') {
+      if (!payload.length) return null;
+      content = [
+        { type: 'text', text: promptText },
+        { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: payload[0] } },
+      ];
+    } else {
+      content = `${promptText}\n\nטקסט העמוד הראשון:\n${String(payload).slice(0, 3500)}`;
+    }
+    const data = await callClaudeViaEdge([{ role: 'user', content }], {
+      models: METADATA_MODELS,
+      spinnerLabel: '🔎 מזהה פרטי מבחן',
+    });
+    return data.metadata || null;
+  } catch (e) {
+    console.warn('Metadata pass failed:', e.message);
+    return null;
+  }
+}
+
+/** Extract the questions of a single chunk. Returns { questions, model }. */
+async function parseChunk(mode, chunk, ctx) {
+  const prompt = _buildChunkPrompt(ctx) + (ctx.fewShot || '');
+  let content;
+  if (mode === 'vision') {
+    content = [{ type: 'text', text: prompt }];
+    chunk.images.forEach((img, k) => {
+      content.push({ type: 'text', text: `\n=== עמוד ${chunk.startPage + k} ===` });
+      content.push({ type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: img } });
+    });
+  } else {
+    content = `${prompt}\n\nטקסט הקטע:\n${chunk}`;
+  }
+  const data = await callClaudeViaEdge([{ role: 'user', content }], {
+    spinnerLabel: `🤖 מנתח קטע ${ctx.chunkIndex}/${ctx.chunkCount} —`,
+  });
+  return { questions: data.questions || [], model: data.model || null };
+}
+
+/** Join a continued question's tail onto its head without duplicating text. */
+function _joinContinuation(a, b) {
+  const head = String(a || '').trim();
+  const tail = String(b || '').trim();
+  if (!tail) return head;
+  if (!head) return tail;
+  return `${head}\n${tail}`;
+}
+
+const _rawQuestionWeight = (q) =>
+  String(q.text || '').length + JSON.stringify(q.parts || []).length;
+
+/**
+ * Merge per-chunk raw question arrays into one exam (Pass E):
+ *   1. stitch continuesToNext/continuesFromPrevious pairs across chunk edges
+ *   2. dedup adjacent duplicates (same number + overlap, or very high overlap)
+ *   3. renumber when the sequence is missing/non-monotonic/duplicated
+ * Operates on the RAW edge shape; caller feeds the result to _normalizeResult.
+ */
+function mergeExamChunks(chunkQuestionArrays) {
+  const merged = [];
+  chunkQuestionArrays.forEach((qs) => {
+    (qs || []).forEach((rawQ, j) => {
+      if (!rawQ) return;
+      const cand = { ...rawQ };
+      if (j === 0 && cand.continuesFromPrevious && merged.length) {
+        const prev = merged[merged.length - 1];
+        prev.text = _joinContinuation(prev.text, cand.text);
+        prev.parts = [...(prev.parts || []), ...(cand.parts || [])];
+        prev.continuesToNext = cand.continuesToNext === true;
+        return;
+      }
+      merged.push(cand);
+    });
+  });
+
+  // Dedup adjacent overlap (boundary double-reads).
+  const deduped = [];
+  for (const q of merged) {
+    const prev = deduped[deduped.length - 1];
+    if (prev) {
+      const sameNum = q.number != null && prev.number != null &&
+        String(q.number) === String(prev.number);
+      const overlap = _overlapScore(
+        _tokenizeForSimilarity(prev.text || ''),
+        _tokenizeForSimilarity(q.text || ''),
+      );
+      if ((sameNum && overlap > 0.5) || overlap > 0.85) {
+        if (_rawQuestionWeight(q) > _rawQuestionWeight(prev)) {
+          deduped[deduped.length - 1] = q;
+        }
+        continue;
+      }
+    }
+    deduped.push(q);
+  }
+
+  // Renumber if numbers are missing / non-increasing / duplicated.
+  const nums = deduped.map(q => Number(q.number));
+  const needsRenumber = nums.some((n, i) =>
+    !Number.isFinite(n) || (i > 0 && n <= nums[i - 1]));
+  if (needsRenumber) deduped.forEach((q, i) => { q.number = i + 1; });
+
+  return deduped;
+}
+
+/**
+ * Chunked orchestrator. mode='text' (payload=string) or 'vision' (payload=images[]).
+ * Returns { questions, metadata, model } in the same shape as processWithClaude.
+ */
+async function parseExamChunked(mode, payload, parseOpts = {}) {
+  const filenameHint = parseOpts.filenameHint || '';
+  const examples = await getApprovedFewShotExamples({
+    courseId: parseOpts.courseId || '',
+    filenameHint,
+    titleHint: parseOpts.titleHint || '',
+  });
+  const fewShot = buildFewShotPromptBlock(examples);
+
+  const chunks = mode === 'vision'
+    ? chunkImages(payload)
+    : chunkExamText(payload);
+
+  console.log(`🧩 Chunked ${mode} parse: ${chunks.length} chunks`);
+
+  // 1) Cheap metadata pass (page 1 only).
+  const metadata = await extractExamMetadataPass(mode, payload, filenameHint);
+
+  // 2) Per-chunk extraction (sequential — shares one abort controller).
+  const chunkResults = [];
+  let lastQuestionNumber = 0;
+  let lastModel = null;
+  for (let i = 0; i < chunks.length; i++) {
+    const { questions, model } = await parseChunk(mode, chunks[i], {
+      filenameHint,
+      chunkIndex: i + 1,
+      chunkCount: chunks.length,
+      lastQuestionNumber,
+      fewShot,
+    });
+    chunkResults.push(questions);
+    if (model) lastModel = model;
+    const maxNum = questions.reduce(
+      (m, q) => Math.max(m, Number(q.number) || 0), lastQuestionNumber);
+    if (Number.isFinite(maxNum)) lastQuestionNumber = maxNum;
+  }
+
+  // 3) Deterministic merge, then normalize to the internal shape.
+  const mergedRaw = mergeExamChunks(chunkResults);
+  return _normalizeResult({
+    questions: mergedRaw,
+    metadata,
+    model: lastModel ? `${lastModel} (chunked ×${chunks.length})` : `chunked ×${chunks.length}`,
+  });
 }
 
 /* ══════════════════════════════════════════════════════════
