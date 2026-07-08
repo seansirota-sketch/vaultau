@@ -78,6 +78,9 @@ async function loadApiKeys() {
  * @returns {Promise<{questions, metadata, usage, model}>}
  */
 let _parseAbortController = null;
+// Persistent abort flag — survives the gap between sequential callClaudeViaEdge
+// calls in the chunked pipeline where a new AbortController replaces the old one.
+let _parseAbortRequested = false;
 
 const CLAUDE_MODELS_DISPLAY = [
   { id: 'claude-sonnet-4-6',          name: 'Sonnet' },
@@ -86,15 +89,19 @@ const CLAUDE_MODELS_DISPLAY = [
 ];
 
 function abortParsing() {
+  _parseAbortRequested = true;
   if (_parseAbortController) {
     _parseAbortController.abort();
     _parseAbortController = null;
-    toast('⛔ הניתוח בוטל', 'error');
-    hideSpinner();
   }
+  toast('⛔ הניתוח בוטל', 'error');
+  hideSpinner();
 }
 
 async function callClaudeViaEdge(messages, opts = {}) {
+  // Check persistent flag before creating a new controller — catches aborts
+  // requested in the gap between chunk calls.
+  if (_parseAbortRequested) throw new DOMException('Parsing aborted', 'AbortError');
   _parseAbortController = new AbortController();
   const signal = _parseAbortController.signal;
   const idToken = await auth.currentUser?.getIdToken();
@@ -2626,6 +2633,10 @@ async function renderPdfToBase64Images(file, maxPages = 15) {
 async function parsePdfWithSharedPipeline(file, hooks = {}, parseOpts = {}) {
   const { onRenderStart, onVisionStart, onFallbackStart } = hooks;
 
+  // Reset abort flag at the start of each new exam parse so a previous abort
+  // doesn't bleed into the next file (especially important in bulk mode).
+  _parseAbortRequested = false;
+
   // ── Digital-PDF text route ────────────────────────────────
   // A solid text layer parses more reliably and cheaply as text than as Vision.
   // Large digital exams go through the chunked pipeline; small ones use one call.
@@ -2725,9 +2736,11 @@ async function processWithVision(images, filenameHint, opts = {}) {
 }
 
 /**
- * Send exam PDF/text to Claude directly (Opus → Sonnet → Haiku).
+ * Send exam PDF/text to Claude directly (Sonnet → Opus → Haiku).
  */
 async function processWithClaude(text, opts = {}) {
+  // Reset abort flag when starting a fresh parse operation via text/file upload.
+  _parseAbortRequested = false;
   let messages;
   const examples = await getApprovedFewShotExamples({
     courseId: opts.courseId || '',

@@ -385,10 +385,14 @@ const ALLOWED_ORIGINS = [
   'https://vaultau.netlify.app',
   'http://localhost:8888',
 ];
+// Netlify preview deploys have the form https://deploy-preview-N--vaultau.netlify.app
+// or https://branch-name--vaultau.netlify.app — allow all of them.
+const NETLIFY_PREVIEW_RE = /^https:\/\/[a-z0-9-]+--vaultau\.netlify\.app$/;
 
 function corsHeaders(request) {
   const origin = request?.headers?.get('origin') || '';
-  const allowedOrigin = ALLOWED_ORIGINS.includes(origin) ? origin : ALLOWED_ORIGINS[0];
+  const isAllowed = ALLOWED_ORIGINS.includes(origin) || NETLIFY_PREVIEW_RE.test(origin);
+  const allowedOrigin = isAllowed ? origin : ALLOWED_ORIGINS[0];
   return {
     'Access-Control-Allow-Origin':  allowedOrigin,
     'Access-Control-Allow-Headers': 'Content-Type, Authorization',
