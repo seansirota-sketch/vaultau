@@ -1,0 +1,10 @@
+{
+  "name": "popularity-rollup",
+  "version": "1.0.0",
+  "description": "Scheduled: rolls up telemetry_t1 + difficulty_ledger velocity into popularity_stats.",
+  "main": "index.js",
+  "engines": { "node": "20" },
+  "dependencies": {
+    "firebase-admin": "^13.7.0"
+  }
+}

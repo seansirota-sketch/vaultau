@@ -1,5 +1,9 @@
 # VaultAU Documentation Index
 
+## Architecture & Design
+
+- [Telemetry, Crowdsourced Difficulty & Admin/Research Architecture](./architecture-telemetry-difficulty-admin.md) — Dual-tier telemetry boundary, difficulty ledger + aggregation pipeline, security rules contract, UX state machine, admin dashboard & OLAP research export
+
 ## LTI Integration (Phases 2–6)
 
 Complete LTI 1.3 implementation for Moodle integration.

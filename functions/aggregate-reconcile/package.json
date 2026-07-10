@@ -1,0 +1,10 @@
+{
+  "name": "aggregate-reconcile",
+  "version": "1.0.0",
+  "description": "Nightly: full-scan reconcile of difficulty_aggregates from difficulty_ledger to heal any missed trigger.",
+  "main": "index.js",
+  "engines": { "node": "20" },
+  "dependencies": {
+    "firebase-admin": "^13.7.0"
+  }
+}
