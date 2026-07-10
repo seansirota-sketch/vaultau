@@ -1,0 +1,10 @@
+{
+  "name": "admin-dashboard-refresh",
+  "version": "1.0.0",
+  "description": "Scheduled: compute admin_dashboard/overview + admin_dashboard/security projections.",
+  "main": "index.js",
+  "engines": { "node": "20" },
+  "dependencies": {
+    "firebase-admin": "^13.7.0"
+  }
+}

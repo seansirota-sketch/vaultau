@@ -2,11 +2,15 @@
   "scripts": {
     "emulator": "firebase --config firebase.emulator.json emulators:start --import=./emulator-data --export-on-exit=./emulator-data",
     "seed": "node seed/seed.js",
-    "dev": "netlify dev"
+    "dev": "netlify dev",
+    "test:rules": "node --test tests/rules-difficulty-telemetry.test.js"
   },
   "dependencies": {
     "@netlify/blobs": "^8.1.0",
     "@sendgrid/mail": "^8.1.6",
     "firebase-admin": "^13.7.0"
+  },
+  "devDependencies": {
+    "@firebase/rules-unit-testing": "^4.0.1"
   }
 }

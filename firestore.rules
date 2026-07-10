@@ -216,6 +216,126 @@ service cloud.firestore {
       allow read, write: if isAdmin();
     }
 
+    // ────────────────────────────────────────────────────────────────────────
+    // Crowdsourced difficulty — Research Ledger + Aggregates
+    // See docs/architecture-telemetry-difficulty-admin.md §2.5, §2.6, §4.1
+    // ────────────────────────────────────────────────────────────────────────
+
+    // Raw individual ratings. Deterministic doc ID "{itemId}_{uid}" is what
+    // enforces one-vote-per-item — a second create for the same item collides
+    // with the user's own doc and can only be updated by the same user.
+    match /difficulty_ledger/{docId} {
+      allow create: if isLoggedIn()
+        && docId == request.resource.data.itemId + '_' + request.auth.uid
+        && request.resource.data.uid == request.auth.uid
+        && request.resource.data.rating is int
+        && request.resource.data.rating >= 1
+        && request.resource.data.rating <= 5
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.updatedAt == request.time
+        && request.resource.data.itemType in ['exam', 'question']
+        && request.resource.data.keys().hasOnly([
+             'itemId','itemType','examId','questionId','courseId',
+             'uid','rating','prevRating','createdAt','updatedAt','context'])
+        && request.resource.data.keys().hasAll([
+             'itemId','itemType','examId','courseId',
+             'uid','rating','createdAt','updatedAt'])
+        && (
+             !('context' in request.resource.data)
+             || (request.resource.data.context is map
+                 && request.resource.data.context.size() <= 5)
+           );
+
+      allow update: if isLoggedIn()
+        && resource.data.uid == request.auth.uid
+        && request.resource.data.uid == resource.data.uid
+        && request.resource.data.itemId == resource.data.itemId
+        && request.resource.data.itemType == resource.data.itemType
+        && request.resource.data.examId == resource.data.examId
+        && request.resource.data.courseId == resource.data.courseId
+        && request.resource.data.rating is int
+        && request.resource.data.rating >= 1
+        && request.resource.data.rating <= 5
+        && request.resource.data.prevRating == resource.data.rating
+        && request.resource.data.createdAt == resource.data.createdAt
+        && request.resource.data.updatedAt == request.time;
+
+      allow read: if isAdmin()
+        || (isLoggedIn() && resource.data.uid == request.auth.uid);
+      allow delete: if isAdmin();
+    }
+
+    // Client-read, server-write-only. The ONLY difficulty document clients render.
+    match /difficulty_aggregates/{itemId} {
+      allow read: if isLoggedIn();
+      allow write: if false;
+    }
+
+    // ────────────────────────────────────────────────────────────────────────
+    // Dual-tier telemetry — hard boundary
+    // See docs/architecture-telemetry-difficulty-admin.md §2.3, §4.1
+    // ────────────────────────────────────────────────────────────────────────
+
+    // Tier 1: universal, anonymous. Auth required to control abuse, but ANY
+    // identity-carrying key (uid/email/userId) is a hard reject.
+    match /telemetry_t1/{eventId} {
+      allow create: if isLoggedIn()
+        && !request.resource.data.keys().hasAny(['uid','email','userId'])
+        && request.resource.data.timestamp == request.time
+        && request.resource.data.event is string
+        && request.resource.data.event.size() > 0
+        && request.resource.data.event.size() < 100
+        && request.resource.data.payload is map
+        && request.resource.data.payload.size() <= 10
+        && request.resource.data.expiresAt is timestamp
+        && request.resource.data.sessionSalt is string
+        && request.resource.data.sessionSalt.size() >= 16;
+      allow read, list: if isAdmin();
+      allow update, delete: if false;
+    }
+
+    // Tier 2: opt-in behavioural detail. Consent enforced via custom auth
+    // claim (fast path) with user-doc fallback for the token-refresh window.
+    match /telemetry_t2/{eventId} {
+      allow create: if isLoggedIn()
+        && request.resource.data.uid == request.auth.uid
+        && (
+             (request.auth.token.consentT2 != null
+              && request.auth.token.consentT2.v is string
+              && request.resource.data.consentVersion == request.auth.token.consentT2.v)
+             || get(/databases/$(database)/documents/users/$(request.auth.uid)).data.analyticsConsent == true
+           )
+        && request.resource.data.timestamp == request.time
+        && request.resource.data.event is string
+        && request.resource.data.event.size() > 0
+        && request.resource.data.event.size() < 100
+        && request.resource.data.payload is map
+        && request.resource.data.payload.size() <= 20
+        && request.resource.data.expiresAt is timestamp;
+      allow read, list: if isAdmin();
+      allow update, delete: if false;
+    }
+
+    // ────────────────────────────────────────────────────────────────────────
+    // Admin read-view projections & audit log (server-written only)
+    // See docs/architecture-telemetry-difficulty-admin.md §2.7, §2.8
+    // ────────────────────────────────────────────────────────────────────────
+
+    match /popularity_stats/{itemId} {
+      allow read: if isAdmin();
+      allow write: if false;
+    }
+
+    match /admin_dashboard/{docId} {
+      allow read: if isAdmin();
+      allow write: if false;
+    }
+
+    match /audit_log/{eventId} {
+      allow read, list: if isAdmin();
+      allow write: if false;
+    }
+
     // Pre-computed analytics aggregates written by Cloud Function.
     // Admin: full read/write. Instructor: read only.
     match /research_stats/{docId} {

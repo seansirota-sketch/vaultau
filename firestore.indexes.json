@@ -31,7 +31,92 @@
         { "fieldPath": "uid", "order": "ASCENDING" },
         { "fieldPath": "timestamp", "order": "DESCENDING" }
       ]
+    },
+
+    { "collectionGroup": "difficulty_ledger", "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "itemId",    "order": "ASCENDING" },
+        { "fieldPath": "updatedAt", "order": "DESCENDING" }
+      ]
+    },
+    { "collectionGroup": "difficulty_ledger", "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "courseId",  "order": "ASCENDING" },
+        { "fieldPath": "updatedAt", "order": "DESCENDING" }
+      ]
+    },
+    { "collectionGroup": "difficulty_ledger", "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "uid",       "order": "ASCENDING" },
+        { "fieldPath": "updatedAt", "order": "DESCENDING" }
+      ]
+    },
+
+    { "collectionGroup": "difficulty_aggregates", "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "courseId", "order": "ASCENDING" },
+        { "fieldPath": "average",  "order": "DESCENDING" }
+      ]
+    },
+    { "collectionGroup": "difficulty_aggregates", "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "examId",  "order": "ASCENDING" },
+        { "fieldPath": "average", "order": "DESCENDING" }
+      ]
+    },
+
+    { "collectionGroup": "telemetry_t1", "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "event",     "order": "ASCENDING" },
+        { "fieldPath": "timestamp", "order": "DESCENDING" }
+      ]
+    },
+    { "collectionGroup": "telemetry_t1", "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "itemId",    "order": "ASCENDING" },
+        { "fieldPath": "timestamp", "order": "DESCENDING" }
+      ]
+    },
+
+    { "collectionGroup": "telemetry_t2", "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "event",     "order": "ASCENDING" },
+        { "fieldPath": "timestamp", "order": "DESCENDING" }
+      ]
+    },
+    { "collectionGroup": "telemetry_t2", "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "uid",       "order": "ASCENDING" },
+        { "fieldPath": "timestamp", "order": "DESCENDING" }
+      ]
+    },
+
+    { "collectionGroup": "popularity_stats", "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "courseId",        "order": "ASCENDING" },
+        { "fieldPath": "popularityScore", "order": "DESCENDING" }
+      ]
+    },
+
+    { "collectionGroup": "audit_log", "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "action",    "order": "ASCENDING" },
+        { "fieldPath": "timestamp", "order": "DESCENDING" }
+      ]
     }
   ],
-  "fieldOverrides": []
+  "fieldOverrides": [
+    { "collectionGroup": "telemetry_t1", "fieldPath": "expiresAt",
+      "ttl": true,
+      "indexes": [ { "queryScope": "COLLECTION", "order": "ASCENDING" } ]
+    },
+    { "collectionGroup": "telemetry_t2", "fieldPath": "expiresAt",
+      "ttl": true,
+      "indexes": [ { "queryScope": "COLLECTION", "order": "ASCENDING" } ]
+    },
+    { "collectionGroup": "audit_log", "fieldPath": "expiresAt",
+      "ttl": true,
+      "indexes": [ { "queryScope": "COLLECTION", "order": "ASCENDING" } ]
+    }
+  ]
 }
