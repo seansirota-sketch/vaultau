@@ -1633,6 +1633,7 @@ function _applySectionUI(name) {
   if (name === 'survey')      renderSurveyManager();
   if (name === 'reports')     renderReportsSection();
   if (name === 'ai-monitor')  renderAIMonitor();
+  if (name === 'system-monitor') renderSystemMonitor();
   if (name === 'subject-ai')  renderSubjectAiMapperSection();
   if (name === 'broadcast')   renderBroadcastSection();
 }
@@ -6809,6 +6810,202 @@ async function renderAIMonitor() {
   }
 }
 
+/* ══════════════════════════════════════════════════════════════
+   SYSTEM & PRIVACY MONITOR
+   Reads pre-computed projections from admin_dashboard/{overview,security}
+   (written every ~5 min by the admin-dashboard-refresh Cloud Function).
+   The client never aggregates live student data on the fly.
+   ═══════════════════════════════════════════════════════════ */
+
+function _smNum(n) {
+  if (n === null || n === undefined || isNaN(n)) return '—';
+  return Number(n).toLocaleString('he-IL');
+}
+
+function _smStatCard(icon, val, lbl) {
+  return '<div class="stat-card"><div class="stat-val">' + icon + ' ' + val +
+         '</div><div class="stat-lbl">' + esc(lbl) + '</div></div>';
+}
+
+function _smRelTime(ts) {
+  if (!ts) return '—';
+  let ms;
+  if (typeof ts === 'object' && typeof ts.toDate === 'function') ms = ts.toDate().getTime();
+  else if (typeof ts === 'object' && ts.seconds) ms = ts.seconds * 1000;
+  else ms = new Date(ts).getTime();
+  if (isNaN(ms)) return '—';
+  return new Date(ms).toLocaleString('he-IL', { hour:'2-digit', minute:'2-digit', day:'numeric', month:'short' });
+}
+
+async function renderSystemMonitor() {
+  const grid       = document.getElementById('sm-overview-grid');
+  const consentEl  = document.getElementById('sm-consent');
+  const popularEl  = document.getElementById('sm-popular');
+  const problemEl  = document.getElementById('sm-problematic');
+  const securityEl = document.getElementById('sm-security');
+  const collEl     = document.getElementById('sm-collections');
+  const genEl      = document.getElementById('sm-generated');
+
+  if (grid) grid.innerHTML = '<div class="spinner" style="margin:2rem auto"></div>';
+  [consentEl, popularEl, problemEl, securityEl].forEach(el => { if (el) el.innerHTML = ''; });
+
+  // Static reference: where each data category is stored.
+  if (collEl) {
+    collEl.innerHTML =
+      '<table class="tbl" style="width:100%"><thead><tr><th>קטגוריה</th><th>אוסף (Collection)</th><th>גישה</th></tr></thead><tbody>' +
+      '<tr><td>טלמטריה אנונימית (Tier 1)</td><td><code>telemetry_t1</code></td><td>כתיבה בלבד מהלקוח · קריאה: אדמין</td></tr>' +
+      '<tr><td>טלמטריה בהסכמה (Tier 2)</td><td><code>telemetry_t2</code></td><td>דורש טוקן הסכמה · מבודד מ‑Tier 1</td></tr>' +
+      '<tr><td>דירוגי קושי גולמיים</td><td><code>difficulty_ledger</code></td><td>הצבעה אחת למשתמש לפריט</td></tr>' +
+      '<tr><td>אגרגט קושי (נגזר)</td><td><code>difficulty_aggregates</code></td><td>מחושב ע"י Cloud Function</td></tr>' +
+      '<tr><td>מדדי פופולריות</td><td><code>popularity_stats</code></td><td>rollup כל 15 דק׳</td></tr>' +
+      '<tr><td>יומן ביקורת</td><td><code>audit_log</code></td><td>קריאה: אדמין בלבד</td></tr>' +
+      '<tr><td>תמצית דשבורד</td><td><code>admin_dashboard/*</code></td><td>קריאה: אדמין בלבד</td></tr>' +
+      '</tbody></table>' +
+      '<p style="font-size:.8rem;color:var(--muted);margin-top:.75rem">' +
+      'נתונים גולמיים לניתוח אקדמי מיוצאים מדי לילה ל‑BigQuery (עם פסאודונימיזציה) — כדי לא להריץ שאילתות כבדות על ה‑DB התפעולי.</p>';
+  }
+
+  try {
+    const [ovSnap, secSnap] = await Promise.all([
+      db.collection('admin_dashboard').doc('overview').get(),
+      db.collection('admin_dashboard').doc('security').get()
+    ]);
+
+    if (!ovSnap.exists && !secSnap.exists) {
+      if (grid) grid.innerHTML = '';
+      if (genEl) genEl.innerHTML = '';
+      if (consentEl) consentEl.innerHTML =
+        '<div class="empty" style="padding:1.5rem;text-align:center">' +
+        'עדיין אין נתונים באוסף <code>admin_dashboard</code>.<br>' +
+        'פונקציית הרקע <code>admin-dashboard-refresh</code> טרם רצה או שהיא לא פרוסה עדיין. ' +
+        'לאחר הפריסה, התמצית תתעדכן אוטומטית כל ~5 דקות.</div>';
+      return;
+    }
+
+    // ── Overview ──────────────────────────────────────────────
+    const ov = ovSnap.exists ? (ovSnap.data() || {}) : {};
+    const m  = ov.metrics || {};
+
+    if (genEl) {
+      const when = _smRelTime(ov.generatedAt);
+      genEl.innerHTML = ov.generatedAt
+        ? 'עודכן לאחרונה: <strong>' + esc(when) + '</strong>' + (ov.window ? ' · חלון: ' + esc(String(ov.window)) : '')
+        : '';
+    }
+
+    if (grid) {
+      const rate = (m.consentGrantRate !== undefined && m.consentGrantRate !== null)
+        ? (Math.round(m.consentGrantRate * 1000) / 10) + '%'
+        : '—';
+      grid.innerHTML =
+        _smStatCard('🟢', _smNum(m.activeSessions),   'סשנים פעילים') +
+        _smStatCard('⚡', _smNum(m.eventsPerMinAvg),   'אירועים/דקה (ממוצע)') +
+        _smStatCard('👥', _smNum(m.totalUserCount),    'סה"כ משתמשים') +
+        _smStatCard('✅', _smNum(m.t2OptInCount),      'הסכימו ל‑Tier 2') +
+        _smStatCard('📈', rate,                         'שיעור הסכמה');
+    }
+
+    // ── Consent / privacy summary ─────────────────────────────
+    if (consentEl) {
+      const optIn = Number(m.t2OptInCount) || 0;
+      const total = Number(m.totalUserCount) || 0;
+      const optOut = total > optIn ? total - optIn : 0;
+      consentEl.innerHTML =
+        '<div class="stats-grid" style="margin:0">' +
+        _smStatCard('🔓', _smNum(optIn),  'עם הסכמה (Tier 2)') +
+        _smStatCard('🔒', _smNum(optOut), 'ללא הסכמה (Tier 1 בלבד)') +
+        '</div>' +
+        '<p style="font-size:.8rem;color:var(--muted);margin-top:.75rem">' +
+        'נתוני Tier 2 נכתבים רק עם טוקן הסכמה תקף. ביטול הסכמה מפעיל מחיקה אוטומטית של <code>telemetry_t2</code> ורישום ב‑<code>audit_log</code>.</p>';
+    }
+
+    // ── Popular items ─────────────────────────────────────────
+    if (popularEl) {
+      const rows = Array.isArray(m.topExams) ? m.topExams : [];
+      if (!rows.length) {
+        popularEl.innerHTML = '<div class="empty" style="padding:1.5rem">אין נתוני פופולריות עדיין.</div>';
+      } else {
+        popularEl.innerHTML =
+          '<table class="tbl" style="width:100%"><thead><tr><th>פריט</th><th>ציון</th><th>צפיות</th></tr></thead><tbody>' +
+          rows.map(r => '<tr><td style="font-size:.82rem">' + esc(r.title || r.itemId || r.id || '—') +
+            '</td><td>' + _smNum(r.score ?? r.popularityScore) +
+            '</td><td>' + _smNum(r.views) + '</td></tr>').join('') +
+          '</tbody></table>';
+      }
+    }
+
+    // ── Problematic items ─────────────────────────────────────
+    if (problemEl) {
+      const rows = Array.isArray(m.topProblematic) ? m.topProblematic : [];
+      if (!rows.length) {
+        problemEl.innerHTML = '<div class="empty" style="padding:1.5rem">אין פריטים בעייתיים כרגע.</div>';
+      } else {
+        problemEl.innerHTML =
+          '<table class="tbl" style="width:100%"><thead><tr><th>פריט</th><th>קושי</th><th>הצבעות</th></tr></thead><tbody>' +
+          rows.map(r => '<tr><td style="font-size:.82rem">' + esc(r.title || r.itemId || r.id || '—') +
+            '</td><td>' + (r.avgDifficulty != null ? (Math.round(r.avgDifficulty * 10) / 10) : '—') +
+            '</td><td>' + _smNum(r.count ?? r.voteCount) + '</td></tr>').join('') +
+          '</tbody></table>';
+      }
+    }
+
+    // ── Anomalies (optional) ──────────────────────────────────
+    const anomalies = Array.isArray(m.anomalies) ? m.anomalies : [];
+
+    // ── Security / audit ──────────────────────────────────────
+    if (securityEl) {
+      const sec = secSnap.exists ? (secSnap.data() || {}) : {};
+      const sm  = sec.metrics || {};
+      let html = '';
+
+      const denied = Number(sm.deniedT2WriteCount) || 0;
+      html += '<div class="stats-grid" style="margin:0 0 1rem">' +
+        _smStatCard(denied > 0 ? '🚫' : '✅', _smNum(denied), 'ניסיונות כתיבת Tier 2 שנחסמו') +
+        _smStatCard('📝', _smNum(anomalies.length), 'אנומליות שזוהו') +
+        '</div>';
+
+      const byAction = sm.auditEventsByAction || {};
+      const actionKeys = Object.keys(byAction);
+      if (actionKeys.length) {
+        html += '<div class="ac-title" style="margin-top:.5rem">אירועי ביקורת לפי פעולה</div>' +
+          '<table class="tbl" style="width:100%"><thead><tr><th>פעולה</th><th>כמות</th></tr></thead><tbody>' +
+          actionKeys.sort((a,b) => (byAction[b]||0)-(byAction[a]||0))
+            .map(k => '<tr><td>' + esc(k) + '</td><td>' + _smNum(byAction[k]) + '</td></tr>').join('') +
+          '</tbody></table>';
+      }
+
+      const consentEv = Array.isArray(sm.consentEventsRecent) ? sm.consentEventsRecent : [];
+      if (consentEv.length) {
+        html += '<div class="ac-title" style="margin-top:1rem">שינויי הסכמה אחרונים</div>' +
+          '<table class="tbl" style="width:100%"><thead><tr><th>זמן</th><th>פעולה</th><th>משתמש</th></tr></thead><tbody>' +
+          consentEv.slice(0, 15).map(ev => '<tr><td style="font-size:.8rem;white-space:nowrap">' + esc(_smRelTime(ev.at || ev.timestamp)) +
+            '</td><td>' + esc(ev.action || (ev.granted ? 'grant' : 'revoke')) +
+            '</td><td style="font-size:.8rem">' + esc((ev.uid || '').slice(0, 8) + (ev.uid ? '…' : '—')) + '</td></tr>').join('') +
+          '</tbody></table>';
+      }
+
+      const roleEv = Array.isArray(sm.roleChangesRecent) ? sm.roleChangesRecent : [];
+      if (roleEv.length) {
+        html += '<div class="ac-title" style="margin-top:1rem">שינויי הרשאות אחרונים</div>' +
+          '<table class="tbl" style="width:100%"><thead><tr><th>זמן</th><th>שינוי</th><th>משתמש</th></tr></thead><tbody>' +
+          roleEv.slice(0, 15).map(ev => '<tr><td style="font-size:.8rem;white-space:nowrap">' + esc(_smRelTime(ev.at || ev.timestamp)) +
+            '</td><td>' + esc((ev.from || '?') + ' → ' + (ev.to || '?')) +
+            '</td><td style="font-size:.8rem">' + esc((ev.uid || '').slice(0, 8) + (ev.uid ? '…' : '—')) + '</td></tr>').join('') +
+          '</tbody></table>';
+      }
+
+      if (!html) html = '<div class="empty" style="padding:1.5rem">אין אירועי אבטחה להצגה.</div>';
+      securityEl.innerHTML = html;
+    }
+
+  } catch (e) {
+    console.error('System Monitor error:', e);
+    if (grid) grid.innerHTML = '';
+    if (consentEl) consentEl.innerHTML =
+      '<div style="color:#dc2626;padding:1rem">שגיאה בטעינה: ' + esc(e.message) +
+      (/(permission|insufficient)/i.test(e.message || '') ? ' — ודא שאתה מחובר כמנהל.' : '') + '</div>';
+  }
+}
 
 async function _loadReportsBadge() {
   try {

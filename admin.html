@@ -180,6 +180,10 @@
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2a4 4 0 0 1 4 4c0 1.95-2 3-2 8h-4c0-5-2-6.05-2-8a4 4 0 0 1 4-4z"/><line x1="10" y1="17" x2="14" y2="17"/><line x1="10" y1="20" x2="14" y2="20"/><line x1="11" y1="23" x2="13" y2="23"/></svg>
           ניטור AI
         </a>
+        <a id="nav-system-monitor" onclick="showSection('system-monitor')">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3v18h18"/><path d="M18.7 8l-5.1 5.2-2.8-2.7L7 14"/></svg>
+          ניטור מערכת ופרטיות
+        </a>
         <a id="nav-broadcast" onclick="showSection('broadcast')">
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 11l18-8v18l-18-8z"/><path d="M11.6 16.8a3 3 0 1 1-5.8-1.6"/></svg>
           הודעות שידור
@@ -816,6 +820,53 @@
             <div class="ac-title">👥 משתמשים מובילים (היום)</div>
             <div id="ai-top-users" style="padding:1rem"></div>
           </div>
+        </div>
+      </div>
+
+      <!-- ── SYSTEM & PRIVACY MONITOR ───────────────────────── -->
+      <div class="adm-section" id="sec-system-monitor">
+        <div class="sec-header">
+          <h2 class="sec-title">📊 ניטור מערכת ופרטיות</h2>
+          <button class="btn btn-secondary btn-sm" onclick="renderSystemMonitor()">🔄 רענן</button>
+        </div>
+
+        <p style="font-size:.83rem;color:var(--muted);margin:-.5rem 0 1rem">
+          נתונים מחושבים מראש על ידי פונקציות רקע (Cloud Functions) ונשמרים באוסף
+          <code>admin_dashboard</code>. הדשבורד קורא אותם ישירות — ללא שאילתות כבדות על נתוני הסטודנטים החיים.
+          <span id="sm-generated" style="display:block;margin-top:.25rem"></span>
+        </p>
+
+        <!-- Overview KPIs -->
+        <div class="stats-grid" id="sm-overview-grid"></div>
+
+        <!-- Consent / privacy summary -->
+        <div class="ac">
+          <div class="ac-title">🔒 הסכמה לאיסוף נתונים (Tier 2)</div>
+          <div id="sm-consent" style="padding:1.25rem"></div>
+        </div>
+
+        <!-- Two-column: popular + problematic -->
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:1rem;margin-bottom:1.5rem" id="sm-panels-row">
+          <div class="ac" style="margin-bottom:0">
+            <div class="ac-title">🔥 מבחנים/שאלות פופולריים</div>
+            <div id="sm-popular" style="overflow-x:auto;max-height:420px;overflow-y:auto"></div>
+          </div>
+          <div class="ac" style="margin-bottom:0">
+            <div class="ac-title">⚠️ בשימוש גבוה + קושי גבוה</div>
+            <div id="sm-problematic" style="overflow-x:auto;max-height:420px;overflow-y:auto"></div>
+          </div>
+        </div>
+
+        <!-- Security / audit -->
+        <div class="ac">
+          <div class="ac-title">🛡️ אבטחה ויומן ביקורת (24 שעות)</div>
+          <div id="sm-security" style="padding:1.25rem"></div>
+        </div>
+
+        <!-- Where the data lives -->
+        <div class="ac">
+          <div class="ac-title">🗂️ היכן נשמרים הנתונים</div>
+          <div id="sm-collections" style="padding:1.25rem"></div>
         </div>
       </div>
 

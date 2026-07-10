@@ -560,11 +560,20 @@ Rules tests: 14/14 passing against the Firestore emulator
   `views7d`/`views30d` as the last-window figures rather than a true
   rolling 7d/30d. A follow-up pass should add windowed sub-jobs
   (or compute in BigQuery and mirror the result back).
-- **UI wiring deferred.** `telemetry.js` and `difficulty-widget.js`
+- **Exam-UI wiring deferred.** `telemetry.js` and `difficulty-widget.js`
   ship as standalone modules that can be imported from `course.js`.
-  Wiring them into the existing exam UI, and freezing the legacy
+  Wiring them into the *student* exam UI, and freezing the legacy
   `questionVotes` write path, are the next PR — kept out of this one
   to keep the diff reviewable.
+- **Admin dashboard UI (wired).** The admin panel now includes a
+  "ניטור מערכת ופרטיות" (System & Privacy Monitor) section
+  (`sec-system-monitor` in `admin.html`, `renderSystemMonitor()` in
+  `admin.js`). It reads the pre-computed `admin_dashboard/overview` and
+  `admin_dashboard/security` projections directly (no live aggregation
+  on the client) and renders KPIs, consent/privacy summary, popular vs.
+  problematic items, and the security/audit rollup. When the projection
+  docs don't exist yet (function not deployed), it shows a friendly
+  Hebrew placeholder.
 - **BigQuery/GCS infrastructure.** `research-export` and the OLAP
   boundary require a `vaultau_research` BigQuery dataset, a GCS
   bucket, IAM bindings, and the `RESEARCH_SALT` secret. These are
