@@ -6837,6 +6837,80 @@ function _smRelTime(ts) {
   return new Date(ms).toLocaleString('he-IL', { hour:'2-digit', minute:'2-digit', day:'numeric', month:'short' });
 }
 
+/* Seed admin_dashboard collection with sample data (for testing) */
+async function runAdminDashboardSeed() {
+  const statusEl = document.getElementById('seed-status');
+  const btn = event.target;
+  
+  try {
+    btn.disabled = true;
+    statusEl.style.display = 'block';
+    statusEl.innerHTML = '⏳ Creating overview...';
+
+    const overviewData = {
+      generatedAt: new Date(),
+      window: '5m',
+      metrics: {
+        activeSessions: 12,
+        eventsPerMinAvg: 45.3,
+        totalUserCount: 247,
+        t2OptInCount: 89,
+        consentGrantRate: 0.36,
+        topExams: [
+          { itemId: 'exam:101', title: 'Math Exam 1', views: 1240, score: 9.8 },
+          { itemId: 'exam:102', title: 'Physics Exam 2', views: 890, score: 8.5 },
+        ],
+        topProblematic: [
+          { itemId: 'exam:201', title: 'Math Practice 5', avgDifficulty: 4.6, count: 230 },
+        ],
+        anomalies: [],
+      },
+    };
+
+    await db.collection('admin_dashboard').doc('overview').set(overviewData);
+    statusEl.innerHTML = '✓ Overview created. ⏳ Creating security...';
+
+    const securityData = {
+      generatedAt: new Date(),
+      metrics: {
+        deniedT2WriteCount: 2,
+        auditEventsByAction: {
+          'consent:grant': 5,
+          'consent:revoke': 1,
+          'telemetry_t2:write_denied': 2,
+        },
+        consentEventsRecent: [
+          { uid: 'user_001xxx', action: 'grant', at: new Date(Date.now() - 3600000) },
+          { uid: 'user_002xxx', action: 'revoke', at: new Date(Date.now() - 7200000) },
+        ],
+        roleChangesRecent: [
+          { uid: 'user_003xxx', from: 'student', to: 'instructor', at: new Date(Date.now() - 10800000) },
+        ],
+      },
+    };
+
+    await db.collection('admin_dashboard').doc('security').set(securityData);
+
+    statusEl.innerHTML = '✓ Both docs created. Refreshing dashboard...';
+    
+    // Refresh the dashboard if it's currently displayed
+    if (document.getElementById('sec-system-monitor')?.classList.contains('active')) {
+      await renderSystemMonitor();
+    }
+
+    statusEl.innerHTML = '✅ Seeded! Go to "ניטור מערכת ופרטיות" to see the dashboard.';
+    setTimeout(() => {
+      statusEl.style.display = 'none';
+      btn.disabled = false;
+    }, 5000);
+
+  } catch (error) {
+    statusEl.innerHTML = '❌ ' + (error.message || String(error));
+    console.error('Seed error:', error);
+    btn.disabled = false;
+  }
+}
+
 async function renderSystemMonitor() {
   const grid       = document.getElementById('sm-overview-grid');
   const consentEl  = document.getElementById('sm-consent');
