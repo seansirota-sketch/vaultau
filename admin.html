@@ -451,31 +451,60 @@
           <h2 class="sec-title">שיוך נושאים אוטומטי (AI)</h2>
           <button class="btn btn-secondary btn-sm" onclick="renderSubjectAiMapperSection()">רענן</button>
         </div>
+
+        <!-- Card 1: Course selection -->
         <div class="ac">
-          <div class="ac-title">בחירת קורס ורשימת נושאים</div>
-          <div style="padding:1.25rem;display:flex;flex-direction:column;gap:1rem">
+          <div class="ac-title">קורס יעד</div>
+          <div style="padding:1.25rem">
             <div class="form-group" style="margin:0;max-width:360px">
-              <label>קורס יעד</label>
-              <select id="asm-course">
+              <label>קורס</label>
+              <select id="asm-course" onchange="onAsmCourseChange()">
                 <option value="">-- בחר קורס --</option>
               </select>
             </div>
-            <div class="form-group" style="margin:0">
-              <label>רשימת נושאים אפשריים (כל שורה = נושא)</label>
-              <textarea id="asm-subjects" rows="8" placeholder="אינטגרלים&#10;טורים&#10;משוואות דיפרנציאליות"></textarea>
-              <small style="color:var(--muted)">AI יבחר רק מתוך הרשימה הזאת. אם אין התאמה, הנושא יישאר ריק.</small>
+          </div>
+        </div>
+
+        <!-- Card 2: Topic management (loaded from Firestore) -->
+        <div class="ac">
+          <div class="ac-title">נושאי הקורס</div>
+          <div style="padding:1.25rem;display:flex;flex-direction:column;gap:1rem">
+            <div id="asm-topics-list" style="display:flex;flex-wrap:wrap;gap:.5rem;min-height:2.5rem;padding:.65rem;border:1.5px solid var(--border,#e5e7eb);border-radius:8px;background:var(--bg-soft,#f9fafb)">
+              <span style="color:var(--muted);font-size:.88rem">בחר קורס כדי לטעון נושאים</span>
             </div>
+            <div style="display:flex;gap:.5rem;align-items:center;flex-wrap:wrap">
+              <input id="asm-new-topic-name" type="text" placeholder="שם נושא חדש" style="max-width:260px" onkeydown="if(event.key==='Enter')addAsmTopic()">
+              <button class="btn btn-secondary btn-sm" onclick="addAsmTopic()">+ הוסף נושא</button>
+            </div>
+            <details>
+              <summary style="cursor:pointer;font-size:.88rem;color:var(--muted)">ייבוא נושאים מטקסט (כל שורה = נושא)</summary>
+              <div style="margin-top:.75rem;display:flex;flex-direction:column;gap:.5rem">
+                <textarea id="asm-import-text" rows="5" placeholder="אינטגרלים&#10;טורים&#10;נגזרות&#10;משוואות דיפרנציאליות"></textarea>
+                <button class="btn btn-secondary btn-sm" style="align-self:flex-end" onclick="importAsmTopicsFromText()">ייבא נושאים</button>
+              </div>
+            </details>
+          </div>
+        </div>
+
+        <!-- Card 3: Run categorization -->
+        <div class="ac">
+          <div class="ac-title">הרצת שיוך</div>
+          <div style="padding:1.25rem;display:flex;flex-direction:column;gap:1rem">
             <label style="display:flex;gap:.55rem;align-items:flex-start;font-size:.9rem;color:var(--text);cursor:pointer">
               <input id="asm-reset-first" type="checkbox" style="margin-top:.2rem">
-              <span>מחק שיוכים קיימים לפני הריצה והרץ AI מחדש על כל השאלות</span>
+              <span>אפס שיוכים קיימים לפני ריצה (מריץ AI מחדש גם על שאלות שכבר סווגו)</span>
             </label>
-            <div style="display:flex;gap:.75rem;justify-content:flex-end">
+            <div style="display:flex;gap:.75rem;justify-content:flex-end;flex-wrap:wrap">
+              <button class="btn btn-secondary btn-sm" onclick="resetCourseTopicsUI('assignments')" title="מוחק את כל שיוכי הנושאים לקורס — הנושאים עצמם נשארים">🗑️ אפס שיוכים</button>
+              <button class="btn btn-secondary btn-sm" onclick="resetCourseTopicsUI('assignments_and_topics')" title="מוחק גם את רשימת הנושאים וגם את כל השיוכים">🗑️ אפס הכל</button>
               <button id="asm-stop-btn" class="btn btn-danger" style="display:none" onclick="stopSubjectAiMapper()">עצור</button>
               <button id="asm-start-btn" class="btn btn-primary" onclick="runSubjectAiMapper()">התחל שיוך אוטומטי</button>
             </div>
             <div id="asm-status" style="font-size:.9rem;color:var(--muted)"></div>
           </div>
         </div>
+
+        <!-- Card 4: Log -->
         <div class="ac">
           <div class="ac-title">יומן ריצה</div>
           <div id="asm-log" style="padding:1rem 1.25rem;max-height:340px;overflow-y:auto;display:flex;flex-direction:column;gap:.35rem;font-size:.84rem"></div>
