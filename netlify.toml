@@ -39,3 +39,7 @@
 [[edge_functions]]
   path = "/api/parse-exam"
   function = "parse-exam"
+
+[[edge_functions]]
+  path = "/api/categorize-question"
+  function = "categorize-question"
