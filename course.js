@@ -71,6 +71,35 @@ function normalizeQuestionSubject(raw) {
     .replace(/\s+/g, ' ');
 }
 
+// Map of topicId → display name for the current course, populated by
+// loadCourseTopicNames(). Empty until loaded; all lookups fall back safely.
+const TOPIC_NAMES = {};
+
+async function loadCourseTopicNames(courseId) {
+  if (!courseId) return;
+  try {
+    const snap = await db.collection('courses').doc(courseId).collection('topics').get();
+    Object.keys(TOPIC_NAMES).forEach(k => delete TOPIC_NAMES[k]);
+    snap.forEach(d => { TOPIC_NAMES[d.id] = (d.data().name || d.id); });
+  } catch (_e) { /* non-fatal: legacy `subject` remains the fallback */ }
+}
+
+// Resolve a display subject/topic for a question using the new topic cache
+// (topicIds → names) first, falling back to the legacy `subject`/`topic`.
+function effectiveQuestionSubject(q) {
+  const ids = (typeof effectiveQuestionTopics === 'function')
+    ? effectiveQuestionTopics(q) : [];
+  if (ids.length) return normalizeQuestionSubject(TOPIC_NAMES[ids[0]] || ids[0]);
+  return normalizeQuestionSubject(q.subject || q.topic || '');
+}
+
+function effectiveClauseSubject(s, q) {
+  const ids = (typeof effectiveClauseTopics === 'function')
+    ? effectiveClauseTopics(s, q) : [];
+  if (ids.length) return normalizeQuestionSubject(TOPIC_NAMES[ids[0]] || ids[0]);
+  return normalizeQuestionSubject(s.subject || s.topic || '');
+}
+
 function normalizeSubLabel(raw, fallbackIndex = 0) {
   const heLetters = ['א','ב','ג','ד','ה','ו','ז','ח','ט','י','כ','ל'];
   const fallback = heLetters[fallbackIndex] || String(fallbackIndex + 1);
@@ -3098,6 +3127,10 @@ async function renderCourse() {
     STATE.exams[STATE.courseId] = await fetchExamsForCourse(STATE.courseId);
     const exams = STATE.exams[STATE.courseId];
 
+    // Load the course's canonical topic names (id → display name) so cached
+    // topicIds render as Hebrew names. Non-fatal: falls back to legacy `subject`.
+    await loadCourseTopicNames(STATE.courseId);
+
     // Use cached userData, only fetch if missing
     if (!STATE.userData) {
       STATE.userData = await fetchUserData(STATE.fireUser.uid, STATE.fireUser.email);
@@ -3888,10 +3921,10 @@ function renderQuestionCard(q, qi, starred, userVotes = {}, videoMap = {}, isAdm
   const subs       = q.subs || q.parts || [];
   const hasSubs    = subs.length > 0;
   const qText      = q.text || '';
-  const subject    = normalizeQuestionSubject(q.subject || '');
+  const subject    = effectiveQuestionSubject(q);
   const subjectTags = [...new Set([
     subject,
-    ...subs.map(s => normalizeQuestionSubject(s.subject || s.topic || '')),
+    ...subs.map(s => effectiveClauseSubject(s, q)),
   ].filter(Boolean))];
   const qImage     = safeUrl(q.imageUrl || '');
   const qAlign     = normalizeImageAlign(q.imageAlign || 'center');
@@ -4006,7 +4039,7 @@ function collectCourseSubjectEntries(exams) {
     (exam.questions || []).forEach((q, qi) => {
       const entryMap = new Map();
       const examTitle = exam.title || exam.id || '';
-      const stemSubject = normalizeQuestionSubject(q.subject || q.topic || '');
+      const stemSubject = effectiveQuestionSubject(q);
       if (stemSubject) {
         entryMap.set(stemSubject, {
           exam,
@@ -4019,7 +4052,7 @@ function collectCourseSubjectEntries(exams) {
       }
 
       (q.subs || q.parts || []).forEach((s, si) => {
-        const subject = normalizeQuestionSubject(s.subject || s.topic || '');
+        const subject = effectiveClauseSubject(s, q);
         if (!subject) return;
         const label = normalizeSubLabel(s.label || s.letter || '', si);
         if (!entryMap.has(subject)) {

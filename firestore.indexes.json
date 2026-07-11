@@ -103,6 +103,25 @@
         { "fieldPath": "action",    "order": "ASCENDING" },
         { "fieldPath": "timestamp", "order": "DESCENDING" }
       ]
+    },
+
+    { "collectionGroup": "topic_assignments", "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "courseId",  "order": "ASCENDING" },
+        { "fieldPath": "updatedAt", "order": "DESCENDING" }
+      ]
+    },
+    { "collectionGroup": "topic_assignments", "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "courseId", "order": "ASCENDING" },
+        { "fieldPath": "topicIds", "arrayConfig": "CONTAINS" }
+      ]
+    },
+    { "collectionGroup": "topic_assignments", "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "examId",     "order": "ASCENDING" },
+        { "fieldPath": "questionId", "order": "ASCENDING" }
+      ]
     }
   ],
   "fieldOverrides": [

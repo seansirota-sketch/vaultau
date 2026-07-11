@@ -14,6 +14,24 @@ service cloud.firestore {
     match /courses/{courseId} {
       allow read: if isLoggedIn();
       allow write: if isAdmin();
+
+      // Canonical, course-scoped topic taxonomy. Students read (to render topic
+      // filters), only admins curate. Reset wipes this subcollection.
+      match /topics/{topicId} {
+        allow read: if isLoggedIn();
+        allow write: if isAdmin();
+      }
+    }
+
+    // Hierarchical topic categorization of questions / clauses (סעיפים).
+    // One doc per assignment target with a deterministic id:
+    //   "{examId}__{questionId}"              → question-level  (scope 'question')
+    //   "{examId}__{questionId}__{clauseId}"  → clause-level    (scope 'clause')
+    // The either/or invariant (never both scopes for one question) is enforced
+    // by the admin write path in a single batch — rules can't span docs.
+    match /topic_assignments/{assignmentId} {
+      allow read: if isLoggedIn();
+      allow write: if isAdmin();
     }
 
     match /exams/{examId} {

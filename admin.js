@@ -976,9 +976,114 @@ function _clearExamSubjectAssignments(exam) {
 function renderSubjectAiMapperSection() {
   const log = document.getElementById('asm-log');
   if (log && !log.children.length) {
-    log.innerHTML = '<div style="color:var(--muted)">בחר קורס והזן רשימת נושאים כדי להתחיל שיוך.</div>';
+    log.innerHTML = '<div style="color:var(--muted)">בחר קורס כדי להתחיל שיוך.</div>';
   }
   _setSubjectAiStatus(_subjectAiMapperState.running ? 'שיוך נושאים רץ...' : 'מוכן לשיוך נושאים');
+  const courseId = document.getElementById('asm-course')?.value || '';
+  if (courseId) _loadAsmTopics(courseId);
+}
+
+// Fires when the course dropdown changes — load that course's topics from Firestore.
+async function onAsmCourseChange() {
+  const courseId = document.getElementById('asm-course')?.value || '';
+  const container = document.getElementById('asm-topics-list');
+  if (!container) return;
+  if (!courseId) {
+    container.innerHTML = '<span style="color:var(--muted);font-size:.88rem">בחר קורס כדי לטעון נושאים</span>';
+    return;
+  }
+  await _loadAsmTopics(courseId);
+}
+
+async function _loadAsmTopics(courseId) {
+  const container = document.getElementById('asm-topics-list');
+  if (!container) return;
+  container.innerHTML = '<span style="color:var(--muted);font-size:.88rem">טוען נושאים...</span>';
+  try {
+    const topics = await TopicCategorization.fetchCourseTopics(courseId);
+    _renderAsmTopicPills(courseId, topics);
+  } catch (e) {
+    container.innerHTML = `<span style="color:#b91c1c;font-size:.88rem">שגיאה בטעינת נושאים: ${esc(e.message)}</span>`;
+  }
+}
+
+function _renderAsmTopicPills(courseId, topics) {
+  const container = document.getElementById('asm-topics-list');
+  if (!container) return;
+  if (!topics.length) {
+    container.innerHTML = '<span style="color:var(--muted);font-size:.88rem">אין נושאים — הוסף נושאים למטה</span>';
+    return;
+  }
+  container.innerHTML = topics.map(t => `
+    <span style="display:inline-flex;align-items:center;gap:.35rem;background:var(--primary-light,#dbeafe);color:var(--primary,#1d4ed8);border-radius:999px;padding:.2rem .75rem;font-size:.84rem;font-weight:500">
+      ${esc(t.name)}
+      <button onclick="deleteAsmTopic('${esc(courseId)}','${esc(t.id)}')"
+              style="background:none;border:none;cursor:pointer;color:inherit;padding:0;line-height:1;font-size:.95rem"
+              title="מחק נושא ${esc(t.name)}">×</button>
+    </span>`).join('');
+}
+
+async function addAsmTopic() {
+  const courseId = document.getElementById('asm-course')?.value || '';
+  if (!courseId) { toast('יש לבחור קורס תחילה', 'error'); return; }
+  const input = document.getElementById('asm-new-topic-name');
+  const name = (input?.value || '').trim();
+  if (!name) { toast('יש להזין שם נושא', 'error'); return; }
+  try {
+    await TopicCategorization.upsertTopic(courseId, { name });
+    if (input) input.value = '';
+    await _loadAsmTopics(courseId);
+    toast(`נושא "${name}" נוסף`, 'success');
+  } catch (e) {
+    toast('שגיאה בהוספת נושא: ' + e.message, 'error');
+  }
+}
+
+async function deleteAsmTopic(courseId, topicId) {
+  if (!confirm(`למחוק את הנושא "${topicId}"?`)) return;
+  try {
+    await TopicCategorization.deleteTopic(courseId, topicId);
+    await _loadAsmTopics(courseId);
+    toast('נושא נמחק', 'success');
+  } catch (e) {
+    toast('שגיאה במחיקת נושא: ' + e.message, 'error');
+  }
+}
+
+async function importAsmTopicsFromText() {
+  const courseId = document.getElementById('asm-course')?.value || '';
+  if (!courseId) { toast('יש לבחור קורס תחילה', 'error'); return; }
+  const raw = document.getElementById('asm-import-text')?.value || '';
+  const names = [...new Set(raw.split(/\r?\n/).map(s => s.trim()).filter(Boolean))];
+  if (!names.length) { toast('יש להזין לפחות נושא אחד', 'error'); return; }
+  let added = 0;
+  for (const name of names) {
+    try { await TopicCategorization.upsertTopic(courseId, { name }); added++; }
+    catch (e) { console.warn('upsertTopic failed for', name, e.message); }
+  }
+  const el = document.getElementById('asm-import-text');
+  if (el) el.value = '';
+  await _loadAsmTopics(courseId);
+  toast(`יובאו ${added} נושאים`, 'success');
+}
+
+async function resetCourseTopicsUI(mode) {
+  const courseId = document.getElementById('asm-course')?.value || '';
+  if (!courseId) { toast('יש לבחור קורס תחילה', 'error'); return; }
+  const label = mode === 'assignments_and_topics' ? 'שיוכים ונושאים' : 'שיוכים';
+  const confirmed = prompt(`למחוק את כל ה${label} של הקורס?\nהקלד את מזהה הקורס לאישור: "${courseId}"`);
+  if (confirmed !== courseId) { toast('איפוס בוטל', ''); return; }
+  try {
+    _setSubjectAiStatus('מאפס...');
+    const result = await TopicCategorization.resetCourseTopics(courseId, mode);
+    _logSubjectAi(`🗑️ איפוס הושלם: ${result.deletedAssignments} שיוכים, ${result.deletedTopics} נושאים`, 'success');
+    _setSubjectAiStatus('איפוס הושלם');
+    await _loadAsmTopics(courseId);
+    toast('איפוס הושלם', 'success');
+  } catch (e) {
+    toast('שגיאה באיפוס: ' + e.message, 'error');
+    _setSubjectAiStatus('שגיאה באיפוס', true);
+  }
 }
 
 function stopSubjectAiMapper() {
@@ -992,17 +1097,9 @@ async function runSubjectAiMapper() {
   if (_subjectAiMapperState.running) return;
   const courseId = document.getElementById('asm-course')?.value || '';
   const courseName = document.getElementById('asm-course')?.selectedOptions?.[0]?.textContent?.trim() || '';
-  const subjects = _parseSubjectList(document.getElementById('asm-subjects')?.value || '');
-  const resetBeforeRun = document.getElementById('asm-reset-first')?.checked === true;
-  if (!courseId) {
-    toast('יש לבחור קורס יעד', 'error');
-    return;
-  }
-  if (!subjects.length) {
-    toast('יש להזין לפחות נושא אחד ברשימה', 'error');
-    return;
-  }
+  if (!courseId) { toast('יש לבחור קורס יעד', 'error'); return; }
 
+  const overrideManual = document.getElementById('asm-reset-first')?.checked === true;
   const startBtn = document.getElementById('asm-start-btn');
   const stopBtn = document.getElementById('asm-stop-btn');
   _subjectAiMapperState.running = true;
@@ -1013,74 +1110,46 @@ async function runSubjectAiMapper() {
   _logSubjectAi(`🚀 התחלת שיוך נושאים עם AI עבור הקורס: ${courseName || courseId}`);
 
   let updatedExams = 0;
-  let touchedFields = 0;
+  let reviewCount = 0;
   try {
     const snap = await db.collection('exams').where('courseId', '==', courseId).get();
     const exams = snap.docs.map(d => ({ id: d.id, ...d.data() }));
     _logSubjectAi(`ℹ️ נמצאו ${exams.length} מבחנים בקורס`);
-    if (resetBeforeRun) {
-      _setSubjectAiStatus('מוחק שיוכים קיימים לפני ריצה...');
-      _logSubjectAi('🧹 מוחק שיוכים קיימים ומריץ AI מחדש על כל השאלות');
-      let clearedExams = 0;
-      let clearedFields = 0;
-      for (let i = 0; i < exams.length; i++) {
-        if (_subjectAiMapperState.stopRequested) break;
-        const exam = exams[i];
-        const cleared = _clearExamSubjectAssignments(exam);
-        if (cleared > 0) {
-          await db.collection('exams').doc(exam.id).set({
-            questions: exam.questions || [],
-            updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
-          }, { merge: true });
-          clearedExams++;
-          clearedFields += cleared;
-        }
-      }
-      _logSubjectAi(`🧹 נמחקו שיוכים ב-${clearedExams} מבחנים (${clearedFields} שדות)`);
-    }
+
     for (let i = 0; i < exams.length; i++) {
       if (_subjectAiMapperState.stopRequested) break;
       const exam = exams[i];
-      const questions = Array.isArray(exam.questions) ? exam.questions : [];
-      if (!questions.length) {
+      if (!Array.isArray(exam.questions) || !exam.questions.length) {
         _logSubjectAi(`⏭️ דילוג על מבחן "${exam.title || exam.id}" — אין שאלות`);
         continue;
       }
-
-      const items = _collectSubjectItemsForExam(exam);
-      if (!items.length) {
-        _logSubjectAi(`⏭️ דילוג על מבחן "${exam.title || exam.id}" — אין טקסט לסיווג`);
-        continue;
-      }
-
       _setSubjectAiStatus(`מעבד מבחן ${i + 1}/${exams.length}: ${exam.title || exam.id}`);
-      const assignments = await _classifyExamSubjectsWithAi({
-        courseName,
-        exam,
-        items,
-        allowedSubjects: subjects,
-      });
 
-      const changed = _applyExamSubjectAssignments(exam, assignments);
-      if (changed > 0) {
-        await db.collection('exams').doc(exam.id).set({
-          questions: exam.questions || [],
-          updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
-        }, { merge: true });
+      try {
+        const result = await TopicCategorization.categorizeExam(courseId, exam.id, {
+          overrideManual,
+          onProgress: ({ done, total, questionId, proposal, error, skipped }) => {
+            if (error) _logSubjectAi(`  ⚠️ שאלה ${questionId}: ${error}`, 'error');
+            else if (skipped) _logSubjectAi(`  ↷ שאלה ${questionId}: דילוג (שיוך ידני קיים)`);
+            else if (proposal) {
+              const scope = proposal.scope === 'clause' ? 'סעיף' : 'שאלה';
+              _logSubjectAi(`  ✓ שאלה ${questionId} [${scope}] — ${proposal.relatedness}`);
+            }
+          },
+        });
         updatedExams++;
-        touchedFields += changed;
-        _logSubjectAi(`✅ עודכן מבחן "${exam.title || exam.id}" (${changed} שדות נושא)`, 'success');
-      } else {
-        _logSubjectAi(`ℹ️ אין שינוי במבחן "${exam.title || exam.id}"`);
+        reviewCount += result.reviewCount || 0;
+        _logSubjectAi(`✅ "${exam.title || exam.id}" — ${result.categorized} שאלות סווגו`, 'success');
+      } catch (e) {
+        _logSubjectAi(`❌ שגיאה במבחן "${exam.title || exam.id}": ${e.message}`, 'error');
       }
     }
-    if (_subjectAiMapperState.stopRequested) {
-      toast(`השיוך נעצר. עודכנו ${updatedExams} מבחנים`, 'error');
-      _setSubjectAiStatus(`נעצר. עודכנו ${updatedExams} מבחנים (${touchedFields} שדות)`);
-    } else {
-      toast(`השיוך הושלם. עודכנו ${updatedExams} מבחנים`, 'success');
-      _setSubjectAiStatus(`הושלם. עודכנו ${updatedExams} מבחנים (${touchedFields} שדות)`);
-    }
+
+    const stopped = _subjectAiMapperState.stopRequested;
+    const summary = `${stopped ? 'נעצר' : 'הושלם'}. עודכנו ${updatedExams} מבחנים${reviewCount ? `, ${reviewCount} שאלות לבדיקה ידנית` : ''}`;
+    toast(summary, stopped ? 'error' : 'success');
+    _setSubjectAiStatus(summary);
+    if (reviewCount) _logSubjectAi(`⚠️ ${reviewCount} שאלות סווגו בביטחון נמוך — מומלץ לבדוק ידנית`, 'error');
   } catch (err) {
     console.error('runSubjectAiMapper error:', err);
     toast('שגיאה בשיוך נושאים: ' + err.message, 'error');

@@ -3,7 +3,10 @@
     "emulator": "firebase --config firebase.emulator.json emulators:start --import=./emulator-data --export-on-exit=./emulator-data",
     "seed": "node seed/seed.js",
     "dev": "netlify dev",
-    "test:rules": "node --test tests/rules-difficulty-telemetry.test.js"
+    "test:rules": "node --test tests/rules-difficulty-telemetry.test.js",
+    "test:rules:topics": "node --test tests/rules-topic-assignments.test.js",
+    "test:topics": "node --test tests/topic-resolver.test.js",
+    "migrate:topics": "node seed/migrate-subjects-to-topics.js"
   },
   "dependencies": {
     "@netlify/blobs": "^8.1.0",

@@ -335,6 +335,45 @@ const EXAMS = [
   },
 ];
 
+const TOPICS_SEED = {
+  calculus: [
+    { id: 'derivatives',   name: 'נגזרות',              order: 10 },
+    { id: 'poly-deriv',    name: 'נגזרת פולינום',        order: 11 },
+    { id: 'chain-product', name: 'כלל השרשרת והמכפלה',   order: 12 },
+    { id: 'quotient-log',  name: 'מנה ולוגריתמים',       order: 13 },
+    { id: 'integrals',     name: 'אינטגרלים',            order: 20 },
+    { id: 'limits',        name: 'גבולות',               order: 30 },
+    { id: 'lhopital',      name: 'כלל לופיטל',           order: 31 },
+    { id: 'extrema',       name: 'נקודות קיצון',         order: 40 },
+  ],
+  datastructs: [
+    { id: 'heaps',        name: 'ערימות',           order: 10 },
+    { id: 'graphs',       name: 'גרפים',            order: 20 },
+    { id: 'complexity',   name: 'סיבוכיות',         order: 30 },
+    { id: 'linked-lists', name: 'רשימות מקושרות',    order: 40 },
+    { id: 'hashing',      name: 'טבלאות גיבוב',      order: 50 },
+    { id: 'sorting',      name: 'מיון',             order: 60 },
+    { id: 'trees',        name: 'עצים מאוזנים',      order: 70 },
+  ],
+};
+
+// Sample assignments demonstrating BOTH scopes (see docs/topic-categorization-plan.md).
+//  - calc q1: clauses test DIFFERENT techniques → independent → clause-level.
+//  - calc q3: no clauses → question-level.
+//  - ds q1 (ds-2022-b-a): clauses depend on each other → dependent → question-level.
+const ASSIGNMENTS_SEED = [
+  { courseId: 'calculus', examId: 'calc-2023-a-a', questionId: 'q1', scope: 'clause',
+    perClause: [
+      { clauseId: 'q1a', topicIds: ['poly-deriv'] },
+      { clauseId: 'q1b', topicIds: ['chain-product'] },
+      { clauseId: 'q1c', topicIds: ['quotient-log'] },
+    ], relatedness: 'independent', confidence: 0.9 },
+  { courseId: 'calculus', examId: 'calc-2023-a-a', questionId: 'q3', scope: 'question',
+    topicIds: ['extrema'], relatedness: 'single', confidence: 0.95 },
+  { courseId: 'datastructs', examId: 'ds-2022-b-a', questionId: 'q1', scope: 'question',
+    topicIds: ['linked-lists'], relatedness: 'dependent', confidence: 0.85 },
+];
+
 const USERS_SEED = [
   { email: 'student1@tau.ac.il', password: 'Test1234', displayName: 'סטודנט לדוגמה 1', role: 'student', subscriptionTier: 'free' },
   { email: 'student2@tau.ac.il', password: 'Test1234', displayName: 'סטודנט לדוגמה 2', role: 'student', subscriptionTier: 'basic' },
@@ -343,6 +382,60 @@ const USERS_SEED = [
 ];
 
 // ── Main ───────────────────────────────────────────────────────────────────
+
+// Seed course topic taxonomies + a few sample topic_assignments, mirroring the
+// deterministic doc ids and exam-doc topicIds cache used by the admin write path.
+async function seedTopicsAndAssignments() {
+  console.log('\n🏷️  Creating topics + assignments...');
+  const FieldValue = admin.firestore.FieldValue;
+
+  for (const [courseId, topics] of Object.entries(TOPICS_SEED)) {
+    for (const t of topics) {
+      await db.collection('courses').doc(courseId).collection('topics').doc(t.id).set({
+        name: t.name, description: t.description || '', order: t.order ?? 100,
+        status: 'active', createdAt: FieldValue.serverTimestamp(), updatedAt: FieldValue.serverTimestamp(),
+      });
+    }
+    console.log(`   ✓ ${topics.length} topics for ${courseId}`);
+  }
+
+  for (const a of ASSIGNMENTS_SEED) {
+    const base = {
+      courseId: a.courseId, examId: a.examId, questionId: a.questionId,
+      source: 'ai', updatedAt: FieldValue.serverTimestamp(), createdAt: FieldValue.serverTimestamp(),
+      aiMeta: { relatedness: a.relatedness, confidence: a.confidence, model: 'seed', runId: 'seed' },
+      needsReview: false,
+    };
+    // Load the exam so we can also patch the denormalized topicIds cache.
+    const examRef = db.collection('exams').doc(a.examId);
+    const examSnap = await examRef.get();
+    const exam = examSnap.data();
+    const questions = (exam?.questions || []).map(q => ({ ...q }));
+    const q = questions.find(x => x.id === a.questionId);
+
+    if (a.scope === 'clause') {
+      for (const pc of a.perClause) {
+        await db.collection('topic_assignments')
+          .doc(`${a.examId}__${a.questionId}__${pc.clauseId}`)
+          .set({ ...base, clauseId: pc.clauseId, scope: 'clause', topicIds: pc.topicIds });
+      }
+      if (q) {
+        const key = Array.isArray(q.subs) ? 'subs' : (Array.isArray(q.parts) ? 'parts' : null);
+        if (key) q[key] = q[key].map(c => {
+          const pc = a.perClause.find(p => p.clauseId === c.id);
+          return pc ? { ...c, topicIds: pc.topicIds } : c;
+        });
+      }
+    } else {
+      await db.collection('topic_assignments')
+        .doc(`${a.examId}__${a.questionId}`)
+        .set({ ...base, clauseId: null, scope: 'question', topicIds: a.topicIds });
+      if (q) q.topicIds = a.topicIds;
+    }
+    if (exam) await examRef.update({ questions });
+  }
+  console.log(`   ✓ ${ASSIGNMENTS_SEED.length} sample assignments (+ exam cache)`);
+}
 
 async function main() {
   console.log('🌱 VaulTau seed script starting...\n');
@@ -385,6 +478,9 @@ async function main() {
     await setDoc('exams', id, data);
     console.log(`   ✓ ${data.title}`);
   }
+
+  // 3b. Topics + sample topic assignments (hierarchical categorization)
+  await seedTopicsAndAssignments();
 
   // 4. Auth users + Firestore users
   console.log('\n👤 Creating users...');
