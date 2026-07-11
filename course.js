@@ -5666,7 +5666,7 @@ function openVideoModalFromBtn(btn) {
   const entityLabel = btn?.dataset?.entityLabel || '';
   const accessTier = (btn?.dataset?.accessTier || 'free') === 'premium' ? 'premium' : 'free';
   if (isVideoLockedForCurrentCourse(accessTier)) {
-    toast('הסרטון זמין למנויי פרימיום בלבד בקורס זה', 'error');
+    openCourseUpgradeModal();
     return;
   }
   if (accessTier === 'premium' && !isPremiumUnlockedForCourse()) {
@@ -5676,7 +5676,7 @@ function openVideoModalFromBtn(btn) {
       const accessMap = { ...(STATE.userData?.freeVideoAccessByCourse || {}) };
       const opened = Array.isArray(accessMap[courseId]) ? [...accessMap[courseId]] : [];
       if (!opened.includes(entityId) && opened.length >= maxVideos) {
-        toast(`מסלול חינם מאפשר פתיחת עד ${maxVideos} סרטונים בקורס זה`, 'error');
+        openCourseUpgradeModal();
         return;
       }
       if (entityId && !opened.includes(entityId)) {
