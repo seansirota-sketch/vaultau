@@ -3170,7 +3170,6 @@ async function renderCourse() {
 
     page.innerHTML = `
       <div class="container">
-        ${renderCourseUpgradeCta()}
         <div class="breadcrumb">
           <a onclick="goHome()">🏠 ראשי</a><span>›</span><span>${esc(course.name)}</span>
         </div>
@@ -3179,6 +3178,7 @@ async function renderCourse() {
             <h1 class="page-title">${esc(course.icon)} ${esc(course.name)}</h1>
             <p class="page-sub">קוד: ${esc(course.code)} · ${exams.length} מבחנים</p>
           </div>
+          ${renderCourseUpgradeCta()}
         </div>
         <div class="tabs-bar">
           <button class="tab-btn ${STATE.tab === 'exams' ? 'active' : ''}" onclick="setTab('exams')">
@@ -5666,7 +5666,7 @@ function openVideoModalFromBtn(btn) {
   const entityLabel = btn?.dataset?.entityLabel || '';
   const accessTier = (btn?.dataset?.accessTier || 'free') === 'premium' ? 'premium' : 'free';
   if (isVideoLockedForCurrentCourse(accessTier)) {
-    toast('הסרטון זמין למנויי פרימיום בלבד בקורס זה', 'error');
+    openCourseUpgradeModal();
     return;
   }
   if (accessTier === 'premium' && !isPremiumUnlockedForCourse()) {
@@ -5676,7 +5676,7 @@ function openVideoModalFromBtn(btn) {
       const accessMap = { ...(STATE.userData?.freeVideoAccessByCourse || {}) };
       const opened = Array.isArray(accessMap[courseId]) ? [...accessMap[courseId]] : [];
       if (!opened.includes(entityId) && opened.length >= maxVideos) {
-        toast(`מסלול חינם מאפשר פתיחת עד ${maxVideos} סרטונים בקורס זה`, 'error');
+        openCourseUpgradeModal();
         return;
       }
       if (entityId && !opened.includes(entityId)) {
