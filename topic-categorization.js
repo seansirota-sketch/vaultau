@@ -233,7 +233,7 @@
       body: JSON.stringify({
         courseId,
         mode: mode === 'assignments_and_topics' ? 'assignments_and_topics' : 'assignments',
-        confirmToken: courseId,
+        confirmed: true,
       }),
     });
     const data = await res.json().catch(() => ({}));

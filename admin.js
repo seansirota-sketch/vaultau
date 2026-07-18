@@ -1071,8 +1071,10 @@ async function resetCourseTopicsUI(mode) {
   const courseId = document.getElementById('asm-course')?.value || '';
   if (!courseId) { toast('יש לבחור קורס תחילה', 'error'); return; }
   const label = mode === 'assignments_and_topics' ? 'שיוכים ונושאים' : 'שיוכים';
-  const confirmed = prompt(`למחוק את כל ה${label} של הקורס?\nהקלד את מזהה הקורס לאישור: "${courseId}"`);
-  if (confirmed !== courseId) { toast('איפוס בוטל', ''); return; }
+  if (!confirm(`למחוק את כל ה${label} של הקורס?\nפעולה זו תמחק את כל השיוכים הקיימים.`)) {
+    toast('איפוס בוטל', '');
+    return;
+  }
   try {
     _setSubjectAiStatus('מאפס...');
     const result = await TopicCategorization.resetCourseTopics(courseId, mode);

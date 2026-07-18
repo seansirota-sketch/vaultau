@@ -5,9 +5,9 @@
    Deletes (hard, via BulkWriter):
      - all topic_assignments where courseId == <courseId>
      - (optional) courses/<courseId>/topics/*      when mode includes topics
-     - the denormalized topicIds cache on that course's exam docs
+     - embedded topic-assignment fields on that course's exam docs
 
-   Questions, clauses, and legacy `subject` strings are left intact.
+   Questions and clauses remain intact; only topic-assignment fields are removed.
 
    Caller MUST be an authenticated admin.
 
@@ -84,7 +84,17 @@ async function deleteCourseTopics(db, courseId) {
   return total;
 }
 
-// Strip cached topicIds from the embedded questions/clauses of each exam.
+function stripAssignmentFields(entity) {
+  if (!entity || typeof entity !== 'object') return entity;
+  const next = { ...entity };
+  delete next.topicIds;
+  delete next.subject;
+  delete next.topic;
+  return next;
+}
+
+// Strip embedded topic-assignment fields from the exam's questions/clauses so
+// the UI no longer falls back to legacy subject/topic values after a reset.
 async function clearExamCache(db, courseId) {
   const snap = await db.collection('exams').where('courseId', '==', courseId).get();
   let updated = 0;
@@ -93,13 +103,17 @@ async function clearExamCache(db, courseId) {
     if (!Array.isArray(data.questions)) continue;
     let touched = false;
     const questions = data.questions.map(q => {
-      const nq = { ...q };
-      if ('topicIds' in nq) { delete nq.topicIds; touched = true; }
+      const hasQuestionAssignmentFields = q && typeof q === 'object'
+        && (('topicIds' in q) || ('subject' in q) || ('topic' in q));
+      if (hasQuestionAssignmentFields) touched = true;
+      const nq = stripAssignmentFields(q);
       const clauseKey = Array.isArray(nq.subs) ? 'subs' : (Array.isArray(nq.parts) ? 'parts' : null);
       if (clauseKey) {
         nq[clauseKey] = nq[clauseKey].map(c => {
-          if (c && 'topicIds' in c) { touched = true; const nc = { ...c }; delete nc.topicIds; return nc; }
-          return c;
+          const hasClauseAssignmentFields = c && typeof c === 'object'
+            && (('topicIds' in c) || ('subject' in c) || ('topic' in c));
+          if (hasClauseAssignmentFields) touched = true;
+          return stripAssignmentFields(c);
         });
       }
       return nq;
@@ -151,11 +165,13 @@ exports.handler = async (event) => {
   const courseId = String(body.courseId || '').trim();
   const mode = body.mode === 'assignments_and_topics' ? 'assignments_and_topics' : 'assignments';
   const confirmToken = String(body.confirmToken || '');
+  const confirmed = body.confirmed === true;
 
   if (!courseId) return json(400, { error: 'Missing courseId' }, origin);
-  // Fat-finger guard: caller must echo the courseId.
-  if (confirmToken !== courseId) {
-    return json(400, { error: 'confirmToken must equal courseId' }, origin);
+  // Accept either the new explicit boolean confirmation or the legacy
+  // confirmToken echo so older admin bundles keep working during rollout.
+  if (!confirmed && confirmToken !== courseId) {
+    return json(400, { error: 'Reset action must be explicitly confirmed' }, origin);
   }
 
   let deletedAssignments = 0;
@@ -215,3 +231,5 @@ exports.handler = async (event) => {
     errors,
   }, origin);
 };
+
+module.exports.stripAssignmentFields = stripAssignmentFields;
