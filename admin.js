@@ -6486,6 +6486,150 @@ async function showHardQuestionsReport() {
 }
 
 
+/* ════════════════════════════════════════════════════════
+   ALL QUESTIONS DIFFICULTY PANEL  (admin)
+════════════════════════════════════════════════════════ */
+
+// Cache for all-questions-difficulty panel
+let _aqdData = null; // { questions: [{qid,text,qi,examTitle,examId,courseName,courseId,avg,total,breakdown}] }
+
+async function showAllQuestionsDifficulty() {
+  const panel  = document.getElementById('all-questions-difficulty-panel');
+  const bodyEl = document.getElementById('all-questions-difficulty-body');
+  if (!panel) return;
+  panel.style.display = 'block';
+  panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  bodyEl.innerHTML = '<div class="spinner" style="margin:1.5rem auto"></div>';
+  _aqdData = null;
+
+  try {
+    await populateAllSelects();
+    // Populate course filter if empty
+    const courseFilter = document.getElementById('aqd-filter-course');
+    if (courseFilter && courseFilter.options.length <= 1) {
+      const courses = await fetchCourses();
+      courses.forEach(c => {
+        const opt = document.createElement('option');
+        opt.value = c.id;
+        opt.textContent = c.name || c.id;
+        courseFilter.appendChild(opt);
+      });
+    }
+
+    const selectedCourse = courseFilter?.value || '';
+    const courses = await fetchCourses();
+    const courseMap = Object.fromEntries(courses.map(c => [c.id, c.name || c.id]));
+
+    let q = db.collection('exams');
+    if (selectedCourse) q = q.where('courseId', '==', selectedCourse);
+    const snap = await q.get();
+
+    if (snap.empty) {
+      bodyEl.innerHTML = '<p style="color:var(--muted);padding:1rem">אין מבחנים</p>';
+      return;
+    }
+
+    // Build flat questions list
+    const allQuestions = [];
+    snap.docs.forEach(d => {
+      const e = d.data();
+      (e.questions || []).forEach((q, qi) => {
+        if (!q.id) return;
+        allQuestions.push({
+          qid:        q.id,
+          text:       (q.text || '').replace(/<[^>]+>/g, '').slice(0, 120),
+          qi,
+          examTitle:  e.title || d.id,
+          examId:     d.id,
+          courseName: courseMap[e.courseId] || e.courseId || '—',
+          courseId:   e.courseId || '',
+        });
+      });
+    });
+
+    if (!allQuestions.length) {
+      bodyEl.innerHTML = '<p style="color:var(--muted);padding:1rem">אין שאלות</p>';
+      return;
+    }
+
+    const qIds = allQuestions.map(q => q.qid);
+    const votes = await _batchFetchVotes(qIds);
+
+    _aqdData = {
+      questions: allQuestions.map(q => {
+        const v = votes[q.qid] || {};
+        const { avg, total, breakdown } = _computeAvg({ [q.qid]: v });
+        return { ...q, avg, total, breakdown };
+      }),
+    };
+
+    renderAllQuestionsDifficultyTable();
+
+  } catch(e) {
+    bodyEl.innerHTML = `<p style="color:var(--danger)">${e.message}</p>`;
+    console.error(e);
+  }
+}
+
+function renderAllQuestionsDifficultyTable() {
+  const bodyEl = document.getElementById('all-questions-difficulty-body');
+  if (!bodyEl || !_aqdData) return;
+
+  const search = (document.getElementById('aqd-search')?.value || '').trim().toLowerCase();
+  const sortBy = document.getElementById('aqd-sort')?.value || 'votes';
+
+  let items = _aqdData.questions;
+
+  // Filter by search text
+  if (search) {
+    items = items.filter(q =>
+      q.text.toLowerCase().includes(search) ||
+      q.examTitle.toLowerCase().includes(search) ||
+      q.courseName.toLowerCase().includes(search)
+    );
+  }
+
+  // Sort
+  if (sortBy === 'votes') {
+    items = [...items].sort((a, b) => b.total - a.total || (b.avg ?? -1) - (a.avg ?? -1));
+  } else if (sortBy === 'score_desc') {
+    items = [...items].sort((a, b) => (b.avg ?? -1) - (a.avg ?? -1) || b.total - a.total);
+  } else {
+    items = [...items].sort((a, b) => {
+      if (a.avg === null && b.avg === null) return 0;
+      if (a.avg === null) return 1;
+      if (b.avg === null) return -1;
+      return a.avg - b.avg || b.total - a.total;
+    });
+  }
+
+  if (!items.length) {
+    bodyEl.innerHTML = '<p style="color:var(--muted);padding:1rem">אין תוצאות לחיפוש</p>';
+    return;
+  }
+
+  const rows = items.map((q, i) => `<tr>
+    <td style="color:var(--muted);font-size:.8rem;white-space:nowrap">${i + 1}</td>
+    <td style="font-size:.85rem;max-width:320px;overflow:hidden">${esc(q.text) || '<span style="color:var(--light)">ללא טקסט</span>'}${q.text.length >= 120 ? '…' : ''}</td>
+    <td style="white-space:nowrap;font-size:.8rem">${esc(q.examTitle)}</td>
+    <td style="white-space:nowrap;font-size:.8rem">${esc(q.courseName)}</td>
+    <td>${_avgLabel(q.avg)}</td>
+    <td style="color:var(--muted);font-size:.8rem;text-align:center">${q.total > 0 ? `<strong>${q.total}</strong>` : '—'}</td>
+    <td>${_breakdownHtml(q.breakdown)}</td>
+  </tr>`).join('');
+
+  bodyEl.innerHTML = `
+    <div style="font-size:.8rem;color:var(--muted);padding:.5rem 0 .75rem">מוצגות ${items.length.toLocaleString()} שאלות</div>
+    <table class="tbl">
+      <thead><tr>
+        <th>#</th><th>שאלה</th><th>מבחן</th><th>קורס</th>
+        <th>מדד קושי</th><th>הצבעות</th><th>פירוט</th>
+      </tr></thead>
+      <tbody>${rows}</tbody>
+    </table>`;
+}
+
+
 /* ══════════════════════════════════════════════════════════
    SURVEY MANAGER  (admin)
 ══════════════════════════════════════════════════════════ */

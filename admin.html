@@ -407,6 +407,7 @@
           <h2 class="sec-title">ניתוח קושי</h2>
           <div style="display:flex;gap:.5rem">
             <button class="btn btn-danger btn-sm" onclick="showHardQuestionsReport()">10 השאלות הקשות ביותר</button>
+            <button class="btn btn-secondary btn-sm" onclick="showAllQuestionsDifficulty()">כל דירוגי השאלות</button>
             <button class="btn btn-secondary btn-sm" onclick="renderAnalytics()">רענן</button>
           </div>
 
@@ -442,6 +443,35 @@
             <button class="btn btn-secondary btn-sm" onclick="document.getElementById('exam-detail-panel').style.display='none'">סגור</button>
           </div>
           <div id="exam-detail-body" style="padding:1rem 1.25rem"></div>
+        </div>
+
+        <!-- All-questions difficulty panel (hidden by default) -->
+        <div id="all-questions-difficulty-panel" style="display:none" class="ac">
+          <div class="ac-title" style="justify-content:space-between">
+            <span>כל דירוגי השאלות</span>
+            <button class="btn btn-secondary btn-sm" onclick="document.getElementById('all-questions-difficulty-panel').style.display='none'">סגור</button>
+          </div>
+          <div id="all-questions-difficulty-filter" style="padding:.75rem 1.25rem;border-bottom:1px solid var(--border-s);display:flex;gap:.75rem;align-items:flex-end;flex-wrap:wrap">
+            <div class="form-group" style="margin:0;flex:0 0 220px">
+              <label>סנן לפי קורס</label>
+              <select id="aqd-filter-course" onchange="showAllQuestionsDifficulty()">
+                <option value="">כל הקורסים</option>
+              </select>
+            </div>
+            <div class="form-group" style="margin:0;flex:1;min-width:180px">
+              <label>חיפוש בטקסט שאלה</label>
+              <input type="text" id="aqd-search" placeholder="חיפוש..." oninput="renderAllQuestionsDifficultyTable()">
+            </div>
+            <div class="form-group" style="margin:0">
+              <label>מיין</label>
+              <select id="aqd-sort" onchange="renderAllQuestionsDifficultyTable()">
+                <option value="votes">מספר הצבעות (גבוהה לנמוךה)</option>
+                <option value="score_desc">דירוג (קשה ראשון)</option>
+                <option value="score_asc">דירוג (קל ראשון)</option>
+              </select>
+            </div>
+          </div>
+          <div id="all-questions-difficulty-body" style="padding:1rem 1.25rem"></div>
         </div>
       </div>
 

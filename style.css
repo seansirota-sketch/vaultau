@@ -1252,6 +1252,12 @@ body {
   color: #334155;
   font-weight: 700;
 }
+.difficulty-indicator-votes {
+  font-size: .67rem;
+  color: #64748b;
+  font-weight: 500;
+  white-space: nowrap;
+}
 
 /* Separator between diff buttons and star/copy */
 .qv-actions-sep {
