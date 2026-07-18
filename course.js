@@ -4012,7 +4012,7 @@ function renderQuestionCard(q, qi, starred, userVotes = {}, videoMap = {}, isAdm
         ${hideQuestionLabel ? '' : `<span class="qv-num">${isBonus ? 'שאלת בונוס' : 'שאלה ' + (qi + 1)}</span>`}
         ${points}
         ${bonusBadge}
-        <span id="difficulty-indicator-slot-${q.id}">${renderDifficultyIndicator(q.id, STATE.examVotes?.[q.id] || {}, userVotes[q.id] ?? null)}</span>
+        <span id="difficulty-indicator-slot-${q.id}">${renderDifficultyIndicator(q.id, STATE.examVotes?.[q.id] || {}, userVotes[q.id] ?? null, isAdmin)}</span>
       </div>
       <div class="qv-actions" id="dw-${q.id}">
         ${renderDifficultyControls(q.id, userVotes[q.id] ?? null, STATE.examVotes?.[q.id] || {}, subject, isAdmin)}
@@ -4359,9 +4359,9 @@ function calculateSkillWeight(n, M = 2, k = 50) {
   return 1 + ((maxBonus * solvedCount) / (solvedCount + midpoint));
 }
 
-function renderDifficultyIndicator(qid, voteStats = {}, myVote = null) {
+function renderDifficultyIndicator(qid, voteStats = {}, myVote = null, isAdminUser = false) {
   const hasUserVote = myVote !== undefined && myVote !== null;
-  if (!hasUserVote) return '';
+  if (!hasUserVote && !isAdminUser) return '';
   const avg = getQuestionAverageRating(voteStats);
   let avgForTooltip = null;
   const voteCount = Number(voteStats.voteCount);
@@ -4374,10 +4374,15 @@ function renderDifficultyIndicator(qid, voteStats = {}, myVote = null) {
   const displayAvg = avgForTooltip === null
     ? null
     : Number(avgForTooltip.toFixed(1)).toString();
-  const title = displayAvg === null ? '--' : `${displayAvg}`;
+  const displayVoteCount = Number.isFinite(voteCount) && voteCount > 0 ? voteCount : null;
+  const tooltip = displayAvg === null
+    ? '--'
+    : `${displayAvg}${displayVoteCount ? ` · ${displayVoteCount} הצבעות` : ''}`;
   const color = getDifficultyColor(avg);
-  return `<span class="difficulty-indicator" id="difficulty-indicator-${qid}" title="${esc(title)}" data-tooltip="${esc(title)}">
+  return `<span class="difficulty-indicator" id="difficulty-indicator-${qid}" title="${esc(tooltip)}" data-tooltip="${esc(tooltip)}">
     <span class="difficulty-indicator-dot" style="background:${esc(color)}"></span>
+    ${displayAvg !== null ? `<span class="difficulty-indicator-value">${displayAvg}</span>` : ''}
+    ${displayVoteCount !== null ? `<span class="difficulty-indicator-votes">${displayVoteCount} הצ'</span>` : ''}
   </span>`;
 }
 
@@ -4548,7 +4553,7 @@ async function voteDifficulty(qid, rawScore, topic = '') {
   }
   const indicatorSlot = document.getElementById(`difficulty-indicator-slot-${qid}`);
   if (indicatorSlot) {
-    indicatorSlot.innerHTML = renderDifficultyIndicator(qid, localCounts, userVotes[qid] ?? null);
+    indicatorSlot.innerHTML = renderDifficultyIndicator(qid, localCounts, userVotes[qid] ?? null, isAdminUser);
   }
 
   try {
