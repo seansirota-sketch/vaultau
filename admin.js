@@ -1698,7 +1698,6 @@ function _applySectionUI(name) {
   if (name === 'dashboard')   refreshDashboard();
   if (name === 'courses')     renderCoursesList();
   if (name === 'add-exam')    { populateAllSelects(); _renderAssignedLecturersWidget(); }
-  if (name === 'analytics')   renderAnalytics();
   if (name === 'users')       renderUserStats();
   if (name === 'manage-users') renderManageUsers();
   if (name === 'survey')      renderSurveyManager();

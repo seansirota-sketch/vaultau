@@ -4012,7 +4012,7 @@ function renderQuestionCard(q, qi, starred, userVotes = {}, videoMap = {}, isAdm
         ${hideQuestionLabel ? '' : `<span class="qv-num">${isBonus ? 'שאלת בונוס' : 'שאלה ' + (qi + 1)}</span>`}
         ${points}
         ${bonusBadge}
-        <span id="difficulty-indicator-slot-${q.id}">${renderDifficultyIndicator(q.id, STATE.examVotes?.[q.id] || {}, userVotes[q.id] ?? null)}</span>
+        <span id="difficulty-indicator-slot-${q.id}">${renderDifficultyIndicator(q.id, STATE.examVotes?.[q.id] || {}, userVotes[q.id] ?? null, isAdmin)}</span>
       </div>
       <div class="qv-actions" id="dw-${q.id}">
         ${renderDifficultyControls(q.id, userVotes[q.id] ?? null, STATE.examVotes?.[q.id] || {}, subject, isAdmin)}
@@ -4359,9 +4359,9 @@ function calculateSkillWeight(n, M = 2, k = 50) {
   return 1 + ((maxBonus * solvedCount) / (solvedCount + midpoint));
 }
 
-function renderDifficultyIndicator(qid, voteStats = {}, myVote = null) {
+function renderDifficultyIndicator(qid, voteStats = {}, myVote = null, isAdminUser = false) {
   const hasUserVote = myVote !== undefined && myVote !== null;
-  if (!hasUserVote) return '';
+  if (!hasUserVote && !isAdminUser) return '';
   const avg = getQuestionAverageRating(voteStats);
   let avgForTooltip = null;
   const voteCount = Number(voteStats.voteCount);
@@ -4553,7 +4553,7 @@ async function voteDifficulty(qid, rawScore, topic = '') {
   }
   const indicatorSlot = document.getElementById(`difficulty-indicator-slot-${qid}`);
   if (indicatorSlot) {
-    indicatorSlot.innerHTML = renderDifficultyIndicator(qid, localCounts, userVotes[qid] ?? null);
+    indicatorSlot.innerHTML = renderDifficultyIndicator(qid, localCounts, userVotes[qid] ?? null, isAdminUser);
   }
 
   try {
