@@ -178,10 +178,45 @@ function toggleEntityTimerMenu(event, btn) {
   if (!wrap) return;
   const isOpen = wrap.classList.contains('open');
   _closeEntityTimerMenus();
-  if (!isOpen) wrap.classList.add('open');
+  if (!isOpen) {
+    wrap.classList.add('open');
+    _positionEntityTimerMenu(wrap);
+  }
   if (!_entityTimerMenuListenerBound) {
     document.addEventListener('click', _closeEntityTimerMenus);
     _entityTimerMenuListenerBound = true;
+  }
+}
+
+function _positionEntityTimerMenu(wrap) {
+  const menu = wrap?.querySelector('[data-timer-menu]');
+  const card = wrap?.closest('.qv-part, .qv-card');
+  if (!menu || !card) return;
+
+  menu.classList.remove('open-up');
+  menu.classList.remove('align-left');
+  menu.classList.remove('align-right');
+  menu.style.left = '';
+  menu.style.right = '';
+  menu.style.maxWidth = '';
+
+  const cardRect = card.getBoundingClientRect();
+  const wrapRect = wrap.getBoundingClientRect();
+  const menuRect = menu.getBoundingClientRect();
+  menu.style.maxWidth = Math.max(96, Math.floor(cardRect.width - 16)) + 'px';
+
+  const spaceBelow = cardRect.bottom - wrapRect.bottom;
+  const spaceAbove = wrapRect.top - cardRect.top;
+  if (spaceBelow < menuRect.height + 8 && spaceAbove > spaceBelow) {
+    menu.classList.add('open-up');
+  }
+
+  const spaceLeft = wrapRect.right - cardRect.left;
+  const spaceRight = cardRect.right - wrapRect.left;
+  if (spaceLeft < menuRect.width && spaceRight > spaceLeft) {
+    menu.classList.add('align-left');
+  } else {
+    menu.classList.add('align-right');
   }
 }
 
@@ -191,7 +226,16 @@ function startEntityTimerFromBtn(btn, minutes) {
   const entityId = trigger?.getAttribute('data-entity-id') || '';
   const entityLabel = trigger?.getAttribute('data-entity-label') || 'פריט';
   if (!entityId) return;
-  const mins = Number(minutes) === 60 ? 60 : 30;
+  let mins = Number(minutes);
+  if (minutes === 'custom') {
+    const customValue = prompt('הכנס מספר דקות לטיימר', '45');
+    if (customValue === null) return;
+    mins = Number.parseInt(String(customValue).trim(), 10);
+  }
+  if (!Number.isFinite(mins) || mins <= 0) {
+    toast('נא להזין מספר דקות תקין', 'error');
+    return;
+  }
   _entityTimers.set(entityId, {
     endsAt: Date.now() + mins * 60 * 1000,
     entityLabel,
@@ -3967,6 +4011,7 @@ function renderQuestionCard(q, qi, starred, userVotes = {}, videoMap = {}, isAdm
       <div class="qv-timer-menu" data-timer-menu>
         <button type="button" onclick="startEntityTimerFromBtn(this,30)">30 דק'</button>
         <button type="button" onclick="startEntityTimerFromBtn(this,60)">60 דק'</button>
+        <button type="button" onclick="startEntityTimerFromBtn(this,'custom')">מותאם</button>
         <button type="button" class="clear" onclick="clearEntityTimerFromBtn(this)">נקה</button>
       </div>
       <span class="qv-timer-badge" data-timer-display="${esc(entityId)}"></span>
