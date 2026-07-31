@@ -178,10 +178,45 @@ function toggleEntityTimerMenu(event, btn) {
   if (!wrap) return;
   const isOpen = wrap.classList.contains('open');
   _closeEntityTimerMenus();
-  if (!isOpen) wrap.classList.add('open');
+  if (!isOpen) {
+    wrap.classList.add('open');
+    _positionEntityTimerMenu(wrap);
+  }
   if (!_entityTimerMenuListenerBound) {
     document.addEventListener('click', _closeEntityTimerMenus);
     _entityTimerMenuListenerBound = true;
+  }
+}
+
+function _positionEntityTimerMenu(wrap) {
+  const menu = wrap?.querySelector('[data-timer-menu]');
+  const card = wrap?.closest('.qv-part, .qv-card');
+  if (!menu || !card) return;
+
+  menu.classList.remove('open-up');
+  menu.classList.remove('align-left');
+  menu.classList.remove('align-right');
+  menu.style.left = '';
+  menu.style.right = '';
+  menu.style.maxWidth = '';
+
+  const cardRect = card.getBoundingClientRect();
+  const wrapRect = wrap.getBoundingClientRect();
+  const menuRect = menu.getBoundingClientRect();
+  menu.style.maxWidth = Math.max(96, Math.floor(cardRect.width - 16)) + 'px';
+
+  const spaceBelow = cardRect.bottom - wrapRect.bottom;
+  const spaceAbove = wrapRect.top - cardRect.top;
+  if (spaceBelow < menuRect.height + 8 && spaceAbove > spaceBelow) {
+    menu.classList.add('open-up');
+  }
+
+  const spaceLeft = wrapRect.right - cardRect.left;
+  const spaceRight = cardRect.right - wrapRect.left;
+  if (spaceLeft < menuRect.width && spaceRight > spaceLeft) {
+    menu.classList.add('align-left');
+  } else {
+    menu.classList.add('align-right');
   }
 }
 
@@ -191,7 +226,16 @@ function startEntityTimerFromBtn(btn, minutes) {
   const entityId = trigger?.getAttribute('data-entity-id') || '';
   const entityLabel = trigger?.getAttribute('data-entity-label') || 'פריט';
   if (!entityId) return;
-  const mins = Number(minutes) === 60 ? 60 : 30;
+  let mins = Number(minutes);
+  if (minutes === 'custom') {
+    const customValue = prompt('הכנס מספר דקות לטיימר', '45');
+    if (customValue === null) return;
+    mins = Number.parseInt(String(customValue).trim(), 10);
+  }
+  if (!Number.isFinite(mins) || mins <= 0) {
+    toast('נא להזין מספר דקות תקין', 'error');
+    return;
+  }
   _entityTimers.set(entityId, {
     endsAt: Date.now() + mins * 60 * 1000,
     entityLabel,
@@ -3967,6 +4011,7 @@ function renderQuestionCard(q, qi, starred, userVotes = {}, videoMap = {}, isAdm
       <div class="qv-timer-menu" data-timer-menu>
         <button type="button" onclick="startEntityTimerFromBtn(this,30)">30 דק'</button>
         <button type="button" onclick="startEntityTimerFromBtn(this,60)">60 דק'</button>
+        <button type="button" onclick="startEntityTimerFromBtn(this,'custom')">מותאם</button>
         <button type="button" class="clear" onclick="clearEntityTimerFromBtn(this)">נקה</button>
       </div>
       <span class="qv-timer-badge" data-timer-display="${esc(entityId)}"></span>
@@ -3988,7 +4033,6 @@ function renderQuestionCard(q, qi, starred, userVotes = {}, videoMap = {}, isAdm
       COPY_MAP.set(sCopyId, sText);
       const sAllowAI = s.allowAIGen === true;
       const sIsBonus = s.isBonus === true;
-      const sTimerEnabled = s.timerEnabled === true;
       const sVideo = videoMap[s.id] || null;
       const sVideoLocked = Boolean(sVideo) && isVideoLockedForCurrentCourse(sVideo.accessTier || 'free');
       return `<div class="qv-part${sIsBonus ? ' qv-part-bonus' : ''}" id="si-${s.id}">
@@ -3998,7 +4042,7 @@ function renderQuestionCard(q, qi, starred, userVotes = {}, videoMap = {}, isAdm
             ${sIsBonus ? `<span class="qv-bonus-badge" style="font-size:.7rem;padding:.15rem .5rem">⭐ סעיף בונוס</span>` : ''}
             <button class="qv-btn" onclick="copyById('${sCopyId}',event)" title="העתק LaTeX">${copySVG}</button>
             ${sAllowAI && canGenerate ? `<button class="qv-btn" onclick="openGeminiModal('${s.id}','sub')" title="צור סעיף דומה">✨</button>` : ''}
-            ${sTimerEnabled ? renderTimerControl(s.id, `סעיף ${rawLabel}`) : ''}
+            ${renderTimerControl(s.id, `סעיף ${rawLabel}`)}
             ${sVideo ? `<button class="qv-btn qv-video-btn" data-lib="${esc(sVideo.libraryId)}" data-vid="${esc(sVideo.videoId)}" data-title="${esc(sVideo.title || 'פתרון מוצג')}" data-entity-id="${esc(s.id)}" data-entity-label="${esc('שאלה ' + (qi + 1) + ' ' + rawLabel)}" data-access-tier="${esc(sVideo.accessTier || 'free')}" onclick="openVideoModalFromBtn(this)" title="צפה בסרטון פתרון">${videoSVG}</button>${sVideoLocked ? renderPremiumLockIcon('הסרטון זמין למנויי פרימיום') : ''}` : ''}
             ${(_canUploadVideo && examId) ? `<button class="qv-btn qv-video-upload-btn" data-exam-id="${esc(examId)}" data-question-id="${esc(s.id)}" data-entity-label="${esc(((examTitle ? examTitle + ' — ' : '') + 'שאלה ' + (qi + 1) + ' סעיף ' + (s.letter || String.fromCharCode(0x05D0 + si))))}" onclick="openLecturerVideoUploadFromBtn(this)" title="העלה סרטון להסבר">${videoUploadSVG}</button>` : ''}
           </div>
@@ -4012,8 +4056,6 @@ function renderQuestionCard(q, qi, starred, userVotes = {}, videoMap = {}, isAdm
 
   const qVideo = videoMap[q.id] || null;
   const qVideoLocked = Boolean(qVideo) && isVideoLockedForCurrentCourse(qVideo.accessTier || 'free');
-  const qTimerEnabled = q.timerEnabled === true;
-
   return `<div class="qv-card${isBonus ? ' qv-card-bonus' : ''}" id="qc-${q.id}" data-subject="${esc(subject)}" data-subjects="${esc(subjectTags.join('|'))}">
     <div class="qv-head${isBonus ? ' qv-head-bonus' : ''}">
       <div class="qv-head-right">
@@ -4030,7 +4072,7 @@ function renderQuestionCard(q, qi, starred, userVotes = {}, videoMap = {}, isAdm
         ${isStarLocked ? renderPremiumLockIcon('סימון שאלה נוספת במועדפים זמין למנויי פרימיום') : ''}
         <button class="qv-btn" onclick="copyById('${qCopyId}',event)" title="העתק LaTeX">${copySVG}</button>
         ${q.allowAIGen === true && canGenerate ? `<button class="qv-btn" onclick="openGeminiModal('${q.id}','question')" title="צור שאלה דומה">✨</button>` : ''}
-        ${qTimerEnabled ? renderTimerControl(q.id, `שאלה ${qi + 1}`) : ''}
+        ${renderTimerControl(q.id, `שאלה ${qi + 1}`)}
         ${qVideo ? `<button class="qv-btn qv-video-btn" data-lib="${esc(qVideo.libraryId)}" data-vid="${esc(qVideo.videoId)}" data-title="${esc(qVideo.title || 'פתרון מוצג')}" data-entity-id="${esc(q.id)}" data-entity-label="${esc('שאלה ' + (qi + 1))}" data-access-tier="${esc(qVideo.accessTier || 'free')}" onclick="openVideoModalFromBtn(this)" title="צפה בסרטון פתרון">${videoSVG}</button>${qVideoLocked ? renderPremiumLockIcon('הסרטון זמין למנויי פרימיום') : ''}` : ''}
         ${(_canUploadVideo && examId) ? `<button class="qv-btn qv-video-upload-btn" data-exam-id="${esc(examId)}" data-question-id="${esc(q.id)}" data-entity-label="${esc(((examTitle ? examTitle + ' — ' : '') + 'שאלה ' + (qi + 1)))}" onclick="openLecturerVideoUploadFromBtn(this)" title="העלה סרטון להסבר">${videoUploadSVG}</button>` : ''}
       </div>

@@ -1415,9 +1415,23 @@ mjx-container { direction: ltr; }
   border-radius: 8px;
   box-shadow: 0 8px 20px rgba(15,23,42,.18);
   padding: .3rem;
-  min-width: 88px;
+  min-width: 96px;
+  max-width: calc(100vw - 2rem);
+  white-space: nowrap;
 }
 .qv-timer-wrap.open .qv-timer-menu { display: flex; flex-direction: column; gap: .25rem; }
+.qv-timer-menu.open-up {
+  top: auto;
+  bottom: calc(100% + 4px);
+}
+.qv-timer-menu.align-left {
+  left: 0;
+  right: auto;
+}
+.qv-timer-menu.align-right {
+  right: 0;
+  left: auto;
+}
 .qv-timer-menu button {
   border: 1px solid #d8dde5;
   background: #f8fafc;
@@ -1427,6 +1441,7 @@ mjx-container { direction: ltr; }
   padding: .25rem .45rem;
   cursor: pointer;
   white-space: nowrap;
+  min-width: 100%;
 }
 .qv-timer-menu button:hover {
   background: #eef2ff;

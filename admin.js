@@ -2363,6 +2363,7 @@ function parseExamText(raw) {
         ...normalizeSubEntry({ label: s.label, text: s.text }, si),
       })),
       isBonus: isBonus || BONUS_REGEX.test(mainText),
+      timerEnabled: true,
     };
   }).filter(q => q.text.length > 1 || q.subs.length > 0);
 }
@@ -4422,7 +4423,7 @@ function addManualQuestion() {
     text: '',
     subject: '',
     isBonus: false,
-    timerEnabled: false,
+    timerEnabled: true,
     subs: [],
     inlineImages: {},
   });
