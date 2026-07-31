@@ -4033,7 +4033,6 @@ function renderQuestionCard(q, qi, starred, userVotes = {}, videoMap = {}, isAdm
       COPY_MAP.set(sCopyId, sText);
       const sAllowAI = s.allowAIGen === true;
       const sIsBonus = s.isBonus === true;
-      const sTimerEnabled = s.timerEnabled === true;
       const sVideo = videoMap[s.id] || null;
       const sVideoLocked = Boolean(sVideo) && isVideoLockedForCurrentCourse(sVideo.accessTier || 'free');
       return `<div class="qv-part${sIsBonus ? ' qv-part-bonus' : ''}" id="si-${s.id}">
@@ -4043,7 +4042,7 @@ function renderQuestionCard(q, qi, starred, userVotes = {}, videoMap = {}, isAdm
             ${sIsBonus ? `<span class="qv-bonus-badge" style="font-size:.7rem;padding:.15rem .5rem">⭐ סעיף בונוס</span>` : ''}
             <button class="qv-btn" onclick="copyById('${sCopyId}',event)" title="העתק LaTeX">${copySVG}</button>
             ${sAllowAI && canGenerate ? `<button class="qv-btn" onclick="openGeminiModal('${s.id}','sub')" title="צור סעיף דומה">✨</button>` : ''}
-            ${sTimerEnabled ? renderTimerControl(s.id, `סעיף ${rawLabel}`) : ''}
+            ${renderTimerControl(s.id, `סעיף ${rawLabel}`)}
             ${sVideo ? `<button class="qv-btn qv-video-btn" data-lib="${esc(sVideo.libraryId)}" data-vid="${esc(sVideo.videoId)}" data-title="${esc(sVideo.title || 'פתרון מוצג')}" data-entity-id="${esc(s.id)}" data-entity-label="${esc('שאלה ' + (qi + 1) + ' ' + rawLabel)}" data-access-tier="${esc(sVideo.accessTier || 'free')}" onclick="openVideoModalFromBtn(this)" title="צפה בסרטון פתרון">${videoSVG}</button>${sVideoLocked ? renderPremiumLockIcon('הסרטון זמין למנויי פרימיום') : ''}` : ''}
             ${(_canUploadVideo && examId) ? `<button class="qv-btn qv-video-upload-btn" data-exam-id="${esc(examId)}" data-question-id="${esc(s.id)}" data-entity-label="${esc(((examTitle ? examTitle + ' — ' : '') + 'שאלה ' + (qi + 1) + ' סעיף ' + (s.letter || String.fromCharCode(0x05D0 + si))))}" onclick="openLecturerVideoUploadFromBtn(this)" title="העלה סרטון להסבר">${videoUploadSVG}</button>` : ''}
           </div>
@@ -4057,8 +4056,6 @@ function renderQuestionCard(q, qi, starred, userVotes = {}, videoMap = {}, isAdm
 
   const qVideo = videoMap[q.id] || null;
   const qVideoLocked = Boolean(qVideo) && isVideoLockedForCurrentCourse(qVideo.accessTier || 'free');
-  const qTimerEnabled = q.timerEnabled === true;
-
   return `<div class="qv-card${isBonus ? ' qv-card-bonus' : ''}" id="qc-${q.id}" data-subject="${esc(subject)}" data-subjects="${esc(subjectTags.join('|'))}">
     <div class="qv-head${isBonus ? ' qv-head-bonus' : ''}">
       <div class="qv-head-right">
@@ -4075,7 +4072,7 @@ function renderQuestionCard(q, qi, starred, userVotes = {}, videoMap = {}, isAdm
         ${isStarLocked ? renderPremiumLockIcon('סימון שאלה נוספת במועדפים זמין למנויי פרימיום') : ''}
         <button class="qv-btn" onclick="copyById('${qCopyId}',event)" title="העתק LaTeX">${copySVG}</button>
         ${q.allowAIGen === true && canGenerate ? `<button class="qv-btn" onclick="openGeminiModal('${q.id}','question')" title="צור שאלה דומה">✨</button>` : ''}
-        ${qTimerEnabled ? renderTimerControl(q.id, `שאלה ${qi + 1}`) : ''}
+        ${renderTimerControl(q.id, `שאלה ${qi + 1}`)}
         ${qVideo ? `<button class="qv-btn qv-video-btn" data-lib="${esc(qVideo.libraryId)}" data-vid="${esc(qVideo.videoId)}" data-title="${esc(qVideo.title || 'פתרון מוצג')}" data-entity-id="${esc(q.id)}" data-entity-label="${esc('שאלה ' + (qi + 1))}" data-access-tier="${esc(qVideo.accessTier || 'free')}" onclick="openVideoModalFromBtn(this)" title="צפה בסרטון פתרון">${videoSVG}</button>${qVideoLocked ? renderPremiumLockIcon('הסרטון זמין למנויי פרימיום') : ''}` : ''}
         ${(_canUploadVideo && examId) ? `<button class="qv-btn qv-video-upload-btn" data-exam-id="${esc(examId)}" data-question-id="${esc(q.id)}" data-entity-label="${esc(((examTitle ? examTitle + ' — ' : '') + 'שאלה ' + (qi + 1)))}" onclick="openLecturerVideoUploadFromBtn(this)" title="העלה סרטון להסבר">${videoUploadSVG}</button>` : ''}
       </div>
