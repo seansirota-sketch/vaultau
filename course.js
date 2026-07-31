@@ -704,6 +704,8 @@ let STATE = {
   courseAccessSettings: null, // normalized access settings for active course
   isAnalyticsOn: true,  // kill switch loaded from settings/global.isAnalyticsOn
   courseCode:    '',    // official university course code (course.code) — set on course/exam load
+  courseName:    '',    // official course name — set on course/exam load
+  examYear:      '',    // exam year string — set on exam load
   examLabel:     '',    // courseCode_year_sem_moed — set on exam load, cleared on course load
   examQuestions:  [],   // question array snapshot for _questionRef() — set after const questions in renderExam
 };
@@ -2171,6 +2173,8 @@ async function goHome() {
   STATE.page = 'home';
   STATE.courseId = null;
   STATE.examId   = null;
+  STATE.courseName = '';
+  STATE.examYear = '';
   history.pushState({ page: 'home', courseId: null, examId: null }, '');
   await renderHome();
 }
@@ -3088,6 +3092,7 @@ async function renderCourse() {
   const page = document.getElementById('page');
   page.innerHTML = `<div class="container"><div class="spinner" style="margin-top:3rem"></div></div>`;
   STATE.examLabel = ''; // clear exam context when navigating to course page
+  STATE.examYear = '';
   STATE.examQuestions = [];
 
   try {
@@ -3100,6 +3105,7 @@ async function renderCourse() {
     
     const course = { ...courseDoc.data(), id: courseDoc.id };
     STATE.courseAccessSettings = normalizeCourseAccessSettings(course.accessSettings);
+    STATE.courseName = course.name || '';
     if (!STATE.subjectFilters) STATE.subjectFilters = {};
     if (!STATE.savedFilters) STATE.savedFilters = {};
     
@@ -3798,6 +3804,7 @@ async function renderExam() {
     
     const course = { ...courseDoc.data(), id: courseDoc.id };
     STATE.courseAccessSettings = normalizeCourseAccessSettings(course.accessSettings);
+    STATE.courseName = course.name || '';
     
     // Check access:
     // - draft: no one can access
@@ -3815,6 +3822,7 @@ async function renderExam() {
 
     const exam = await fetchExam(STATE.examId);
     if (!exam) return goCourse(STATE.courseId);
+    STATE.examYear = String(exam.year || '');
     STATE.examLabel = [STATE.courseCode, exam.year, _heToLat(exam.semester), _heToLat(exam.moed)].filter(Boolean).join('_');
 
     _ga('view_exam', { course_code: _cc(), exam_id: _eid() });
@@ -4851,6 +4859,8 @@ function openReportBugModal(examId, examTitle, courseId) {
   modal.dataset.examId    = examId;
   modal.dataset.examTitle = examTitle;
   modal.dataset.courseId  = courseId;
+  modal.dataset.courseName = STATE.courseName || '';
+  modal.dataset.examYear = STATE.examYear || '';
   modal.innerHTML = `
     <div class="modal-card" style="max-width:460px">
       <div class="modal-header">
@@ -4900,6 +4910,8 @@ async function submitBugReport() {
       examId:    modal.dataset.examId    || '',
       examTitle: modal.dataset.examTitle || '',
       courseId:  modal.dataset.courseId  || '',
+      courseName: modal.dataset.courseName || '',
+      examYear:  modal.dataset.examYear  || '',
       message:   msg,
       userId:    STATE.fireUser?.uid   || '',
       userEmail: STATE.fireUser?.email || '',
@@ -5787,6 +5799,8 @@ function openVideoIssueReportModal(ctx = {}) {
   modal.dataset.examId = STATE.examId || '';
   modal.dataset.examTitle = examTitle;
   modal.dataset.courseId = STATE.courseId || '';
+  modal.dataset.courseName = STATE.courseName || '';
+  modal.dataset.examYear = STATE.examYear || '';
 
   modal.innerHTML = `
     <div class="modal-card" style="max-width:500px">
@@ -5838,8 +5852,10 @@ async function submitVideoIssueReport() {
       type: 'video_issue',
       message,
       courseId: modal.dataset.courseId || '',
+      courseName: modal.dataset.courseName || '',
       examId: modal.dataset.examId || '',
       examTitle: modal.dataset.examTitle || '',
+      examYear: modal.dataset.examYear || '',
       entityId: modal.dataset.entityId || '',
       entityLabel: modal.dataset.entityLabel || '',
       videoLibraryId: modal.dataset.videoLibraryId || '',

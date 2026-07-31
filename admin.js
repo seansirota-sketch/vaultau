@@ -6642,6 +6642,25 @@ async function _loadReportsBadge() {
 
 let _reportsCurrentTab = 'open'; // 'open' | 'videos' | 'archived'
 
+async function _fetchReportCourseNames(items) {
+  const courseIds = [...new Set(items.map(r => String(r.courseId || '').trim()).filter(Boolean))];
+  if (!courseIds.length) return {};
+
+  const settled = await Promise.allSettled(
+    courseIds.map(courseId => db.collection('courses').doc(courseId).get())
+  );
+
+  const namesById = {};
+  settled.forEach((result, idx) => {
+    if (result.status !== 'fulfilled') return;
+    const doc = result.value;
+    if (!doc.exists) return;
+    const name = String(doc.data()?.name || '').trim();
+    if (name) namesById[courseIds[idx]] = name;
+  });
+  return namesById;
+}
+
 function switchReportsTab(tab) {
   _reportsCurrentTab = tab;
   document.getElementById('reports-tab-open')?.classList.toggle('active', tab === 'open');
@@ -6686,6 +6705,7 @@ async function _renderReportsContent() {
       .sort((a, b) => (b.createdAt?.toMillis?.() || 0) - (a.createdAt?.toMillis?.() || 0));
 
     if (isVideos) items = items.filter(r => r.category === 'lecturer_video_submission');
+    const courseNamesById = await _fetchReportCourseNames(items);
 
     if (!items.length) {
       el.innerHTML = `
@@ -6720,8 +6740,11 @@ async function _renderReportsContent() {
         ? `<span class="badge b-blue" style="font-size:.72rem">${esc(r.typeLabel)}</span>`
         : '';
 
-      const examInfo = r.examId
-        ? `<div style="font-size:.78rem;color:var(--muted);margin-top:.25rem">מבחן: <strong>${esc(r.examTitle || r.examId)}</strong></div>`
+      const courseLabel = String(r.courseName || courseNamesById[r.courseId] || r.courseId || '').trim();
+      const examLabel = String(r.examYear || r.examTitle || r.examId || '').trim();
+      const sourceLabel = [courseLabel, examLabel].filter(Boolean).join(' ');
+      const examInfo = sourceLabel
+        ? `<div style="font-size:.78rem;color:var(--muted);margin-top:.25rem">מקור: <strong>${esc(sourceLabel)}</strong></div>`
         : '';
 
       const closedInfo = isArchive
@@ -6768,7 +6791,10 @@ async function _renderReportsContent() {
         ? `<div id="lvr-panel-${esc(r.id)}" data-submission-id="${esc(r.submissionId)}"
              style="background:#eff6ff;border:1px solid #93c5fd;border-radius:8px;padding:.65rem .9rem;display:flex;flex-direction:column;gap:.5rem">
              <div style="font-size:.78rem;color:#1e3a8a;font-weight:600">🎬 סקירת סרטון מהמרצה</div>
-             <div style="font-size:.78rem;color:#1e3a8a">שאלה: <strong>${esc(r.questionId || '')}</strong>${r.examId ? ` · מבחן: <strong>${esc(r.examId)}</strong>` : ''}</div>
+             <div style="font-size:.78rem;color:#1e3a8a">
+               ${sourceLabel ? `<span>מקור: <strong>${esc(sourceLabel)}</strong></span><br>` : ''}
+               <span>שאלה: <strong>${esc(r.questionId || '')}</strong>${r.examId ? ` · מבחן: <strong>${esc(r.examId)}</strong>` : ''}</span>
+             </div>
              <div style="display:flex;gap:.4rem;flex-wrap:wrap">
                <button class="btn btn-sm" onclick="openLecturerVideoReview('${esc(r.submissionId)}','${esc(r.id)}')">👁 צפה ואשר/דחה</button>
              </div>
