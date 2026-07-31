@@ -4108,6 +4108,7 @@ function renderPreview() {
           </label>
           ${!q.text?.trim() && !q._showIntro ? `<button class="btn btn-sm btn-secondary" onclick="addIntroToPreview(${i})">+ הקדמה</button>` : ''}
           <button class="btn btn-sm btn-secondary" onclick="addSubToPreview(${i})">+ סעיף</button>
+          <button class="btn btn-sm btn-secondary" onclick="openQuestionPreviewModal(${i})" title="תצוגה מקדימה של השאלה">👁 תצוגה</button>
           <button class="btn btn-sm" id="vbtn-${q.id}" style="background:rgba(239,68,68,.1);color:#dc2626;border-color:rgba(239,68,68,.3);padding:.28rem .38rem" onclick="openVideoAttachAdminModal('${q.id}','שאלה ${q.index||i+1}')" title="צרף סרטון פתרון"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="5" width="14" height="14" rx="2.5" ry="2.5"/><polygon points="16 8 22 12 16 16"/></svg></button>
           <button class="btn btn-sm btn-danger" onclick="removeQuestion(${i})">🗑️</button>
         </div>
@@ -4150,6 +4151,129 @@ function renderPreview() {
 }
 
 function ensureBody(qi, val) { parsedQuestions[qi].text = val; }
+
+/* ══════════════════════════════════════════════════════════
+   STUDENT-VIEW PREVIEW  (single question + full exam)
+   Renders parsedQuestions the way students see them so admins
+   can verify formatting (math, images, bold) before saving.
+══════════════════════════════════════════════════════════ */
+
+// Format editor text into student-facing HTML: display math blocks,
+// inline images (img:key resolved via the inlineImages map, or plain URLs),
+// bold, inline-math escaping and newlines. Mirrors course.js formatMathText.
+function _previewFormatText(text, inlineImages = null) {
+  if (!text) return '';
+  const DISPLAY_RE = /(\$\$[\s\S]*?\$\$|\\\[[\s\S]*?\\\])/g;
+  const parts = String(text).split(DISPLAY_RE);
+  return parts.map(part => {
+    if (part.startsWith('$$') || part.startsWith('\\[')) {
+      const safe = part.replace(/&/g, '&amp;').replace(/</g, '&lt;');
+      return `<div class="math-display">${safe}</div>`;
+    }
+    let trimmed = part.replace(/^\s*\n/, '').replace(/\n\s*$/, '');
+    if (!trimmed) return '';
+    trimmed = trimmed.replace(/!\[([^\]]*)\]\(([^)]+)\)/g, (_, alt, rawRef) => {
+      const entry = resolveInlineImageEntry(String(rawRef || '').trim(), inlineImages);
+      const safe = entry ? safeUrl(entry.url) : '';
+      if (!safe) return '';
+      return `<div class="qv-image-wrap align-center"><img class="qv-image" src="${safe}" alt="${esc(alt || 'image')}" loading="lazy" referrerpolicy="no-referrer"></div>`;
+    });
+    trimmed = trimmed.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+    trimmed = trimmed.replace(/(\$[^$]+?\$)/g, m => m.replace(/&/g, '&amp;').replace(/</g, '&lt;'));
+    return trimmed.replace(/\n/g, '<br>');
+  }).join('');
+}
+
+// Build student-like HTML for a single parsed question (stem + sub-parts).
+function _renderPreviewQuestionCard(q, qi) {
+  if (!q) return '';
+  const isBonus = q.isBonus === true;
+  const subs    = q.subs || q.parts || [];
+  const label   = isBonus ? 'שאלת בונוס' : 'שאלה ' + (q.index || qi + 1);
+  const bonusBadge = isBonus ? `<span class="qv-bonus-badge">⭐ שאלת בונוס</span>` : '';
+  const stem = (q.text && q.text.trim())
+    ? `<div class="qv-text">${_previewFormatText(q.text, q.inlineImages)}</div>`
+    : '';
+
+  let partsHtml = '';
+  if (subs.length) {
+    partsHtml = `<div class="qv-parts">${subs.map((s, si) => {
+      const rawLabel = normalizeSubLabel(s.label || s.letter || '', si);
+      const sBonus   = s.isBonus === true;
+      return `<div class="qv-part${sBonus ? ' qv-part-bonus' : ''}">
+        <div class="qv-part-head">
+          <span class="qv-part-lbl">${sBonus ? '⭐ ' : ''}${esc(rawLabel)}</span>
+        </div>
+        <div class="qv-part-text">${_previewFormatText(s.text, s.inlineImages)}</div>
+      </div>`;
+    }).join('')}</div>`;
+  }
+
+  const emptyNote = (!(q.text && q.text.trim()) && !subs.length)
+    ? `<div class="qv-text" style="color:var(--muted);font-style:italic">— אין תוכן לשאלה זו —</div>`
+    : '';
+
+  return `<div class="qv-card${isBonus ? ' qv-card-bonus' : ''}">
+    <div class="qv-head${isBonus ? ' qv-head-bonus' : ''}">
+      <div class="qv-head-right">
+        <span class="qv-num">${esc(label)}</span>
+        ${bonusBadge}
+      </div>
+    </div>
+    ${stem}
+    ${emptyNote}
+    ${partsHtml}
+  </div>`;
+}
+
+function _openPreviewModal(id, titleText, bodyHtml) {
+  document.getElementById(id)?.remove();
+  const overlay = document.createElement('div');
+  overlay.id = id;
+  overlay.className = 'admin-modal-overlay';
+  overlay.innerHTML = `
+    <div class="admin-modal" style="max-width:760px;width:min(760px,94vw)">
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:1rem;margin-bottom:1rem">
+        <h3 style="margin:0;font-size:1.02rem">${esc(titleText)}</h3>
+        <button class="btn-icon" onclick="document.getElementById('${id}').remove()"
+          style="font-size:1.1rem;background:none;border:none;cursor:pointer;color:var(--muted)">✕</button>
+      </div>
+      <div class="preview-student-view">${bodyHtml}</div>
+    </div>`;
+  overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
+  document.body.appendChild(overlay);
+  const body = overlay.querySelector('.preview-student-view');
+  if (window.MathJax && MathJax.typesetPromise) MathJax.typesetPromise([body]).catch(() => {});
+}
+
+// Single-question preview — triggered by the 👁 button on each preview card.
+function openQuestionPreviewModal(qi) {
+  const q = parsedQuestions[qi];
+  if (!q) return;
+  const title = `👁 תצוגת סטודנט — ${q.isBonus ? 'שאלת בונוס' : 'שאלה ' + (q.index || qi + 1)}`;
+  _openPreviewModal('question-preview-modal', title, _renderPreviewQuestionCard(q, qi));
+}
+window.openQuestionPreviewModal = openQuestionPreviewModal;
+
+// Full-exam preview — triggered near the "שמור מבחן" button.
+function openExamPreviewModal() {
+  if (!parsedQuestions.length) { toast('אין שאלות להצגה בתצוגה מקדימה', 'error'); return; }
+  const courseName = document.getElementById('ae-course')?.selectedOptions?.[0]?.textContent?.trim() || '';
+  const title = (document.getElementById('ae-title')?.value || '').trim();
+  const year  = (document.getElementById('ae-year')?.value || '').trim();
+  const sem   = document.getElementById('ae-sem')?.value || '';
+  const moed  = document.getElementById('ae-moed')?.value || '';
+  const metaBits = [courseName, year, sem && ('סמסטר ' + sem), moed && ('מועד ' + moed)].filter(Boolean);
+  const header = `
+    <div style="background:#f8fafc;border:1px solid var(--border);border-radius:10px;padding:.8rem 1rem;margin-bottom:1rem">
+      <div style="font-weight:700;font-size:1rem">${esc(title || 'מבחן ללא כותרת')}</div>
+      ${metaBits.length ? `<div style="font-size:.82rem;color:var(--muted);margin-top:.25rem">${esc(metaBits.join(' · '))}</div>` : ''}
+      <div style="font-size:.8rem;color:var(--muted);margin-top:.25rem">${parsedQuestions.length} שאלות</div>
+    </div>`;
+  const body = header + parsedQuestions.map((q, i) => _renderPreviewQuestionCard(q, i)).join('');
+  _openPreviewModal('exam-preview-modal', '👁 תצוגה מקדימה של המבחן (כפי שסטודנט רואה)', body);
+}
+window.openExamPreviewModal = openExamPreviewModal;
 
 function hasPendingImageUploads() {
   return parsedQuestions.some(q => {

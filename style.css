@@ -2548,6 +2548,12 @@ mjx-container { direction: ltr; }
   direction: rtl;
   animation: slideDown .18s ease;
 }
+/* Student-view preview (single question / full exam) inside admin modal */
+.preview-student-view { direction: rtl; }
+.preview-student-view .qv-card { margin-bottom: 1rem; }
+.preview-student-view .qv-card:last-child { margin-bottom: 0; }
+.preview-student-view .qv-image { max-width: 100%; height: auto; border-radius: 8px; }
+.preview-student-view .qv-image-wrap { margin: .6rem 0; text-align: center; }
 @keyframes fadeIn {
   from { opacity: 0; }
   to   { opacity: 1; }
