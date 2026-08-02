@@ -3965,20 +3965,23 @@ async function renderExam() {
 
 /**
  * Renders progressive clue reveal UI for a question or sub.
- * @param {string[]} clues - array of clue texts (up to 2)
+ * @param {string[]} clues - array of clue texts (up to 3)
  * @param {string} entityId - unique ID used to build DOM element IDs
  */
 function renderClueReveal(clues, entityId) {
   const items = (clues || []).filter(Boolean);
   if (!items.length) return '';
   const buttons = items.map((text, i) => `
-    <button class="qv-clue-reveal-btn" id="clue-btn-${esc(entityId)}-${i}"
-      onclick="revealClue('${esc(entityId)}',${i})" title="גלה רמז ${i + 1}">
-      💡 גלה רמז ${i + 1}
-    </button>
-    <div class="qv-clue-item" id="clue-item-${esc(entityId)}-${i}">
-      <span class="qv-clue-item-icon">💡</span>
-      <span class="qv-clue-item-text">${esc(text)}</span>
+    <div class="qv-clue-row" id="clue-row-${esc(entityId)}-${i}">
+      <button class="qv-clue-reveal-btn" id="clue-btn-${esc(entityId)}-${i}"
+        onclick="revealClue('${esc(entityId)}',${i})" title="גלה רמז ${i + 1}">
+        💡 גלה רמז ${i + 1}
+      </button>
+      <div class="qv-clue-item" id="clue-item-${esc(entityId)}-${i}">
+        <span class="qv-clue-item-icon">💡</span>
+        <span class="qv-clue-item-text">${esc(text)}</span>
+        <button class="qv-clue-close-btn" onclick="hideClue('${esc(entityId)}',${i})" title="סגור רמז">✕</button>
+      </div>
     </div>`).join('');
   return `<div class="qv-clue-area">${buttons}</div>`;
 }
@@ -3986,10 +3989,18 @@ function renderClueReveal(clues, entityId) {
 function revealClue(entityId, idx) {
   const btn  = document.getElementById(`clue-btn-${entityId}-${idx}`);
   const item = document.getElementById(`clue-item-${entityId}-${idx}`);
-  if (btn)  btn.style.display  = 'none';
+  if (btn)  btn.style.display = 'none';
   if (item) item.classList.add('visible');
 }
 window.revealClue = revealClue;
+
+function hideClue(entityId, idx) {
+  const btn  = document.getElementById(`clue-btn-${entityId}-${idx}`);
+  const item = document.getElementById(`clue-item-${entityId}-${idx}`);
+  if (item) item.classList.remove('visible');
+  if (btn)  btn.style.display = '';
+}
+window.hideClue = hideClue;
 
 function renderQuestionCard(q, qi, starred, userVotes = {}, videoMap = {}, isAdmin = false, examId = '', examTitle = '', opts = {}) {
   // Lecturers (Hebrew or English role) and admins can upload a video for any question.

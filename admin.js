@@ -4429,7 +4429,8 @@ window.updateSubClue = updateSubClue;
 function renderClueSection(clues, updateCall, extraClass) {
   const c1 = esc(clues?.[0] || '');
   const c2 = esc(clues?.[1] || '');
-  const hasClues = (clues?.[0] || '').trim() || (clues?.[1] || '').trim();
+  const c3 = esc(clues?.[2] || '');
+  const hasClues = (clues?.[0] || '').trim() || (clues?.[1] || '').trim() || (clues?.[2] || '').trim();
   return `<details class="clue-section${extraClass ? ' ' + extraClass : ''}"${hasClues ? ' open' : ''}>
     <summary>💡 רמזים (אופציונלי)</summary>
     <div class="clue-section-body">
@@ -4444,6 +4445,12 @@ function renderClueSection(clues, updateCall, extraClass) {
         <textarea class="clue-textarea" rows="1"
           oninput="${updateCall}1,this.value)"
           placeholder="רמז שני, מפורט יותר...">${c2}</textarea>
+      </div>
+      <div class="clue-input-row">
+        <span class="clue-input-label">רמז 3:</span>
+        <textarea class="clue-textarea" rows="1"
+          oninput="${updateCall}2,this.value)"
+          placeholder="רמז שלישי, מפורט עוד יותר...">${c3}</textarea>
       </div>
     </div>
   </details>`;

@@ -1164,6 +1164,7 @@ body {
 
 /* ── Clue reveal (student view) ─────────────────────────────── */
 .qv-clue-area { margin: .5rem 0 0; display: flex; flex-direction: column; gap: .2rem; }
+.qv-clue-row { display: flex; flex-direction: column; gap: .2rem; }
 .qv-clue-reveal-btn {
   display: inline-flex; align-items: center; gap: .35rem;
   padding: .26rem .6rem; border-radius: 20px;
@@ -1182,6 +1183,12 @@ body {
 .qv-clue-item.visible { display: flex; }
 .qv-clue-item-icon { flex-shrink: 0; font-size: .92rem; }
 .qv-clue-item-text { flex: 1; }
+.qv-clue-close-btn {
+  flex-shrink: 0; background: none; border: none; cursor: pointer;
+  color: #b45309; font-size: .78rem; padding: 0 .1rem; line-height: 1;
+  opacity: .6; transition: opacity .12s;
+}
+.qv-clue-close-btn:hover { opacity: 1; }
 
 /* ── Multi-lecturer widget ── */
 .lecturers-list {
