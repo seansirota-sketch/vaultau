@@ -4380,22 +4380,22 @@ const DIFF_BUCKETS = ['easy', 'medium', 'hard', 'unsolved'];
 function clampDifficultyScore(value) {
   const n = Number(value);
   if (!Number.isFinite(n)) return null;
-  return Math.max(0, Math.min(100, Math.round(n)));
+  return Math.max(1, Math.min(10, Math.round(n)));
 }
 
 function normalizeDifficultyScore(voteValue) {
-  if (voteValue === 'easy') return 0;
-  if (voteValue === 'medium') return 50;
-  if (voteValue === 'hard') return 100;
+  if (voteValue === 'easy') return 1;
+  if (voteValue === 'medium') return 5;
+  if (voteValue === 'hard') return 10;
   if (voteValue === 'unsolved') return null;
   return clampDifficultyScore(voteValue);
 }
 
 function getDifficultyBucketFromScore(score) {
   if (!Number.isFinite(score)) return null;
-  if (score < 34) return 'easy';
-  if (score < 67) return 'medium';
-  return 'hard';
+  if (score < 4)  return 'easy';   // 1–3
+  if (score < 8)  return 'medium'; // 4–7
+  return 'hard';                   // 8–10
 }
 
 function getDifficultyBucketFromVote(voteValue) {
@@ -4431,15 +4431,16 @@ function getQuestionAverageRating(voteStats = {}) {
   const hard = Math.max(0, Number(voteStats.hard) || 0);
   const scored = easy + medium + hard;
   if (!scored) return null;
-  const fallbackAvg = (easy * 0 + medium * 50 + hard * 100) / scored;
+  const fallbackAvg = (easy * 1 + medium * 5 + hard * 10) / scored;
   return clampDifficultyScore(fallbackAvg);
 }
 
 function getDifficultyColor(averageRating) {
   const normalized = clampDifficultyScore(averageRating);
   if (normalized === null) return '#d1d5db';
-  const red = Math.round(255 * (normalized / 100));
-  const green = Math.round(255 * (1 - normalized / 100));
+  const t = (normalized - 1) / 9; // maps 1→0 (green) … 10→1 (red)
+  const red   = Math.round(255 * t);
+  const green = Math.round(255 * (1 - t));
   return `rgb(${red}, ${green}, 0)`;
 }
 
@@ -4458,7 +4459,7 @@ function renderDifficultyIndicator(qid, voteStats = {}, myVote = null, isAdminUs
   const voteCount = Number(voteStats.voteCount);
   const ratingSum = Number(voteStats.ratingSum);
   if (Number.isFinite(voteCount) && voteCount > 0 && Number.isFinite(ratingSum)) {
-    avgForTooltip = Math.max(0, Math.min(100, ratingSum / voteCount));
+    avgForTooltip = Math.max(1, Math.min(10, ratingSum / voteCount));
   } else if (avg !== null) {
     avgForTooltip = avg;
   }
@@ -4479,13 +4480,13 @@ function renderDifficultyIndicator(qid, voteStats = {}, myVote = null, isAdminUs
 
 function renderDifficultyControls(qid, myVote, voteStats, topic, isAdminUser = false) {
   const currentScore = normalizeDifficultyScore(myVote);
-  const sliderValue = currentScore === null ? 50 : currentScore;
+  const sliderValue = currentScore === null ? 5 : currentScore;
   const hasExistingVote = myVote !== undefined && myVote !== null;
   const isLocked = !isAdminUser && hasExistingVote;
   const lockTitle = isLocked ? 'ניתן לדרג כל שאלה פעם אחת בלבד' : 'דרגו את רמת הקושי של השאלה';
   const sliderStyle = hasExistingVote ? `style="accent-color:${esc(getDifficultyColor(sliderValue))}"` : '';
   return `<div class="qv-difficulty-wrap${isLocked ? ' locked' : ''}" data-topic="${esc(topic || '')}">
-    <input class="qv-difficulty-slider" type="range" min="0" max="100" step="1" value="${sliderValue}"
+    <input class="qv-difficulty-slider" type="range" min="1" max="10" step="1" value="${sliderValue}"
       oninput="onDifficultySliderInput('${qid}', this.value)"
       aria-label="דירוג קושי לשאלה"
       title="${esc(lockTitle)}"
