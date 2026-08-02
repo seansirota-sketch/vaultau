@@ -1119,6 +1119,70 @@ body {
   border-top: 1px solid var(--border-s);
 }
 
+/* ── Clue section (admin editor) ─────────────────────────────── */
+.clue-section {
+  margin: .4rem 1.1rem .5rem;
+  border: 1px solid #fde68a;
+  border-radius: 8px;
+  overflow: hidden;
+  background: #fffbeb;
+}
+.clue-section summary {
+  display: flex; align-items: center; gap: .4rem;
+  padding: .38rem .7rem;
+  font-size: .78rem; font-weight: 600; color: #92400e;
+  cursor: pointer; list-style: none; user-select: none;
+  background: #fef9c3;
+}
+.clue-section summary::-webkit-details-marker { display: none; }
+.clue-section summary::before {
+  content: '▶'; font-size: .58rem; transition: transform .15s; display: inline-block;
+}
+.clue-section[open] summary::before { transform: rotate(90deg); }
+.clue-section-body {
+  padding: .5rem .7rem .55rem;
+  display: flex; flex-direction: column; gap: .38rem;
+}
+.clue-input-row {
+  display: flex; align-items: flex-start; gap: .4rem;
+}
+.clue-input-label {
+  font-size: .73rem; font-weight: 600; color: #92400e;
+  white-space: nowrap; padding-top: .45rem; min-width: 46px; text-align: right;
+}
+.clue-textarea {
+  flex: 1; font-size: .82rem; padding: .38rem .55rem;
+  border: 1px solid #fcd34d; border-radius: 6px;
+  background: #fff; resize: vertical; min-height: 38px;
+  font-family: inherit; color: var(--text); line-height: 1.5;
+  box-sizing: border-box;
+}
+.clue-textarea:focus { outline: none; border-color: #f59e0b; box-shadow: 0 0 0 2px rgba(245,158,11,.15); }
+.sub-clue-section {
+  margin: .3rem 0 .1rem;
+}
+
+/* ── Clue reveal (student view) ─────────────────────────────── */
+.qv-clue-area { margin: .5rem 0 0; display: flex; flex-direction: column; gap: .2rem; }
+.qv-clue-reveal-btn {
+  display: inline-flex; align-items: center; gap: .35rem;
+  padding: .26rem .6rem; border-radius: 20px;
+  border: 1.5px solid #fcd34d; background: #fffbeb;
+  color: #92400e; font-size: .77rem; font-weight: 600;
+  cursor: pointer; transition: background .15s, border-color .15s;
+  align-self: flex-start;
+}
+.qv-clue-reveal-btn:hover { background: #fef9c3; border-color: #f59e0b; }
+.qv-clue-item {
+  display: none; align-items: flex-start; gap: .4rem;
+  padding: .42rem .6rem;
+  background: #fffbeb; border: 1.5px solid #fde68a; border-radius: 8px;
+  font-size: .85rem; color: #78350f; line-height: 1.55;
+}
+.qv-clue-item.visible { display: flex; }
+.qv-clue-item-icon { flex-shrink: 0; font-size: .92rem; }
+.qv-clue-item-text { flex: 1; }
+
 /* ── Multi-lecturer widget ── */
 .lecturers-list {
   display: flex; flex-wrap: wrap; gap: .35rem;
