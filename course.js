@@ -3963,6 +3963,45 @@ async function renderExam() {
   }
 }
 
+/**
+ * Renders progressive clue reveal UI for a question or sub.
+ * @param {string[]} clues - array of clue texts (up to 3)
+ * @param {string} entityId - unique ID used to build DOM element IDs
+ */
+function renderClueReveal(clues, entityId) {
+  const items = (clues || []).filter(Boolean);
+  if (!items.length) return '';
+  const buttons = items.map((text, i) => `
+    <div class="qv-clue-row" id="clue-row-${esc(entityId)}-${i}">
+      <button class="qv-clue-reveal-btn" id="clue-btn-${esc(entityId)}-${i}"
+        onclick="revealClue('${esc(entityId)}',${i})" title="גלה רמז ${i + 1}">
+        💡 גלה רמז ${i + 1}
+      </button>
+      <div class="qv-clue-item" id="clue-item-${esc(entityId)}-${i}">
+        <span class="qv-clue-item-icon">💡</span>
+        <span class="qv-clue-item-text">${esc(text)}</span>
+        <button class="qv-clue-close-btn" onclick="hideClue('${esc(entityId)}',${i})" title="סגור רמז">✕</button>
+      </div>
+    </div>`).join('');
+  return `<div class="qv-clue-area">${buttons}</div>`;
+}
+
+function revealClue(entityId, idx) {
+  const btn  = document.getElementById(`clue-btn-${entityId}-${idx}`);
+  const item = document.getElementById(`clue-item-${entityId}-${idx}`);
+  if (btn)  btn.style.display = 'none';
+  if (item) item.classList.add('visible');
+}
+window.revealClue = revealClue;
+
+function hideClue(entityId, idx) {
+  const btn  = document.getElementById(`clue-btn-${entityId}-${idx}`);
+  const item = document.getElementById(`clue-item-${entityId}-${idx}`);
+  if (item) item.classList.remove('visible');
+  if (btn)  btn.style.display = '';
+}
+window.hideClue = hideClue;
+
 function renderQuestionCard(q, qi, starred, userVotes = {}, videoMap = {}, isAdmin = false, examId = '', examTitle = '', opts = {}) {
   // Lecturers (Hebrew or English role) and admins can upload a video for any question.
   const _roleLocal = STATE.userData?.role;
@@ -4049,6 +4088,7 @@ function renderQuestionCard(q, qi, starred, userVotes = {}, videoMap = {}, isAdm
         </div>
         <div class="qv-part-text"></div>
         ${sImage ? `<div class="qv-image-wrap qv-image-wrap-sub align-${sAlign}"><img class="qv-image" src="${sImage}" alt="תמונה לסעיף" loading="lazy" referrerpolicy="no-referrer"></div>` : ''}
+        ${renderClueReveal(s.clues, s.id)}
       </div>`;
     }).join('');
     partsHtml = `<div class="qv-parts">${partsHtml}</div>`;
@@ -4079,6 +4119,7 @@ function renderQuestionCard(q, qi, starred, userVotes = {}, videoMap = {}, isAdm
     </div>
     <div class="qv-text"></div>
     ${qImage ? `<div class="qv-image-wrap align-${qAlign}"><img class="qv-image" src="${qImage}" alt="תמונה לשאלה ${qi + 1}" loading="lazy" referrerpolicy="no-referrer"></div>` : ''}
+    ${renderClueReveal(q.clues, q.id)}
     ${partsHtml}
   </div>`;
 }

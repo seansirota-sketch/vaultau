@@ -4144,6 +4144,7 @@ function renderPreview() {
           ondrop="dropImageIntoQuestionText(event,${i})"
           placeholder="טקסט השאלה כאן...">${esc(q.text)}</textarea>
         <div id="qb-inline-preview-${i}">${renderEditorInlineImagePreview(q.text, q.inlineImages, `qb-${i}`, i, null)}</div>`}
+      ${renderClueSection(q.clues, `updateQuestionClue(${i},`)}
     </div>`).join('');
 
   _refreshAdminVideoButtons();
@@ -4329,6 +4330,7 @@ function renderSubsPreview(subs, qi) {
         ondragleave="clearImageDropState(event)"
         ondrop="dropImageIntoSubText(event,${qi},${si})">${esc(s.text)}</textarea>
       <div id="s-inline-preview-${qi}-${si}">${renderEditorInlineImagePreview(s.text, s.inlineImages, `s-${qi}-${si}`, qi, si)}</div>
+      ${renderClueSection(s.clues, `updateSubClue(${qi},${si},`, 'sub-clue-section')}
     </div>`).join('')}
   </div>`;
 }
@@ -4341,6 +4343,7 @@ function addSubToPreview(qi) {
     label: normalizeSubLabel('', n),
     text: '',
     subject: '',
+    clues: [],
     timerEnabled: false,
     inlineImages: {},
   });
@@ -4402,6 +4405,57 @@ function toggleSubTimer(qi, si, checked) {
 }
 window.toggleSubTimer = toggleSubTimer;
 
+/* ── Clue helpers ─────────────────────────────────────────────── */
+function updateQuestionClue(qi, idx, val) {
+  if (!parsedQuestions[qi]) return;
+  if (!Array.isArray(parsedQuestions[qi].clues)) parsedQuestions[qi].clues = [];
+  parsedQuestions[qi].clues[idx] = val;
+}
+window.updateQuestionClue = updateQuestionClue;
+
+function updateSubClue(qi, si, idx, val) {
+  if (!parsedQuestions[qi]?.subs?.[si]) return;
+  if (!Array.isArray(parsedQuestions[qi].subs[si].clues)) parsedQuestions[qi].subs[si].clues = [];
+  parsedQuestions[qi].subs[si].clues[idx] = val;
+}
+window.updateSubClue = updateSubClue;
+
+/**
+ * Renders a collapsible clue editor panel (up to 2 clues).
+ * @param {string[]} clues - existing clue texts
+ * @param {string} updateCall - JS expression for the update callback, e.g. "updateQuestionClue(0,"
+ * @param {string} extraClass - optional extra CSS class
+ */
+function renderClueSection(clues, updateCall, extraClass) {
+  const c1 = esc(clues?.[0] || '');
+  const c2 = esc(clues?.[1] || '');
+  const c3 = esc(clues?.[2] || '');
+  const hasClues = (clues?.[0] || '').trim() || (clues?.[1] || '').trim() || (clues?.[2] || '').trim();
+  return `<details class="clue-section${extraClass ? ' ' + extraClass : ''}"${hasClues ? ' open' : ''}>
+    <summary>💡 רמזים (אופציונלי)</summary>
+    <div class="clue-section-body">
+      <div class="clue-input-row">
+        <span class="clue-input-label">רמז 1:</span>
+        <textarea class="clue-textarea" rows="1"
+          oninput="${updateCall}0,this.value)"
+          placeholder="רמז ראשון לפתרון...">${c1}</textarea>
+      </div>
+      <div class="clue-input-row">
+        <span class="clue-input-label">רמז 2:</span>
+        <textarea class="clue-textarea" rows="1"
+          oninput="${updateCall}1,this.value)"
+          placeholder="רמז שני, מפורט יותר...">${c2}</textarea>
+      </div>
+      <div class="clue-input-row">
+        <span class="clue-input-label">רמז 3:</span>
+        <textarea class="clue-textarea" rows="1"
+          oninput="${updateCall}2,this.value)"
+          placeholder="רמז שלישי, מפורט עוד יותר...">${c3}</textarea>
+      </div>
+    </div>
+  </details>`;
+}
+
 function clearImport() {
   const rt = document.getElementById('raw-text');
   if (rt) rt.value = '';
@@ -4425,6 +4479,7 @@ function addManualQuestion() {
     isBonus: false,
     timerEnabled: true,
     subs: [],
+    clues: [],
     inlineImages: {},
   });
   renderPreview();
@@ -4624,6 +4679,7 @@ async function submitAddExam() {
         isBonus: q.isBonus === true,
         allowAIGen: q.allowAIGen === true,
         timerEnabled: q.timerEnabled === true,
+        clues: (q.clues || []).map(c => String(c || '')).filter(Boolean),
         subs:    (q.subs || []).map((s, si) => {
           const normalized = normalizeSubEntry(s, si);
           return ({
@@ -4632,6 +4688,7 @@ async function submitAddExam() {
           text:  normalized.text,
           subject: normalized.subject,
           timerEnabled: s.timerEnabled === true,
+          clues: (s.clues || []).map(c => String(c || '')).filter(Boolean),
           inlineImages: Object.fromEntries(
             Object.entries(filterInlineImagesForText(normalized.text, s.inlineImages)).map(([k, v]) => {
               const url = typeof v === 'string' ? normalizeHttpUrl(v) : normalizeHttpUrl(v?.url || '');
