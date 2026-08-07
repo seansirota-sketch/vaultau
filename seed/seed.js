@@ -375,9 +375,11 @@ const ASSIGNMENTS_SEED = [
 ];
 
 const USERS_SEED = [
-  { email: 'student1@tau.ac.il', password: 'Test1234', displayName: 'סטודנט לדוגמה 1', role: 'student', subscriptionTier: 'free' },
-  { email: 'student2@tau.ac.il', password: 'Test1234', displayName: 'סטודנט לדוגמה 2', role: 'student', subscriptionTier: 'basic' },
-  { email: 'student3@tau.ac.il', password: 'Test1234', displayName: 'סטודנט לדוגמה 3', role: 'student', subscriptionTier: 'premium' },
+  // student1/2 are enrolled in 'calculus' — used to test course-targeted surveys.
+  // student3 is NOT enrolled in any course — used to verify they're never gated.
+  { email: 'student1@tau.ac.il', password: 'Test1234', displayName: 'סטודנט לדוגמה 1', role: 'student', subscriptionTier: 'free',    savedCourses: ['calculus'] },
+  { email: 'student2@tau.ac.il', password: 'Test1234', displayName: 'סטודנט לדוגמה 2', role: 'student', subscriptionTier: 'basic',   savedCourses: ['calculus', 'datastructs'] },
+  { email: 'student3@tau.ac.il', password: 'Test1234', displayName: 'סטודנט לדוגמה 3', role: 'student', subscriptionTier: 'premium', savedCourses: [] },
   { email: 'admin@admin.com',    password: 'Test1234', displayName: 'מנהל מערכת',       role: 'admin'   },
 ];
 
@@ -458,7 +460,7 @@ async function main() {
   // 1. Clear existing data
   console.log('🧹 Clearing existing data...');
   await clearAllAuthUsers();
-  for (const col of ['courses', 'exams', 'users', 'generate_usage', 'question_ratings', 'ai_questions_cache']) {
+  for (const col of ['courses', 'exams', 'users', 'generate_usage', 'question_ratings', 'ai_questions_cache', 'survey_campaigns']) {
     await clearCollection(col);
   }
   console.log('   ✓ Done\n');
@@ -498,6 +500,7 @@ async function main() {
       difficultyVotes:  {},
       freeSubjectAccess: {},
       freeVideoAccessByCourse: {},
+      savedCourses:     u.savedCourses || [],
     });
 
     console.log(`   ✓ ${u.email} (uid: ${uid})`);
@@ -522,7 +525,9 @@ async function main() {
   }
 
   // 6. settings/global
-  await setDoc('settings', 'global', { isSurveyActive: false });
+  // No activeSurveyCampaignId by default — admin activates a course-targeted
+  // survey campaign from the admin panel (ניהול סקר).
+  await setDoc('settings', 'global', {});
   console.log('   ✓ settings/global');
 
   // 7. AI monitoring seed data (generate_usage, question_ratings, ai_questions_cache)
