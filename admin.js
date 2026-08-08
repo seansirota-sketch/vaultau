@@ -6516,8 +6516,24 @@ async function renderSurveyManager() {
       .collection('targets').get();
     const targets = targetsSnap.docs.map(d => ({ uid: d.id, ...d.data() }));
 
-    const done    = targets.filter(t => t.status === 'done');
-    const notDone = targets.filter(t => t.status !== 'done');
+    const done = targets
+      .filter(t => t.status === 'done')
+      .sort((a, b) => {
+        const aTime = a.doneAt?.toDate ? a.doneAt.toDate().getTime() : 0;
+        const bTime = b.doneAt?.toDate ? b.doneAt.toDate().getTime() : 0;
+        return aTime - bTime;
+      });
+    const notDone = targets
+      .filter(t => t.status !== 'done')
+      .sort((a, b) => (a.email || '').localeCompare(b.email || ''));
+
+    const formatDoneAt = (t) => {
+      if (!t.doneAt?.toDate) return '—';
+      return t.doneAt.toDate().toLocaleString('he-IL', {
+        dateStyle: 'short',
+        timeStyle: 'short',
+      });
+    };
 
     const row = (t, filled) => `<tr${filled ? '' : ' style="opacity:.65"'}>
       <td style="font-size:.82rem">${esc(t.email || t.uid || '—')}</td>
@@ -6527,15 +6543,18 @@ async function renderSurveyManager() {
           ? '<span class="badge" style="background:#dcfce7;color:#166534;border:1px solid #86efac">✓ מילא</span>'
           : '<span class="badge" style="background:#fef2f2;color:#991b1b;border:1px solid #fca5a5">✗ טרם</span>'}
       </td>
+      <td style="font-size:.8rem;color:var(--muted);white-space:nowrap">
+        ${filled ? esc(formatDoneAt(t)) : '—'}
+      </td>
     </tr>`;
 
     if (respEl) {
       respEl.innerHTML = `
         <p style="font-size:.85rem;color:var(--muted);margin:0 0 .8rem">
-          ${done.length} מתוך ${targets.length} משתמשים משויכי הקורס מילאו את הסקר
+          ${done.length} מתוך ${targets.length} משתמשים משויכי הקורס מילאו את הסקר. המשתמשים שמילאו קודם מופיעים למעלה.
         </p>
         <table class="tbl">
-          <thead><tr><th>אימייל</th><th>שם</th><th style="text-align:center">סטטוס</th></tr></thead>
+          <thead><tr><th>אימייל</th><th>שם</th><th style="text-align:center">סטטוס</th><th style="text-align:center">מועד סיום</th></tr></thead>
           <tbody>
             ${done.map(t => row(t, true)).join('')}
             ${notDone.map(t => row(t, false)).join('')}
