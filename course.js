@@ -2193,7 +2193,7 @@ function requireTermsAccepted() {
 
 function requireSurveyDone() {
   // If a survey is active and user hasn't completed it, block all navigation.
-  if (STATE._surveyPending && STATE.userData?.surveyDone !== true) {
+  if (STATE._surveyPending) {
     // Re-show the survey modal if it was somehow closed
     if (!document.getElementById('survey-modal') && STATE._surveyUrl) {
       showSurveyModal(STATE._surveyUrl);
@@ -2383,6 +2383,7 @@ async function submitConsent() {
     };
 
     _getOrCreateSession();
+    checkAndShowSurvey();
     renderNavbar();
     history.replaceState({ page: 'home', courseId: null, examId: null }, '');
     renderPage();
@@ -4742,23 +4743,40 @@ function _doCopy(text, event, qid = '') {
 
 /* ══════════════════════════════════════════════════════════
    SURVEY MODAL  (student-facing)
+   Course-targeted campaign model — see admin.js "SURVEY MANAGER".
+   A user is only ever gated if they have a target doc under the
+   currently active campaign (i.e. they were enrolled in the
+   targeted course AT THE MOMENT the admin activated it).
 ══════════════════════════════════════════════════════════ */
 
 async function checkAndShowSurvey() {
   try {
-    // Already filled — skip
-    if (STATE.userData?.surveyDone === true) return;
+    const uid = STATE.fireUser?.uid;
+    if (!uid) return;
 
-    const doc = await db.collection('settings').doc('global').get();
-    if (!doc.exists) return;
-    const { isSurveyActive, surveyUrl } = doc.data();
-    if (!isSurveyActive || !surveyUrl) return;
+    const settingsDoc = await db.collection('settings').doc('global').get();
+    const campaignId = settingsDoc.exists ? (settingsDoc.data().activeSurveyCampaignId || null) : null;
+    if (!campaignId) return;
+
+    const campaignDoc = await db.collection('survey_campaigns').doc(campaignId).get();
+    if (!campaignDoc.exists) return;
+    const { active, url } = campaignDoc.data();
+    if (!active || !url) return;
+
+    // Only gated if this user was snapshotted into the campaign's targets
+    // at activation time — new signups / later joiners get no target doc.
+    const targetRef = db.collection('survey_campaigns').doc(campaignId)
+      .collection('targets').doc(uid);
+    const targetDoc = await targetRef.get();
+    if (!targetDoc.exists) return;
+    if (targetDoc.data().status === 'done') return;
 
     // Mark survey as pending on STATE so renderPage can gate on it
-    STATE._surveyPending = true;
-    STATE._surveyUrl     = surveyUrl;
+    STATE._surveyPending  = true;
+    STATE._surveyUrl      = url;
+    STATE._surveyCampaignId = campaignId;
 
-    showSurveyModal(surveyUrl);
+    showSurveyModal(url);
   } catch(e) {
     console.warn('checkAndShowSurvey error:', e);
   }
@@ -4794,27 +4812,63 @@ function showSurveyModal(url) {
         <p class="survey-mandatory-note">
           ⚠️ מילוי הסקר הוא <strong>חובה</strong> — לא ניתן לגשת למבחנים לפני השלמתו
         </p>
-        <button class="btn btn-primary" onclick="markSurveyDone()">
-          ✅ סיימתי למלא את הסקר
-        </button>
+        <p style="font-size:.85rem;color:var(--muted,#64748b);margin:.3rem 0 .6rem">
+          לאחר שליחת הטופס יופיע במסך האישור <strong>קוד בן 4 ספרות</strong> — יש להזין אותו כאן כדי להמשיך.
+        </p>
+        <div id="survey-code-error" style="display:none;color:#dc2626;font-size:.85rem;margin-bottom:.5rem"></div>
+        <div style="display:flex;gap:.6rem;align-items:center;flex-wrap:wrap">
+          <input id="survey-code-input" type="text" inputmode="numeric" maxlength="4"
+            placeholder="קוד בן 4 ספרות" dir="ltr"
+            style="font-size:1.1rem;letter-spacing:.2em;text-align:center;width:9rem;padding:.5rem;border:1.5px solid #cbd5e1;border-radius:.5rem">
+          <button class="btn btn-primary" onclick="submitSurveyCode()">
+            ✅ אישור קוד
+          </button>
+        </div>
       </div>
     </div>`;
 
   document.body.appendChild(modal);
   // Prevent background scroll
   document.body.style.overflow = 'hidden';
+
+  // Allow Enter key inside the code field to submit
+  document.getElementById('survey-code-input')?.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') submitSurveyCode();
+  });
 }
 
-async function markSurveyDone() {
-  const uid = STATE.fireUser?.uid;
-  const btn = document.querySelector('#survey-modal .btn-primary');
-  if (btn) { btn.disabled = true; btn.textContent = '💾 שומר...'; }
+async function submitSurveyCode() {
+  const input   = document.getElementById('survey-code-input');
+  const errBox  = document.getElementById('survey-code-error');
+  const btn     = document.querySelector('#survey-modal .btn-primary');
+  const code    = (input?.value || '').trim();
+  const campaignId = STATE._surveyCampaignId;
+
+  if (errBox) { errBox.style.display = 'none'; errBox.textContent = ''; }
+
+  if (!code) {
+    if (errBox) { errBox.textContent = 'נא להזין את הקוד המוצג בדף האישור של הטופס'; errBox.style.display = 'block'; }
+    input?.focus();
+    return;
+  }
+
+  if (btn) { btn.disabled = true; btn.textContent = '💾 בודק...'; }
 
   try {
-    if (uid) {
-      await saveUserData(uid, { surveyDone: true });
-      STATE.userData = { ...STATE.userData, surveyDone: true };
+    const idToken = await STATE.fireUser?.getIdToken();
+    if (!idToken) throw new Error('יש להתחבר מחדש כדי לאמת את הסקר');
+
+    const res = await fetch('/.netlify/functions/verify-survey-code', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + idToken },
+      body: JSON.stringify({ campaignId, code }),
+    });
+    const data = await res.json().catch(() => ({}));
+
+    if (!res.ok) {
+      throw new Error(data.error || 'קוד שגוי — נסה שוב');
     }
+
     STATE._surveyPending = false;
     closeSurveyModal();
     toast('תודה על המשוב! 🙏', 'info');
@@ -4822,9 +4876,9 @@ async function markSurveyDone() {
     renderNavbar();
     renderPage();
   } catch(e) {
-    console.error('markSurveyDone error:', e);
-    if (btn) { btn.disabled = false; btn.textContent = '✅ סיימתי למלא את הסקר'; }
-    toast('שגיאה בשמירה — נסה שוב', 'error');
+    console.error('submitSurveyCode error:', e);
+    if (errBox) { errBox.textContent = e.message || 'שגיאה באימות הקוד — נסה שוב'; errBox.style.display = 'block'; }
+    if (btn) { btn.disabled = false; btn.textContent = '✅ אישור קוד'; }
   }
 }
 

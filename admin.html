@@ -627,6 +627,17 @@
           <div style="padding:1.25rem;display:flex;flex-direction:column;gap:1rem">
 
             <div class="form-group" style="margin:0">
+              <label style="font-weight:600">קורס יעד</label>
+              <select id="survey-course-select">
+                <option value="">-- בחר קורס --</option>
+              </select>
+              <p style="font-size:.76rem;color:var(--muted);margin:.35rem 0 0">
+                הסקר יוצג רק למשתמשים שהוסיפו את הקורס הזה ל"הקורסים שלי" <strong>בזמן ההפעלה</strong>.
+                מי שיצטרף לקורס אחרי כן — לא יידרש למלא.
+              </p>
+            </div>
+
+            <div class="form-group" style="margin:0">
               <label style="font-weight:600">קישור ל-Google Form</label>
               <input id="survey-url-input" type="url" dir="ltr"
                 placeholder="https://docs.google.com/forms/d/e/.../viewform?embedded=true"
@@ -634,17 +645,22 @@
               <p style="font-size:.76rem;color:var(--muted);margin:.35rem 0 0">
                 השתמש בקישור ה-<strong>Embed</strong> מ-Google Forms (שיתוף → הטמעה → העתק URL)
               </p>
+              <p style="font-size:.76rem;color:var(--muted);margin:.35rem 0 0">
+                ⚠️ לאחר ההפעלה יוצג כאן <strong>קוד אימות בן 4 ספרות</strong> — יש להעתיקו
+                להודעת האישור של הטופס (Google Forms → הגדרות → מצגת → הודעת אישור),
+                כדי שהסטודנט יראה אותו רק לאחר שבאמת סיים למלא את הסקר.
+              </p>
             </div>
 
             <div style="display:flex;gap:.75rem;flex-wrap:wrap">
               <button class="btn btn-primary" onclick="activateSurvey()">
-                ✅ הפעל סקר לכולם
+                ✅ הפעל סקר לקורס
               </button>
               <button class="btn btn-danger" onclick="deactivateSurvey()">
                 ⛔ כבה סקר
               </button>
               <button class="btn btn-secondary" onclick="resetSurveyResponses()">
-                🔄 אפס תשובות (הצג שוב לכולם)
+                🔄 אפס תשובות (הצג שוב לכל מי ששויך)
               </button>
             </div>
           </div>

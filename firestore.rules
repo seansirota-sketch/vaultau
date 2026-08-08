@@ -371,6 +371,39 @@ service cloud.firestore {
       allow write: if isAdmin();
     }
 
+    // Course-targeted survey campaigns (ניהול סקר).
+    // Admin creates a campaign scoped to one course and snapshots the
+    // students enrolled (savedCourses) at that moment into /targets/{uid}.
+    // Users only ever see/act on their OWN target doc, and can only flip
+    // it from 'pending' to 'done' — never touch anything else about the
+    // campaign (url/courseId/active/etc).
+    match /survey_campaigns/{campaignId} {
+      allow read: if isLoggedIn();
+      allow write: if isAdmin();
+
+      match /targets/{uid} {
+        // Students may only READ their own target (to know if they're
+        // gated). Marking a target 'done' is NEVER allowed from the
+        // client — it only happens server-side, in the
+        // verify-survey-code Netlify function, after the user proves
+        // they saw the confirmation code that Google only reveals once
+        // the form is actually submitted. This closes the devtools-console
+        // bypass (a user could otherwise just call .update() directly).
+        allow read: if isAdmin() || (isLoggedIn() && request.auth.uid == uid);
+        allow create, update: if isAdmin();
+        allow delete: if isAdmin();
+      }
+
+      // Confirmation code shown only on the Google Form's own confirmation
+      // screen (never sent to the client app). Only the admin panel may
+      // read/write it; students never get read access — completion is
+      // verified server-side by the verify-survey-code Netlify function
+      // using the Admin SDK, which bypasses these rules entirely.
+      match /secret/{docId} {
+        allow read, write: if isAdmin();
+      }
+    }
+
     // CATCH-ALL: deny everything not explicitly matched above.
     // Any new collection MUST get its own explicit rule above.
     match /{document=**} {

@@ -1700,7 +1700,7 @@ function _applySectionUI(name) {
   if (name === 'add-exam')    { populateAllSelects(); _renderAssignedLecturersWidget(); }
   if (name === 'users')       renderUserStats();
   if (name === 'manage-users') renderManageUsers();
-  if (name === 'survey')      renderSurveyManager();
+  if (name === 'survey')      { populateAllSelects(); renderSurveyManager(); }
   if (name === 'reports')     renderReportsSection();
   if (name === 'ai-monitor')  renderAIMonitor();
   if (name === 'subject-ai')  renderSubjectAiMapperSection();
@@ -1719,7 +1719,7 @@ async function populateAllSelects() {
     const opts = courses.map(c =>
       `<option value="${c.id}">${esc(c.name)} (${esc(c.code)})</option>`
     ).join('');
-    ['ae-course', 'manage-filter', 'an-filter', 'bulk-course', 'bc-course', 'asm-course'].forEach(id => {
+    ['ae-course', 'manage-filter', 'an-filter', 'bulk-course', 'bc-course', 'asm-course', 'survey-course-select'].forEach(id => {
       const el = document.getElementById(id);
       if (el) el.innerHTML =
         (id === 'manage-filter' || id === 'an-filter' ? '<option value="">כל הקורסים</option>' :
@@ -6414,7 +6414,18 @@ async function loadExamVoteStats(examId, qIdsStr, btn) {
 
 /* ══════════════════════════════════════════════════════════
    SURVEY MANAGER  (admin)
+   Course-targeted campaign model:
+   - settings/global.activeSurveyCampaignId → points at the live campaign
+   - survey_campaigns/{id} { url, courseId, courseName, active, ... }
+   - survey_campaigns/{id}/targets/{uid} { status:'pending'|'done', ... }
+     snapshotted from users whose savedCourses contains courseId AT
+     ACTIVATION TIME — later joiners are never added.
 ══════════════════════════════════════════════════════════ */
+
+async function _getActiveSurveyCampaignId() {
+  const doc = await db.collection('settings').doc('global').get();
+  return doc.exists ? (doc.data().activeSurveyCampaignId || null) : null;
+}
 
 async function renderSurveyManager() {
   const statusEl = document.getElementById('survey-status-body');
@@ -6422,15 +6433,30 @@ async function renderSurveyManager() {
   if (statusEl) statusEl.innerHTML = '<div class="spinner" style="margin:0 auto"></div>';
   if (respEl)   respEl.innerHTML   = '<div class="spinner" style="margin:0 auto"></div>';
 
-  // ── Part 1: settings/global (independent try/catch) ──────────
-  try {
-    const doc      = await db.collection('settings').doc('global').get();
-    const settings = doc.exists ? doc.data() : {};
-    const isActive = settings.isSurveyActive === true;
-    const url      = settings.surveyUrl || '';
+  let campaignId = null;
+  let campaign   = null;
 
-    const urlInput = document.getElementById('survey-url-input');
+  // ── Part 1: active campaign status (independent try/catch) ───
+  try {
+    campaignId = await _getActiveSurveyCampaignId();
+    if (campaignId) {
+      const cDoc = await db.collection('survey_campaigns').doc(campaignId).get();
+      campaign = cDoc.exists ? cDoc.data() : null;
+    }
+    const isActive = !!(campaign && campaign.active === true);
+    const url      = campaign?.url || '';
+
+    let confirmCode = '';
+    if (campaignId && isActive) {
+      const secretDoc = await db.collection('survey_campaigns').doc(campaignId)
+        .collection('secret').doc('code').get();
+      confirmCode = secretDoc.exists ? (secretDoc.data().code || '') : '';
+    }
+
+    const urlInput    = document.getElementById('survey-url-input');
+    const courseSelect = document.getElementById('survey-course-select');
     if (urlInput && url) urlInput.value = url;
+    if (courseSelect && campaign?.courseId) courseSelect.value = campaign.courseId;
 
     if (statusEl) {
       statusEl.innerHTML = `
@@ -6444,68 +6470,58 @@ async function renderSurveyManager() {
             <span style="font-size:1rem">${isActive ? '🟢' : '⚫'}</span>
             ${isActive ? 'סקר פעיל' : 'סקר כבוי'}
           </div>
+          ${isActive
+            ? `<span style="font-size:.85rem;color:var(--fg)">🎓 קורס: <strong>${esc(campaign.courseName || campaign.courseId || '—')}</strong></span>`
+            : ''}
           ${url
             ? `<a href="${esc(url)}" target="_blank" rel="noopener"
                 style="font-size:.8rem;color:var(--blue);text-decoration:underline;word-break:break-all">
                 ${esc(url.length > 60 ? url.slice(0,60)+'…' : url)}
                </a>`
             : '<span style="color:var(--muted);font-size:.85rem">אין לינק מוגדר</span>'}
-        </div>`;
+        </div>
+        ${isActive && confirmCode ? `
+        <div style="margin-top:1rem;padding:.85rem 1rem;background:#fffbeb;border:1.5px solid #fde68a;border-radius:.6rem">
+          <div style="font-size:.8rem;color:#92400e;margin-bottom:.35rem">
+            🔑 קוד אימות (יש להוסיפו להודעת האישור של הטופס ב-Google Forms)
+          </div>
+          <div style="display:flex;align-items:center;gap:.6rem">
+            <code style="font-size:1.3rem;font-weight:700;letter-spacing:.15em;color:#92400e">${esc(confirmCode)}</code>
+            <button class="btn btn-secondary btn-sm" onclick="navigator.clipboard.writeText('${esc(confirmCode)}').then(()=>toast('קוד הועתק','info'))">📋 העתק</button>
+          </div>
+        </div>` : ''}`;
     }
   } catch(e) {
-    console.error('renderSurveyManager — settings error:', e);
+    console.error('renderSurveyManager — campaign error:', e);
     if (statusEl) {
       const isPerms = e.code === 'permission-denied';
       statusEl.innerHTML = isPerms
         ? `<div class="form-error show" style="margin:0">
             <strong>שגיאת הרשאות Firestore</strong><br>
-            יש להוסיף חוקים ל-<code>settings</code> ב-Firebase Console —
+            יש להוסיף חוקים ל-<code>survey_campaigns</code> ב-Firebase Console —
             ראה הוראות למטה.
            </div>`
         : `<p style="color:var(--danger);margin:0">${esc(e.message)}</p>`;
     }
   }
 
-  // ── Part 2: user responses (independent try/catch) ────────────
+  // ── Part 2: target responses for the active campaign ──────────
   try {
-    const usersSnap = await db.collection('users').get();
-    const allDocs   = usersSnap.docs.map(d => ({ _docId: d.id, ...d.data() }));
-
-    // Deduplicate by email — same logic as renderUserStats.
-    // If a user deleted their account and re-registered they get a new UID
-    // and a new Firestore doc. Keep only the doc with the most data.
-    const scoreDoc = d =>
-      (d.acceptedTerms ? 5 : 0) +
-      (d.displayName   ? 3 : 0) +
-      (d.surveyDone    ? 2 : 0) +
-      (d.copyCount || 0) / 10;
-
-    const byEmail = new Map();
-    const noEmail = [];
-    for (const doc of allDocs) {
-      const email = (doc.email || '').toLowerCase().trim();
-      if (!email) {
-        // Only keep docs that have at least a uid (real user, not a ghost)
-        if (doc.uid || doc.displayName || doc.acceptedTerms) noEmail.push(doc);
-        continue;
-      }
-      if (!byEmail.has(email)) {
-        byEmail.set(email, doc);
-      } else {
-        if (scoreDoc(doc) > scoreDoc(byEmail.get(email))) byEmail.set(email, doc);
-      }
+    if (!campaignId || !campaign) {
+      if (respEl) respEl.innerHTML = '<p style="color:var(--muted);margin:0">אין סקר פעיל כרגע</p>';
+      return;
     }
-    const allUsers = [
-      ...[...byEmail.values()].sort((a,b) => (a.email||'').localeCompare(b.email||'')),
-      ...noEmail,
-    ];
 
-    const done    = allUsers.filter(u => u.surveyDone === true);
-    const notDone = allUsers.filter(u => u.surveyDone !== true);
+    const targetsSnap = await db.collection('survey_campaigns').doc(campaignId)
+      .collection('targets').get();
+    const targets = targetsSnap.docs.map(d => ({ uid: d.id, ...d.data() }));
 
-    const row = (u, filled) => `<tr${filled ? '' : ' style="opacity:.65"'}>
-      <td style="font-size:.82rem">${esc(u.email || u.uid || '—')}</td>
-      <td>${esc(u.displayName || '—')}</td>
+    const done    = targets.filter(t => t.status === 'done');
+    const notDone = targets.filter(t => t.status !== 'done');
+
+    const row = (t, filled) => `<tr${filled ? '' : ' style="opacity:.65"'}>
+      <td style="font-size:.82rem">${esc(t.email || t.uid || '—')}</td>
+      <td>${esc(t.displayName || '—')}</td>
       <td style="text-align:center">
         ${filled
           ? '<span class="badge" style="background:#dcfce7;color:#166534;border:1px solid #86efac">✓ מילא</span>'
@@ -6516,24 +6532,31 @@ async function renderSurveyManager() {
     if (respEl) {
       respEl.innerHTML = `
         <p style="font-size:.85rem;color:var(--muted);margin:0 0 .8rem">
-          ${done.length} מתוך ${allUsers.length} משתמשים מילאו את הסקר
+          ${done.length} מתוך ${targets.length} משתמשים משויכי הקורס מילאו את הסקר
         </p>
         <table class="tbl">
           <thead><tr><th>אימייל</th><th>שם</th><th style="text-align:center">סטטוס</th></tr></thead>
           <tbody>
-            ${done.map(u => row(u, true)).join('')}
-            ${notDone.map(u => row(u, false)).join('')}
+            ${done.map(t => row(t, true)).join('')}
+            ${notDone.map(t => row(t, false)).join('')}
           </tbody>
         </table>`;
     }
   } catch(e) {
-    console.error('renderSurveyManager — users error:', e);
+    console.error('renderSurveyManager — targets error:', e);
     if (respEl) respEl.innerHTML = `<p style="color:var(--danger);margin:0">${esc(e.message)}</p>`;
   }
 }
 
 async function activateSurvey() {
-  const url = document.getElementById('survey-url-input')?.value.trim();
+  const url      = document.getElementById('survey-url-input')?.value.trim();
+  const courseId = document.getElementById('survey-course-select')?.value.trim();
+
+  if (!courseId) {
+    toast('נא לבחור קורס יעד לפני ההפעלה', 'error');
+    document.getElementById('survey-course-select')?.focus();
+    return;
+  }
   if (!url) {
     toast('נא להזין קישור ל-Google Form לפני ההפעלה', 'error');
     document.getElementById('survey-url-input')?.focus();
@@ -6543,22 +6566,110 @@ async function activateSurvey() {
     toast('קישור לא תקין — חייב להתחיל ב-https://', 'error');
     return;
   }
+
+  const btn = document.querySelector('#sec-survey .btn-primary');
+  if (btn) { btn.disabled = true; btn.textContent = 'מפעיל...'; }
+
   try {
+    const courses = await fetchCourses();
+    const courseName = courses.find(c => c.id === courseId)?.name || courseId;
+
+    // Snapshot every user currently enrolled in this course — later joiners
+    // are intentionally excluded (frozen audience at activation time).
+    const usersSnap = await db.collection('users')
+      .where('savedCourses', 'array-contains', courseId)
+      .get();
+
+    if (usersSnap.empty) {
+      toast('לא נמצאו משתמשים משויכים לקורס זה — לא הופעל סקר', 'error');
+      if (btn) { btn.disabled = false; btn.textContent = '✅ הפעל סקר לקורס'; }
+      return;
+    }
+
+    if (!confirm(`הסקר יוצג ל-${usersSnap.size} משתמשים המשויכים כרגע לקורס "${courseName}". להמשיך?`)) {
+      if (btn) { btn.disabled = false; btn.textContent = '✅ הפעל סקר לקורס'; }
+      return;
+    }
+
+    // Deactivate any previously active campaign first.
+    const prevCampaignId = await _getActiveSurveyCampaignId();
+    if (prevCampaignId) {
+      await db.collection('survey_campaigns').doc(prevCampaignId).set(
+        { active: false }, { merge: true }
+      );
+    }
+
+    const campaignRef = db.collection('survey_campaigns').doc();
+    await campaignRef.set({
+      url,
+      courseId,
+      courseName,
+      active: true,
+      targetCount: usersSnap.size,
+      createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+      createdBy: adminUser?.email || null,
+    });
+
+    // Generate a 4-digit confirmation code, stored ONLY in an admin-only
+    // subcollection (never readable by students). The admin must paste
+    // this same code into the Google Form's own "confirmation message"
+    // (Settings → Presentation), so a student only ever sees it AFTER
+    // actually submitting the form — proving real completion, not just
+    // a self-report click.
+    const confirmCode = String(Math.floor(1000 + Math.random() * 9000));
+    await campaignRef.collection('secret').doc('code').set({ code: confirmCode });
+
+    // Batch-write target docs (Firestore batch limit is 500 writes).
+    const docs = usersSnap.docs;
+    for (let i = 0; i < docs.length; i += 400) {
+      const chunk = docs.slice(i, i + 400);
+      const batch = db.batch();
+      chunk.forEach(d => {
+        const u = d.data();
+        batch.set(campaignRef.collection('targets').doc(d.id), {
+          status: 'pending',
+          email: u.email || '',
+          displayName: u.displayName || '',
+        });
+      });
+      await batch.commit();
+    }
+
     await db.collection('settings').doc('global').set(
-      { surveyUrl: url, isSurveyActive: true },
+      { activeSurveyCampaignId: campaignRef.id },
       { merge: true }
     );
-    toast('✅ הסקר הופעל לכל המשתמשים', 'success');
+
+    toast(`✅ הסקר הופעל ל-${usersSnap.size} משתמשים בקורס "${courseName}"`, 'success');
+    alert(
+      `הסקר הופעל בהצלחה!\n\n` +
+      `קוד האימות שנוצר: ${confirmCode}\n\n` +
+      `חשוב: יש להעתיק קוד זה להודעת האישור (Confirmation message) ` +
+      `בהגדרות הטופס בגוגל פורמס (Settings → Presentation → Confirmation message), ` +
+      `כדי שהסטודנט יראה אותו רק לאחר שסיים למלא את הסקר בפועל.\n\n` +
+      `הקוד מוצג גם בכרטיס הסטטוס למטה בכל עת.`
+    );
     renderSurveyManager();
   } catch(e) {
+    console.error('activateSurvey error', e);
     toast('שגיאה: ' + e.message, 'error');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = '✅ הפעל סקר לקורס'; }
   }
 }
 
 async function deactivateSurvey() {
   try {
+    const campaignId = await _getActiveSurveyCampaignId();
+    if (!campaignId) {
+      toast('אין סקר פעיל כרגע', 'info');
+      return;
+    }
+    await db.collection('survey_campaigns').doc(campaignId).set(
+      { active: false }, { merge: true }
+    );
     await db.collection('settings').doc('global').set(
-      { isSurveyActive: false },
+      { activeSurveyCampaignId: firebase.firestore.FieldValue.delete() },
       { merge: true }
     );
     toast('⛔ הסקר כובה', 'info');
@@ -6569,15 +6680,41 @@ async function deactivateSurvey() {
 }
 
 async function resetSurveyResponses() {
-  if (!confirm('איפוס יגרום לכל הסטודנטים לראות את הסקר שוב. להמשיך?')) return;
+  const campaignId = await _getActiveSurveyCampaignId();
+  if (!campaignId) {
+    toast('אין סקר פעיל לאיפוס', 'error');
+    return;
+  }
+  if (!confirm('איפוס יגרום לכל המשתמשים המשויכים לראות את הסקר שוב. להמשיך?')) return;
   try {
-    const snap  = await db.collection('users').get();
-    const batch = db.batch();
-    snap.docs.forEach(d => {
-      batch.update(d.ref, { surveyDone: firebase.firestore.FieldValue.delete() });
-    });
-    await batch.commit();
-    toast('🔄 תשובות אופסו — הסקר יוצג לכולם מחדש', 'info');
+    const targetsSnap = await db.collection('survey_campaigns').doc(campaignId)
+      .collection('targets').get();
+    const docs = targetsSnap.docs;
+    for (let i = 0; i < docs.length; i += 400) {
+      const chunk = docs.slice(i, i + 400);
+      const batch = db.batch();
+      chunk.forEach(d => {
+        batch.update(d.ref, {
+          status: 'pending',
+          doneAt: firebase.firestore.FieldValue.delete(),
+        });
+      });
+      await batch.commit();
+    }
+
+    // Regenerate the confirmation code so users who already saw the old
+    // code (from their first completion) can't reuse it to skip the
+    // form the second time around — they must submit it again to see
+    // the new code on the confirmation screen.
+    const newCode = String(Math.floor(1000 + Math.random() * 9000));
+    await db.collection('survey_campaigns').doc(campaignId)
+      .collection('secret').doc('code').set({ code: newCode });
+
+    toast('🔄 תשובות אופסו — הסקר יוצג שוב לכל המשויכים', 'info');
+    alert(
+      `התשובות אופסו וקוד אימות חדש נוצר: ${newCode}\n\n` +
+      `יש לעדכן את הודעת האישור בטופס ה-Google Form לקוד החדש הזה.`
+    );
     renderSurveyManager();
   } catch(e) {
     toast('שגיאה באיפוס: ' + e.message, 'error');
