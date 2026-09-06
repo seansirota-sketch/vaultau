@@ -755,23 +755,43 @@ let STATE = {
   studyTracking: null,  // active study session for the current exam
 };
 
-function _stopStudyTracking() {
+let _studyPersistTimer = null;
+
+function _persistStudyTracking() {
   const tracking = STATE.studyTracking;
   if (!tracking) return;
   const elapsed = Math.max(0, Math.floor((Date.now() - tracking.startedAt) / 1000));
-  STATE.studyTracking = null;
-  if (!elapsed || !STATE.fireUser?.uid) return;
+  if (!elapsed) return;
+  tracking.startedAt = Date.now();
   const totals = { ...(STATE.userData?.studyTimeByCourse || {}) };
   totals[tracking.courseId] = Math.max(0, Number(totals[tracking.courseId]) || 0) + elapsed;
   STATE.userData = { ...(STATE.userData || {}), studyTimeByCourse: totals };
+  if (!STATE.fireUser?.uid) return;
   saveUserData(STATE.fireUser.uid, { studyTimeByCourse: totals }).catch(err => {
     console.warn('Failed to save study time:', err.message);
   });
 }
 
+function _stopStudyTracking() {
+  _persistStudyTracking();
+  STATE.studyTracking = null;
+  if (_studyPersistTimer) {
+    clearInterval(_studyPersistTimer);
+    _studyPersistTimer = null;
+  }
+}
+
 function _startStudyTracking(courseId) {
   _stopStudyTracking();
   STATE.studyTracking = { courseId, startedAt: Date.now() };
+  _studyPersistTimer = setInterval(_persistStudyTracking, 15000);
+}
+
+function _getCourseStudySeconds(courseId) {
+  const saved = Number(STATE.userData?.studyTimeByCourse?.[courseId]) || 0;
+  const tracking = STATE.studyTracking;
+  if (!tracking || tracking.courseId !== courseId) return saved;
+  return saved + Math.max(0, Math.floor((Date.now() - tracking.startedAt) / 1000));
 }
 
 function _formatStudyTime(seconds) {
@@ -788,6 +808,8 @@ document.addEventListener('visibilitychange', () => {
     _startStudyTracking(STATE.courseId);
   }
 });
+window.addEventListener('pagehide', _stopStudyTracking);
+window.addEventListener('beforeunload', _stopStudyTracking);
 
 const DEFAULT_COURSE_ACCESS_SETTINGS = Object.freeze({
   tier: 'free',
@@ -3203,21 +3225,31 @@ function _courseStatsRadar(subjectCounts) {
 
 async function openCourseStatsModal(courseId) {
   const course = (STATE.courses || []).find(c => c.id === courseId);
-  const exams = STATE.exams[courseId] || await fetchExamsForCourse(courseId);
-  const examIds = new Set(exams.map(exam => exam.id));
+  const examSummaries = STATE.exams[courseId] || await fetchExamsForCourse(courseId);
+  const exams = await Promise.all(examSummaries.map(exam => fetchExam(exam.id)));
+  const loadedExams = exams.filter(Boolean);
+  const examIds = new Set(loadedExams.map(exam => exam.id));
   const doneCount = (STATE.doneExams || []).filter(id => examIds.has(id)).length;
   const votes = STATE.userData?.difficultyVotes || {};
-  const subjectCounts = {};
-  let solvedCount = 0;
+  const ratedEntities = new Map();
 
-  exams.forEach(exam => (exam.questions || []).forEach(question => {
-    if (votes[question.id] === undefined || votes[question.id] === null) return;
-    solvedCount++;
-    const subject = effectiveQuestionSubject(question) || 'ללא נושא';
-    subjectCounts[subject] = (subjectCounts[subject] || 0) + 1;
+  loadedExams.forEach(exam => (exam.questions || []).forEach(question => {
+    ratedEntities.set(question.id, effectiveQuestionSubject(question) || 'ללא נושא');
+    (question.subs || question.parts || []).forEach(sub => {
+      ratedEntities.set(sub.id, effectiveClauseSubject(sub, question) || effectiveQuestionSubject(question) || 'ללא נושא');
+    });
   }));
 
-  const totalSeconds = STATE.userData?.studyTimeByCourse?.[courseId] || 0;
+  const subjectCounts = {};
+  let solvedCount = 0;
+  Object.keys(votes).forEach(questionId => {
+    const subject = ratedEntities.get(questionId);
+    if (!subject) return;
+    solvedCount++;
+    subjectCounts[subject] = (subjectCounts[subject] || 0) + 1;
+  });
+
+  const totalSeconds = _getCourseStudySeconds(courseId);
   const modal = document.createElement('div');
   modal.id = 'course-stats-modal';
   modal.className = 'course-stats-overlay';
