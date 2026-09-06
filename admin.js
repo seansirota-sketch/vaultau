@@ -4568,6 +4568,8 @@ async function extractQuestionFromImage(input, qi) {
   } catch (err) {
     console.error(err);
     toast('שגיאה בחילוץ מהתמונה: ' + err.message, 'error');
+  } finally {
+    hideSpinner();
   }
 }
 window.extractQuestionFromImage = extractQuestionFromImage;
