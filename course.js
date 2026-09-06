@@ -4106,7 +4106,7 @@ function renderQuestionCard(q, qi, starred, userVotes = {}, videoMap = {}, isAdm
         <span id="difficulty-indicator-slot-${q.id}">${renderDifficultyIndicator(q.id, STATE.examVotes?.[q.id] || {}, userVotes[q.id] ?? null, isAdmin)}</span>
       </div>
       <div class="qv-actions" id="dw-${q.id}">
-        ${renderDifficultyControls(q.id, userVotes[q.id] ?? null, STATE.examVotes?.[q.id] || {}, subject, isAdmin)}
+        ${renderDifficultyControls(q.id, userVotes[q.id] ?? null, STATE.examVotes?.[q.id] || {}, subject)}
         <div class="qv-actions-sep"></div>
         <button class="qv-btn ${isStarredQ ? 'on' : ''}" id="qb-${q.id}"
           onclick="toggleStar('${q.id}')" title="סמן שאלה">${starSVG(isStarredQ)}</button>
@@ -4437,12 +4437,7 @@ function getQuestionAverageRating(voteStats = {}) {
 }
 
 function getDifficultyColor(averageRating) {
-  const normalized = clampDifficultyScore(averageRating);
-  if (normalized === null) return '#d1d5db';
-  const t = (normalized - 1) / 9; // maps 1→0 (green) … 10→1 (red)
-  const red   = Math.round(255 * t);
-  const green = Math.round(255 * (1 - t));
-  return `rgb(${red}, ${green}, 0)`;
+  return '#64748b';
 }
 
 function calculateSkillWeight(n, M = 2, k = 50) {
@@ -4479,26 +4474,27 @@ function renderDifficultyIndicator(qid, voteStats = {}, myVote = null, isAdminUs
   </span>`;
 }
 
-function renderDifficultyControls(qid, myVote, voteStats, topic, isAdminUser = false) {
+function renderDifficultyControls(qid, myVote, voteStats, topic) {
   const currentScore = normalizeDifficultyScore(myVote);
   const sliderValue = currentScore === null ? 5 : currentScore;
   const hasExistingVote = myVote !== undefined && myVote !== null;
-  const isLocked = !isAdminUser && hasExistingVote;
-  const lockTitle = isLocked ? 'ניתן לדרג כל שאלה פעם אחת בלבד' : 'דרגו את רמת הקושי של השאלה';
-  const sliderStyle = hasExistingVote ? `style="accent-color:${esc(getDifficultyColor(sliderValue))}"` : '';
-  return `<div class="qv-difficulty-wrap${isLocked ? ' locked' : ''}" data-topic="${esc(topic || '')}">
+  const controlTitle = hasExistingVote
+    ? 'שנו את רמת הקושי ובחרו ✓ כדי לשמור'
+    : 'דרגו את רמת הקושי של השאלה';
+  const sliderStyle = `style="accent-color:${esc(getDifficultyColor(sliderValue))}"`;
+  return `<div class="qv-difficulty-wrap" data-topic="${esc(topic || '')}">
     <input class="qv-difficulty-slider" type="range" min="1" max="10" step="1" value="${sliderValue}"
       oninput="onDifficultySliderInput('${qid}', this.value)"
       aria-label="דירוג קושי לשאלה"
-      title="${esc(lockTitle)}"
+      title="${esc(controlTitle)}"
       ${sliderStyle}
-      ${isLocked ? 'disabled' : ''}>
+      >
     <span class="qv-difficulty-value" id="difficulty-value-${qid}">${sliderValue}</span>
     <button class="qv-difficulty-submit" type="button"
       onclick="submitDifficultyVote('${qid}', this)"
-      title="${esc(lockTitle)}"
+      title="${esc(controlTitle)}"
       aria-label="אישור דירוג קושי"
-      ${isLocked ? 'disabled' : ''}>✓</button>
+      >✓</button>
   </div>`;
 }
 
@@ -4577,15 +4573,9 @@ async function voteDifficulty(qid, rawScore, topic = '') {
   const score = clampDifficultyScore(rawScore);
   if (score === null) return;
 
-  const isAdminUser = STATE.userData?.role === 'admin';
   const userVotes = { ...(STATE.userData?.difficultyVotes || {}) };
   const prevVote  = userVotes[qid];
   const prevScore = normalizeDifficultyScore(prevVote);
-  const hasExistingVote = prevVote !== undefined && prevVote !== null;
-  if (!isAdminUser && hasExistingVote) {
-    toast('אפשר לדרג כל שאלה פעם אחת בלבד', 'info');
-    return;
-  }
   if (prevScore !== null && prevScore === score) return;
   const prevBucket = getDifficultyBucketFromVote(prevVote);
   const nextBucket = getDifficultyBucketFromScore(score);
@@ -4639,14 +4629,13 @@ async function voteDifficulty(qid, rawScore, topic = '') {
         qid,
         userVotes[qid] ?? null,
         localCounts,
-        topic || wrap.getAttribute('data-topic') || '',
-        isAdminUser
+        topic || wrap.getAttribute('data-topic') || ''
       );
     }
   }
   const indicatorSlot = document.getElementById(`difficulty-indicator-slot-${qid}`);
   if (indicatorSlot) {
-    indicatorSlot.innerHTML = renderDifficultyIndicator(qid, localCounts, userVotes[qid] ?? null, isAdminUser);
+    indicatorSlot.innerHTML = renderDifficultyIndicator(qid, localCounts, userVotes[qid] ?? null);
   }
 
   try {
