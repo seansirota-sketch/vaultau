@@ -802,6 +802,30 @@ function _formatStudyTime(seconds) {
   return minutes ? `${hours} שעות ו-${minutes} דקות` : `${hours} שעות`;
 }
 
+function _courseWideStatsHtml(stats) {
+  if (!stats || !Number(stats.studentCount)) {
+    return '<div class="course-stats-empty">אין עדיין נתונים של סטודנטים פעילים בקורס</div>';
+  }
+  const graph = Array.isArray(stats.questionSolvedGraph) ? stats.questionSolvedGraph : [];
+  const maxAverage = Math.max(1, ...graph.map(item => Number(item.average) || 0));
+  return `
+    <div class="course-stats-wide-note">מבוסס על ${stats.studentCount} סטודנטים שלומדים כרגע בקורס</div>
+    <div class="course-stats-summary">
+      <div><strong>${esc(_formatStudyTime(stats.averageStudyTimeSeconds))}</strong><span>זמן לימוד ממוצע</span></div>
+      <div><strong>${Number(stats.averageCompletedExams || 0).toFixed(1)}</strong><span>מבחנים ממוצעים לסטודנט</span></div>
+      <div><strong>${stats.studentCount}</strong><span>סטודנטים פעילים</span></div>
+    </div>
+    <h3>שאלות שדורגו לפי נושא</h3>
+    <div class="course-stats-bar-chart">
+      ${graph.map(item => `
+        <div class="course-stats-bar-row">
+          <span>${esc(item.subject)}</span>
+          <div><i style="width:${Math.round((Number(item.average) || 0) / maxAverage * 100)}%"></i></div>
+          <strong>${Number(item.average || 0).toFixed(1)}</strong>
+        </div>`).join('') || '<div class="course-stats-empty">אין עדיין נתוני שאלות</div>'}
+    </div>`;
+}
+
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'hidden') _stopStudyTracking();
   else if (STATE.page === 'exam' && STATE.courseId && !STATE.studyTracking) {
@@ -3255,27 +3279,51 @@ async function openCourseStatsModal(courseId) {
   });
 
   const totalSeconds = _getCourseStudySeconds(courseId);
+  const wideStatsSnap = await db.collection('course_statistics').doc(courseId).get();
+  const wideStats = wideStatsSnap.exists ? wideStatsSnap.data() : null;
   const modal = document.createElement('div');
   modal.id = 'course-stats-modal';
   modal.className = 'course-stats-overlay';
   modal.innerHTML = `
     <div class="course-stats-modal" role="dialog" aria-modal="true" aria-labelledby="course-stats-title">
       <button class="course-stats-close" type="button" onclick="closeCourseStatsModal()" aria-label="סגור">×</button>
-      <h2 id="course-stats-title">הסטטיסטיקות שלי${course?.name ? ` — ${esc(course.name)}` : ''}</h2>
-      <div class="course-stats-summary">
-        <div><strong>${esc(_formatStudyTime(totalSeconds))}</strong><span>זמן לימוד</span></div>
-        <div><strong>${doneCount}</strong><span>מבחנים שבוצעו</span></div>
-        <div><strong>${solvedCount}</strong><span>שאלות שדורגו</span></div>
+      <h2 id="course-stats-title">Statistics${course?.name ? ` — ${esc(course.name)}` : ''}</h2>
+      <div class="course-stats-tabs" role="tablist">
+        <button class="course-stats-tab active" type="button" role="tab" aria-selected="true" data-stats-tab="mine">הסטטיסטיקות שלי</button>
+        <button class="course-stats-tab" type="button" role="tab" aria-selected="false" data-stats-tab="wide">סטטיסטיקה כללית</button>
       </div>
-      <h3>שאלות לפי נושא</h3>
-      ${_courseStatsRadar(subjectCounts)}
-      <div class="course-stats-subject-list">
-        ${Object.entries(subjectCounts).sort((a, b) => b[1] - a[1]).map(([subject, count]) =>
-          `<div><span>${esc(subject)}</span><strong>${count}</strong></div>`).join('') ||
-          '<div class="course-stats-empty">אין עדיין נתונים להצגה</div>'}
-      </div>
+      <section class="course-stats-panel active" data-stats-panel="mine">
+        <div class="course-stats-summary">
+          <div><strong>${esc(_formatStudyTime(totalSeconds))}</strong><span>זמן לימוד</span></div>
+          <div><strong>${doneCount}</strong><span>מבחנים שבוצעו</span></div>
+          <div><strong>${solvedCount}</strong><span>שאלות שדורגו</span></div>
+        </div>
+        <h3>שאלות לפי נושא</h3>
+        ${_courseStatsRadar(subjectCounts)}
+        <div class="course-stats-subject-list">
+          ${Object.entries(subjectCounts).sort((a, b) => b[1] - a[1]).map(([subject, count]) =>
+            `<div><span>${esc(subject)}</span><strong>${count}</strong></div>`).join('') ||
+            '<div class="course-stats-empty">אין עדיין נתונים להצגה</div>'}
+        </div>
+      </section>
+      <section class="course-stats-panel" data-stats-panel="wide">
+        ${_courseWideStatsHtml(wideStats)}
+      </section>
     </div>`;
   modal.addEventListener('click', event => { if (event.target === modal) closeCourseStatsModal(); });
+  modal.querySelectorAll('[data-stats-tab]').forEach(button => {
+    button.addEventListener('click', () => {
+      const tab = button.dataset.statsTab;
+      modal.querySelectorAll('[data-stats-tab]').forEach(item => {
+        const active = item === button;
+        item.classList.toggle('active', active);
+        item.setAttribute('aria-selected', String(active));
+      });
+      modal.querySelectorAll('[data-stats-panel]').forEach(panel => {
+        panel.classList.toggle('active', panel.dataset.statsPanel === tab);
+      });
+    });
+  });
   document.body.appendChild(modal);
   document.body.style.overflow = 'hidden';
 }
@@ -3383,7 +3431,7 @@ async function renderCourse() {
             <p class="page-sub">קוד: ${esc(course.code)} · ${exams.length} מבחנים</p>
           </div>
           <div style="display:flex;gap:.5rem;align-items:center;flex-wrap:wrap">
-            <button class="btn btn-secondary" type="button" onclick="openCourseStatsModal('${course.id}')">📊 הסטטיסטיקות שלי</button>
+            <button class="btn btn-secondary" type="button" onclick="openCourseStatsModal('${course.id}')">Statistics</button>
             ${renderCourseUpgradeCta()}
           </div>
         </div>

@@ -84,6 +84,12 @@ service cloud.firestore {
       }
     }
 
+    // Server-maintained, privacy-safe course-wide student aggregates.
+    match /course_statistics/{courseId} {
+      allow read: if isLoggedIn();
+      allow write: if false;
+    }
+
     // Analytics events — append-only with strict server-side validation.
     // uid ownership enforced, server timestamp required, payload bounded.
     match /analytics_events/{eventId} {
