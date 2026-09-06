@@ -2806,6 +2806,45 @@ async function processWithVision(images, filenameHint, opts = {}) {
   return _normalizeResult(data);
 }
 
+async function processSingleQuestionImage(file) {
+  if (!ALLOWED_IMAGE_TYPES.has(file.type)) {
+    throw new Error('יש לבחור תמונה מסוג PNG, JPG, GIF או WebP');
+  }
+  if (file.size > MAX_IMAGE_SIZE_BYTES) {
+    throw new Error(`הקובץ גדול מדי — המקסימום הוא ${(MAX_IMAGE_SIZE_BYTES / 1024 / 1024).toFixed(0)} MB`);
+  }
+
+  const dataUrl = await new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = () => reject(new Error('קריאת התמונה נכשלה'));
+    reader.readAsDataURL(file);
+  });
+  const base64 = String(dataUrl).split(',')[1];
+  if (!base64) throw new Error('לא ניתן לקרוא את התמונה');
+
+  _parseAbortRequested = false;
+  const prompt = `אתה מומחה לחילוץ שאלות אקדמיות מתמונה.
+חלץ מהתמונה שאלה אחת בלבד, כולל כל סעיפי המשנה שלה.
+שמור על הנוסח המקורי בעברית ובנוסחאות LaTeX.
+אל תכלול ניקוד, הוראות בחינה, לוגו או מספרי עמוד.
+אם יש סעיפים (א)(ב)(ג) או (1)(2)(3), החזר אותם ב-parts עם letter ללא סוגריים.
+החזר את הטקסט של הסעיף בלי לחזור על תווית הסעיף בתחילתו.
+אם לא ניתן לזהות נושא, השאר subject ריק.
+החזר JSON מובנה בלבד באמצעות הכלי:
+{"questions":[{"number":1,"text":"...","subject":"","isBonus":false,"parts":[{"letter":"א","text":"...","subject":""}]}]}`;
+
+  const data = await callClaudeViaEdge([{
+    role: 'user',
+    content: [
+      { type: 'text', text: prompt },
+      { type: 'image', source: { type: 'base64', media_type: file.type, data: base64 } },
+    ],
+  }], { spinnerLabel: '🤖 מחלץ שאלה מהתמונה' });
+
+  return _normalizeResult(data);
+}
+
 /**
  * Send exam PDF/text to Claude directly (Sonnet → Opus → Haiku).
  */
@@ -4109,6 +4148,11 @@ function renderPreview() {
           </label>
           ${!q.text?.trim() && !q._showIntro ? `<button class="btn btn-sm btn-secondary" onclick="addIntroToPreview(${i})">+ הקדמה</button>` : ''}
           <button class="btn btn-sm btn-secondary" onclick="addSubToPreview(${i})">+ סעיף</button>
+          <label class="btn btn-sm btn-secondary" title="חלץ שאלה וסעיפים מתמונה">
+            📷 תמונה ל-AI
+            <input type="file" accept="image/png,image/jpeg,image/gif,image/webp"
+              style="display:none" onchange="extractQuestionFromImage(this,${i})">
+          </label>
           <button class="btn btn-sm btn-secondary" onclick="openQuestionPreviewModal(${i})" title="תצוגה מקדימה של השאלה">👁 תצוגה</button>
           <button class="btn btn-sm" id="vbtn-${q.id}" style="background:rgba(239,68,68,.1);color:#dc2626;border-color:rgba(239,68,68,.3);padding:.28rem .38rem" onclick="openVideoAttachAdminModal('${q.id}','שאלה ${q.index||i+1}')" title="צרף סרטון פתרון"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="5" width="14" height="14" rx="2.5" ry="2.5"/><polygon points="16 8 22 12 16 16"/></svg></button>
           <button class="btn btn-sm btn-danger" onclick="removeQuestion(${i})">🗑️</button>
@@ -4494,6 +4538,39 @@ function addManualQuestion() {
   toast('נוספה שאלה ריקה — מלא את התוכן', 'success');
 }
 window.addManualQuestion = addManualQuestion;
+
+async function extractQuestionFromImage(input, qi) {
+  const file = input?.files?.[0];
+  if (input) input.value = '';
+  const question = parsedQuestions[qi];
+  if (!file || !question) return;
+
+  if ((question.text || '').trim() || question.subs?.length) {
+    if (!confirm('החילוץ מהתמונה יחליף את תוכן השאלה והסעיפים הקיימים. להמשיך?')) return;
+  }
+
+  try {
+    const result = await processSingleQuestionImage(file);
+    const extracted = result.questions?.[0];
+    if (!extracted || (!(extracted.text || '').trim() && !extracted.subs?.length)) {
+      throw new Error('לא זוהתה שאלה בתמונה');
+    }
+    parsedQuestions[qi] = {
+      ...question,
+      text: extracted.text || '',
+      subject: extracted.subject || '',
+      isBonus: extracted.isBonus === true,
+      subs: extracted.subs || [],
+      inlineImages: question.inlineImages || {},
+    };
+    renderPreview();
+    toast('✅ השאלה והסעיפים חולצו מהתמונה', 'success');
+  } catch (err) {
+    console.error(err);
+    toast('שגיאה בחילוץ מהתמונה: ' + err.message, 'error');
+  }
+}
+window.extractQuestionFromImage = extractQuestionFromImage;
 
 function onTitleChange() {
   const title = document.getElementById('ae-title')?.value || '';
