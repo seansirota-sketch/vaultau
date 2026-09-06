@@ -197,6 +197,94 @@ body {
   border-color: var(--blue-l);
 }
 .btn-secondary:hover { background: var(--blue-l); }
+
+.course-stats-overlay {
+  position: fixed; inset: 0; z-index: 1000; display: flex;
+  align-items: center; justify-content: center; padding: 1rem;
+  background: rgba(15,23,42,.62); backdrop-filter: blur(4px);
+}
+.course-stats-modal {
+  position: relative; width: min(660px, 100%); max-height: 90vh; overflow: auto;
+  padding: 2rem; border: 1px solid var(--border); border-radius: 18px;
+  background: var(--card); box-shadow: 0 24px 70px rgba(15,23,42,.3);
+  direction: rtl;
+}
+.course-stats-modal h2 {
+  margin: 0 0 1.5rem; padding-bottom: 1rem; border-bottom: 1px solid var(--border-s);
+  color: var(--blue); font-size: 1.45rem; font-weight: 800;
+}
+.course-stats-modal h3 { margin: 1.75rem 0 .75rem; color: var(--text-2); font-size: 1.05rem; }
+.course-stats-tabs {
+  display: flex; gap: .35rem; margin: -0.35rem 0 1.25rem; padding: .25rem;
+  border-radius: 10px; background: var(--bg2);
+}
+.course-stats-tab {
+  flex: 1; padding: .55rem .75rem; border: 0; border-radius: 8px;
+  background: transparent; color: var(--muted); cursor: pointer;
+  font: inherit; font-size: .88rem; font-weight: 700;
+}
+.course-stats-tab.active {
+  background: var(--card); color: var(--blue); box-shadow: var(--shadow-xs);
+}
+.course-stats-panel { display: none; }
+.course-stats-panel.active { display: block; }
+.course-stats-wide-note {
+  margin: 0 0 1rem; color: var(--muted); font-size: .85rem; text-align: center;
+}
+.course-stats-bar-chart {
+  display: grid; gap: .65rem; padding: .85rem; border: 1px solid var(--border-s);
+  border-radius: 12px; background: var(--card2);
+}
+.course-stats-bar-row {
+  display: grid; grid-template-columns: minmax(90px, 1fr) 2fr 42px;
+  align-items: center; gap: .55rem; font-size: .84rem;
+}
+.course-stats-bar-row > div {
+  height: 10px; overflow: hidden; border-radius: 99px; background: var(--blue-l);
+}
+.course-stats-bar-row i {
+  display: block; height: 100%; border-radius: inherit; background: var(--blue-mid);
+}
+.course-stats-bar-row strong { color: var(--blue); text-align: left; }
+.course-stats-close {
+  position: absolute; top: .65rem; left: .75rem; border: 0; background: transparent;
+  width: 34px; height: 34px; border-radius: 50%; color: var(--muted);
+  font-size: 1.6rem; cursor: pointer; line-height: 1;
+}
+.course-stats-close:hover {
+  background: var(--bg2); color: var(--text);
+}
+.course-stats-summary {
+  display: grid; grid-template-columns: repeat(3, 1fr); gap: .65rem;
+}
+.course-stats-summary > div {
+  padding: 1.05rem .65rem; text-align: center; border: 1px solid var(--border);
+  border-radius: 12px; background: var(--card2);
+  box-shadow: var(--shadow-xs);
+}
+.course-stats-summary strong, .course-stats-summary span { display: block; }
+.course-stats-summary strong { font-size: 1.35rem; color: var(--blue); }
+.course-stats-summary span { margin-top: .3rem; color: var(--muted); font-size: .8rem; }
+.course-stats-radar { display: flex; justify-content: center; }
+.course-stats-radar {
+  min-height: 220px; padding: .5rem; border: 1px solid var(--border-s);
+  border-radius: 14px; background: linear-gradient(135deg, var(--card2), var(--blue-xl));
+}
+.course-stats-radar svg { width: min(100%, 390px); height: auto; overflow: visible; }
+.course-stats-radar text { fill: var(--muted); font-size: 9px; font-weight: 600; }
+.course-stats-subject-list { display: grid; gap: .35rem; }
+.course-stats-subject-list > div {
+  display: flex; justify-content: space-between; gap: 1rem;
+  padding: .6rem .75rem; border: 1px solid var(--border-s); border-radius: 8px;
+  background: var(--card2);
+}
+.course-stats-subject-list strong { color: var(--blue); }
+.course-stats-empty { color: var(--muted); text-align: center; }
+@media (max-width: 480px) {
+  .course-stats-modal { padding: 1.25rem; border-radius: 14px; }
+  .course-stats-summary { grid-template-columns: 1fr; }
+  .course-stats-bar-row { grid-template-columns: 90px 1fr 38px; }
+}
 .btn-ghost {
   background: transparent; color: #fff;
   border-color: rgba(255,255,255,.4);

@@ -752,7 +752,88 @@ let STATE = {
   examYear:      '',    // exam year string — set on exam load
   examLabel:     '',    // courseCode_year_sem_moed — set on exam load, cleared on course load
   examQuestions:  [],   // question array snapshot for _questionRef() — set after const questions in renderExam
+  studyTracking: null,  // active study session for the current exam
 };
+
+let _studyPersistTimer = null;
+
+function _persistStudyTracking() {
+  const tracking = STATE.studyTracking;
+  if (!tracking) return;
+  const elapsed = Math.max(0, Math.floor((Date.now() - tracking.startedAt) / 1000));
+  if (!elapsed) return;
+  tracking.startedAt = Date.now();
+  const totals = { ...(STATE.userData?.studyTimeByCourse || {}) };
+  totals[tracking.courseId] = Math.max(0, Number(totals[tracking.courseId]) || 0) + elapsed;
+  STATE.userData = { ...(STATE.userData || {}), studyTimeByCourse: totals };
+  if (!STATE.fireUser?.uid) return;
+  saveUserData(STATE.fireUser.uid, { studyTimeByCourse: totals }).catch(err => {
+    console.warn('Failed to save study time:', err.message);
+  });
+}
+
+function _stopStudyTracking() {
+  _persistStudyTracking();
+  STATE.studyTracking = null;
+  if (_studyPersistTimer) {
+    clearInterval(_studyPersistTimer);
+    _studyPersistTimer = null;
+  }
+}
+
+function _startStudyTracking(courseId) {
+  _stopStudyTracking();
+  STATE.studyTracking = { courseId, startedAt: Date.now() };
+  _studyPersistTimer = setInterval(_persistStudyTracking, 15000);
+}
+
+function _getCourseStudySeconds(courseId) {
+  const saved = Number(STATE.userData?.studyTimeByCourse?.[courseId]) || 0;
+  const tracking = STATE.studyTracking;
+  if (!tracking || tracking.courseId !== courseId) return saved;
+  return saved + Math.max(0, Math.floor((Date.now() - tracking.startedAt) / 1000));
+}
+
+function _formatStudyTime(seconds) {
+  const totalMinutes = Math.floor(Math.max(0, Number(seconds) || 0) / 60);
+  if (totalMinutes < 60) return `${totalMinutes} דקות`;
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  return minutes ? `${hours} שעות ו-${minutes} דקות` : `${hours} שעות`;
+}
+
+function _courseWideStatsHtml(stats) {
+  if (!stats || !Number(stats.studentCount)) {
+    return '<div class="course-stats-empty">אין עדיין נתונים של סטודנטים פעילים בקורס</div>';
+  }
+  const graph = Array.isArray(stats.questionSolvedGraph) ? stats.questionSolvedGraph : [];
+  const maxAverage = Math.max(1, ...graph.map(item => Number(item.average) || 0));
+  return `
+    <div class="course-stats-wide-note">מבוסס על ${stats.studentCount} סטודנטים שלומדים כרגע בקורס</div>
+    <div class="course-stats-summary">
+      <div><strong>${esc(_formatStudyTime(stats.averageStudyTimeSeconds))}</strong><span>זמן לימוד ממוצע</span></div>
+      <div><strong>${Number(stats.averageCompletedExams || 0).toFixed(1)}</strong><span>מבחנים ממוצעים לסטודנט</span></div>
+      <div><strong>${stats.studentCount}</strong><span>סטודנטים פעילים</span></div>
+    </div>
+    <h3>שאלות שדורגו לפי נושא</h3>
+    <div class="course-stats-bar-chart">
+      ${graph.map(item => `
+        <div class="course-stats-bar-row">
+          <span>${esc(item.subject)}</span>
+          <div><i style="width:${Math.round((Number(item.average) || 0) / maxAverage * 100)}%"></i></div>
+          <strong>${Number(item.average || 0).toFixed(1)}</strong>
+        </div>`).join('') || '<div class="course-stats-empty">אין עדיין נתוני שאלות</div>'}
+    </div>`;
+}
+
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'hidden') _stopStudyTracking();
+  else if (STATE.page === 'exam' && STATE.courseId && !STATE.studyTracking) {
+    _startStudyTracking(STATE.courseId);
+  }
+});
+window.addEventListener('pagehide', _stopStudyTracking);
+window.addEventListener('beforeunload', _stopStudyTracking);
 
 const DEFAULT_COURSE_ACCESS_SETTINGS = Object.freeze({
   tier: 'free',
@@ -2093,7 +2174,8 @@ async function doLogout() {
   STATE = { page: 'home', courseId: null, examId: null, tab: 'exams',
             fireUser: null, userData: null, courses: null, exams: {}, examVotes: {},
             doneExams: [], inProgressExams: [], savedFilters: {}, subjectFilters: {},
-            courseAccessSettings: null, isAnalyticsOn: true, courseCode: '', examLabel: '', examQuestions: [] };
+            courseAccessSettings: null, isAnalyticsOn: true, courseCode: '', examLabel: '', examQuestions: [],
+            studyTracking: null };
   renderAuth();
 }
 
@@ -2214,6 +2296,7 @@ function renderPage() {
 }
 
 async function goHome() {
+  _stopStudyTracking();
   STATE.page = 'home';
   STATE.courseId = null;
   STATE.examId   = null;
@@ -2224,6 +2307,7 @@ async function goHome() {
 }
 
 async function goCourse(id, opts) {
+  _stopStudyTracking();
   STATE.page     = 'course';
   STATE.courseId = id;
   STATE.examId   = null;
@@ -2233,6 +2317,7 @@ async function goCourse(id, opts) {
 }
 
 async function goExam(cId, eId) {
+  _stopStudyTracking();
   // Snapshot current filter values into STATE before navigating away
   STATE.savedFilters[cId] = {
     fy: document.getElementById('f-y')?.value || '',
@@ -3129,6 +3214,127 @@ function closeContactModal() {
   document.body.style.overflow = '';
 }
 
+function closeCourseStatsModal() {
+  document.getElementById('course-stats-modal')?.remove();
+  document.body.style.overflow = '';
+}
+
+function _courseStatsRadar(subjectCounts) {
+  const entries = Object.entries(subjectCounts).sort((a, b) => b[1] - a[1]).slice(0, 8);
+  if (!entries.length) return '<div class="empty" style="padding:1rem"><p>עדיין אין דירוגי שאלות לפי נושא</p></div>';
+  const cx = 150, cy = 140, radius = 92;
+  const angle = (Math.PI * 2) / entries.length;
+  const point = (value, i) => {
+    const r = radius * value;
+    const a = -Math.PI / 2 + angle * i;
+    return `${(cx + Math.cos(a) * r).toFixed(1)},${(cy + Math.sin(a) * r).toFixed(1)}`;
+  };
+  const max = Math.max(1, ...entries.map(([, count]) => count));
+  const outline = entries.map((_, i) => point(1, i)).join(' ');
+  const values = entries.map(([, count], i) => point(count / max, i)).join(' ');
+  const labels = entries.map(([name], i) => {
+    const a = -Math.PI / 2 + angle * i;
+    const x = cx + Math.cos(a) * (radius + 25);
+    const y = cy + Math.sin(a) * (radius + 25);
+    return `<text x="${x.toFixed(1)}" y="${y.toFixed(1)}" text-anchor="middle" dominant-baseline="middle">${esc(name)}</text>`;
+  }).join('');
+  return `<div class="course-stats-radar">
+    <svg viewBox="0 0 300 280" role="img" aria-label="שאלות לפי נושא">
+      <polygon points="${outline}" fill="none" stroke="#cbd5e1" stroke-width="1.5"></polygon>
+      <polygon points="${values}" fill="rgba(100,116,139,.18)" stroke="#64748b" stroke-width="2"></polygon>
+      ${labels}
+    </svg>
+  </div>`;
+}
+
+async function openCourseStatsModal(courseId) {
+  const course = (STATE.courses || []).find(c => c.id === courseId);
+  const examSummaries = STATE.exams[courseId] || await fetchExamsForCourse(courseId);
+  const exams = await Promise.all(examSummaries.map(exam => fetchExam(exam.id)));
+  const loadedExams = exams.filter(Boolean);
+  await loadCourseTopicNames(courseId);
+  const examIds = new Set(loadedExams.map(exam => exam.id));
+  const doneCount = (STATE.doneExams || []).filter(id => examIds.has(id)).length;
+  const votes = STATE.userData?.difficultyVotes || {};
+  const ratedEntities = new Map();
+
+  // Use the same canonical subject entries as the course's נושאים tab so
+  // statistics and subject browsing resolve assignments identically.
+  collectCourseSubjectEntries(loadedExams).forEach(entry => {
+    const questionSubject = effectiveQuestionSubject(entry.q);
+    if (questionSubject) ratedEntities.set(entry.q.id, questionSubject);
+    (entry.q.subs || entry.q.parts || []).forEach(sub => {
+      const subject = effectiveClauseSubject(sub, entry.q);
+      if (subject) ratedEntities.set(sub.id, subject);
+    });
+  });
+
+  const subjectCounts = {};
+  let solvedCount = 0;
+  Object.keys(votes).forEach(questionId => {
+    const subject = ratedEntities.get(questionId);
+    if (!subject) return;
+    solvedCount++;
+    subjectCounts[subject] = (subjectCounts[subject] || 0) + 1;
+  });
+
+  const totalSeconds = _getCourseStudySeconds(courseId);
+  let wideStats = null;
+  try {
+    const wideStatsSnap = await db.collection('course_statistics').doc(courseId).get();
+    wideStats = wideStatsSnap.exists ? wideStatsSnap.data() : null;
+  } catch (error) {
+    console.warn('Course-wide statistics unavailable:', error.message);
+  }
+  const modal = document.createElement('div');
+  modal.id = 'course-stats-modal';
+  modal.className = 'course-stats-overlay';
+  modal.innerHTML = `
+    <div class="course-stats-modal" role="dialog" aria-modal="true" aria-labelledby="course-stats-title">
+      <button class="course-stats-close" type="button" onclick="closeCourseStatsModal()" aria-label="סגור">×</button>
+      <h2 id="course-stats-title">Statistics${course?.name ? ` — ${esc(course.name)}` : ''}</h2>
+      <div class="course-stats-tabs" role="tablist">
+        <button class="course-stats-tab active" type="button" role="tab" aria-selected="true" data-stats-tab="mine">הסטטיסטיקות שלי</button>
+        <button class="course-stats-tab" type="button" role="tab" aria-selected="false" data-stats-tab="wide">סטטיסטיקה כללית</button>
+      </div>
+      <section class="course-stats-panel active" data-stats-panel="mine">
+        <div class="course-stats-summary">
+          <div><strong>${esc(_formatStudyTime(totalSeconds))}</strong><span>זמן לימוד</span></div>
+          <div><strong>${doneCount}</strong><span>מבחנים שבוצעו</span></div>
+          <div><strong>${solvedCount}</strong><span>שאלות שדורגו</span></div>
+        </div>
+        <h3>שאלות לפי נושא</h3>
+        ${_courseStatsRadar(subjectCounts)}
+        <div class="course-stats-subject-list">
+          ${Object.entries(subjectCounts).sort((a, b) => b[1] - a[1]).map(([subject, count]) =>
+            `<div><span>${esc(subject)}</span><strong>${count}</strong></div>`).join('') ||
+            '<div class="course-stats-empty">אין עדיין נתונים להצגה</div>'}
+        </div>
+      </section>
+      <section class="course-stats-panel" data-stats-panel="wide">
+        ${_courseWideStatsHtml(wideStats)}
+      </section>
+    </div>`;
+  modal.addEventListener('click', event => { if (event.target === modal) closeCourseStatsModal(); });
+  modal.querySelectorAll('[data-stats-tab]').forEach(button => {
+    button.addEventListener('click', () => {
+      const tab = button.dataset.statsTab;
+      modal.querySelectorAll('[data-stats-tab]').forEach(item => {
+        const active = item === button;
+        item.classList.toggle('active', active);
+        item.setAttribute('aria-selected', String(active));
+      });
+      modal.querySelectorAll('[data-stats-panel]').forEach(panel => {
+        panel.classList.toggle('active', panel.dataset.statsPanel === tab);
+      });
+    });
+  });
+  document.body.appendChild(modal);
+  document.body.style.overflow = 'hidden';
+}
+window.openCourseStatsModal = openCourseStatsModal;
+window.closeCourseStatsModal = closeCourseStatsModal;
+
 /* ══════════════════════════════════════════════════════════
    COURSE PAGE
 ══════════════════════════════════════════════════════════ */
@@ -3229,7 +3435,10 @@ async function renderCourse() {
             <h1 class="page-title">${esc(course.icon)} ${esc(course.name)}</h1>
             <p class="page-sub">קוד: ${esc(course.code)} · ${exams.length} מבחנים</p>
           </div>
-          ${renderCourseUpgradeCta()}
+          <div style="display:flex;gap:.5rem;align-items:center;flex-wrap:wrap">
+            <button class="btn btn-secondary" type="button" onclick="openCourseStatsModal('${course.id}')">Statistics</button>
+            ${renderCourseUpgradeCta()}
+          </div>
         </div>
         <div class="tabs-bar">
           <button class="tab-btn ${STATE.tab === 'exams' ? 'active' : ''}" onclick="setTab('exams')">
@@ -3836,6 +4045,7 @@ async function renderVideosTab(exams) {
 ══════════════════════════════════════════════════════════ */
 
 async function renderExam() {
+  _startStudyTracking(STATE.courseId);
   const page = document.getElementById('page');
   page.innerHTML = `<div class="container"><div class="spinner" style="margin-top:3rem"></div></div>`;
 
