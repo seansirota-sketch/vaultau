@@ -3228,17 +3228,22 @@ async function openCourseStatsModal(courseId) {
   const examSummaries = STATE.exams[courseId] || await fetchExamsForCourse(courseId);
   const exams = await Promise.all(examSummaries.map(exam => fetchExam(exam.id)));
   const loadedExams = exams.filter(Boolean);
+  await loadCourseTopicNames(courseId);
   const examIds = new Set(loadedExams.map(exam => exam.id));
   const doneCount = (STATE.doneExams || []).filter(id => examIds.has(id)).length;
   const votes = STATE.userData?.difficultyVotes || {};
   const ratedEntities = new Map();
 
-  loadedExams.forEach(exam => (exam.questions || []).forEach(question => {
-    ratedEntities.set(question.id, effectiveQuestionSubject(question) || 'ללא נושא');
-    (question.subs || question.parts || []).forEach(sub => {
-      ratedEntities.set(sub.id, effectiveClauseSubject(sub, question) || effectiveQuestionSubject(question) || 'ללא נושא');
+  // Use the same canonical subject entries as the course's נושאים tab so
+  // statistics and subject browsing resolve assignments identically.
+  collectCourseSubjectEntries(loadedExams).forEach(entry => {
+    const questionSubject = effectiveQuestionSubject(entry.q);
+    if (questionSubject) ratedEntities.set(entry.q.id, questionSubject);
+    (entry.q.subs || entry.q.parts || []).forEach(sub => {
+      const subject = effectiveClauseSubject(sub, entry.q);
+      if (subject) ratedEntities.set(sub.id, subject);
     });
-  }));
+  });
 
   const subjectCounts = {};
   let solvedCount = 0;
