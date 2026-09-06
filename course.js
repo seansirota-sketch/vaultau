@@ -3279,8 +3279,13 @@ async function openCourseStatsModal(courseId) {
   });
 
   const totalSeconds = _getCourseStudySeconds(courseId);
-  const wideStatsSnap = await db.collection('course_statistics').doc(courseId).get();
-  const wideStats = wideStatsSnap.exists ? wideStatsSnap.data() : null;
+  let wideStats = null;
+  try {
+    const wideStatsSnap = await db.collection('course_statistics').doc(courseId).get();
+    wideStats = wideStatsSnap.exists ? wideStatsSnap.data() : null;
+  } catch (error) {
+    console.warn('Course-wide statistics unavailable:', error.message);
+  }
   const modal = document.createElement('div');
   modal.id = 'course-stats-modal';
   modal.className = 'course-stats-overlay';
