@@ -197,6 +197,46 @@ body {
   border-color: var(--blue-l);
 }
 .btn-secondary:hover { background: var(--blue-l); }
+
+.course-stats-overlay {
+  position: fixed; inset: 0; z-index: 1000; display: flex;
+  align-items: center; justify-content: center; padding: 1rem;
+  background: rgba(15,23,42,.45);
+}
+.course-stats-modal {
+  position: relative; width: min(620px, 100%); max-height: 90vh; overflow: auto;
+  padding: 1.5rem; border: 1px solid var(--border); border-radius: 14px;
+  background: var(--surface); box-shadow: 0 18px 55px rgba(15,23,42,.22);
+  direction: rtl;
+}
+.course-stats-modal h2 { margin: 0 0 1.25rem; }
+.course-stats-modal h3 { margin: 1.5rem 0 .5rem; }
+.course-stats-close {
+  position: absolute; top: .65rem; left: .75rem; border: 0; background: transparent;
+  color: var(--text-muted); font-size: 1.6rem; cursor: pointer; line-height: 1;
+}
+.course-stats-summary {
+  display: grid; grid-template-columns: repeat(3, 1fr); gap: .65rem;
+}
+.course-stats-summary > div {
+  padding: .9rem .5rem; text-align: center; border: 1px solid var(--border);
+  border-radius: 10px; background: var(--surface-alt);
+}
+.course-stats-summary strong, .course-stats-summary span { display: block; }
+.course-stats-summary strong { font-size: 1.2rem; color: var(--text); }
+.course-stats-summary span { margin-top: .25rem; color: var(--text-muted); font-size: .8rem; }
+.course-stats-radar { display: flex; justify-content: center; }
+.course-stats-radar svg { width: min(100%, 360px); height: auto; overflow: visible; }
+.course-stats-radar text { fill: var(--text-muted); font-size: 9px; }
+.course-stats-subject-list { display: grid; gap: .35rem; }
+.course-stats-subject-list > div {
+  display: flex; justify-content: space-between; gap: 1rem;
+  padding: .45rem .65rem; border-bottom: 1px solid var(--border);
+}
+.course-stats-empty { color: var(--text-muted); text-align: center; }
+@media (max-width: 480px) {
+  .course-stats-summary { grid-template-columns: 1fr; }
+}
 .btn-ghost {
   background: transparent; color: #fff;
   border-color: rgba(255,255,255,.4);

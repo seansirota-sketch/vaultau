@@ -81,6 +81,7 @@ async function fetchUserData(uid, email) {
       topicSolvedCounts: data.topicSolvedCounts || {},
       topicSkillWeights: data.topicSkillWeights || {},
       difficultyVoteMeta: data.difficultyVoteMeta || {},
+      studyTimeByCourse: data.studyTimeByCourse || {},
     };
   }
   // First time — create user doc with email so it is always identifiable in admin
@@ -95,6 +96,7 @@ async function fetchUserData(uid, email) {
     topicSolvedCounts: {},
     topicSkillWeights: {},
     difficultyVoteMeta: {},
+    studyTimeByCourse: {},
     freeSubjectAccess: {},
     freeVideoAccessByCourse: {},
   };
@@ -109,6 +111,7 @@ const ALLOWED_USER_FIELDS = [
   'topicSolvedCounts', 'topicSkillWeights', 'difficultyVoteMeta',
   'acceptedTerms', 'acceptedTermsAt', 'surveyDone',
   'completedExams', 'doneExams', 'inProgressExams',
+  'studyTimeByCourse',
   'copyCount', 'lastCopyReset', 'createdAt', 'savedCourses', 'aiQuestions',
   'analyticsConsent', 'consentDate', 'faculty', 'studyYear',
   'dismissedBroadcasts', 'readBroadcasts',
