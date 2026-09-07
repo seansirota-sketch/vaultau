@@ -802,30 +802,64 @@ function _formatStudyTime(seconds) {
   return minutes ? `${hours} שעות ו-${minutes} דקות` : `${hours} שעות`;
 }
 
+function _normalizeCourseWideStats(raw) {
+  if (!raw) return null;
+  const subjectCounts = raw.subjectCounts || Object.fromEntries(
+    (Array.isArray(raw.questionSolvedGraph) ? raw.questionSolvedGraph : [])
+      .map(item => [item.subject, Number(item.total) || 0])
+      .filter(([subject]) => subject)
+  );
+  return {
+    studentCount: Number(raw.studentCount) || 0,
+    averageCompletedExams: Number(raw.averageCompletedExams) || 0,
+    totalRatedQuestions: Number(raw.totalRatedQuestions) || Object.values(subjectCounts).reduce((sum, n) => sum + (Number(n) || 0), 0),
+    subjectCounts,
+  };
+}
+
+async function _fetchCourseWideStats(courseId) {
+  try {
+    const idToken = await STATE.fireUser?.getIdToken();
+    if (idToken) {
+      const res = await fetch('/.netlify/functions/course-statistics?courseId=' + encodeURIComponent(courseId), {
+        headers: { 'Authorization': 'Bearer ' + idToken },
+      });
+      if (res.ok) return _normalizeCourseWideStats(await res.json());
+      console.warn('Course statistics function failed:', res.status);
+    }
+  } catch (error) {
+    console.warn('Course statistics function unavailable:', error.message);
+  }
+
+  try {
+    const snap = await db.collection('course_statistics').doc(courseId).get();
+    return snap.exists ? _normalizeCourseWideStats(snap.data()) : null;
+  } catch (error) {
+    console.warn('Course-wide statistics aggregate unavailable:', error.message);
+    return null;
+  }
+}
+
 function _courseWideStatsHtml(stats) {
   if (!stats || !Number(stats.studentCount)) {
     return '<div class="course-stats-empty">אין עדיין נתונים של סטודנטים פעילים בקורס</div>';
   }
-  const graph = Array.isArray(stats.questionSolvedGraph) ? stats.questionSolvedGraph : [];
-  const maxAverage = Math.max(1, ...graph.map(item => Number(item.average) || 0));
+  const subjectCounts = stats.subjectCounts || {};
   return `
     <div class="course-stats-wide-note">מבוסס על ${stats.studentCount} סטודנטים שלומדים כרגע בקורס</div>
     <div class="course-stats-summary">
-      <div><strong>${esc(_formatStudyTime(stats.averageStudyTimeSeconds))}</strong><span>זמן לימוד ממוצע</span></div>
       <div><strong>${Number(stats.averageCompletedExams || 0).toFixed(1)}</strong><span>מבחנים ממוצעים לסטודנט</span></div>
+      <div><strong>${Number(stats.totalRatedQuestions || 0)}</strong><span>סה״כ שאלות שדורגו</span></div>
       <div><strong>${stats.studentCount}</strong><span>סטודנטים פעילים</span></div>
     </div>
-    <h3>שאלות שדורגו לפי נושא</h3>
-    <div class="course-stats-bar-chart">
-      ${graph.map(item => `
-        <div class="course-stats-bar-row">
-          <span>${esc(item.subject)}</span>
-          <div><i style="width:${Math.round((Number(item.average) || 0) / maxAverage * 100)}%"></i></div>
-          <strong>${Number(item.average || 0).toFixed(1)}</strong>
-        </div>`).join('') || '<div class="course-stats-empty">אין עדיין נתוני שאלות</div>'}
+    <h3>התפלגות שאלות שדורגו לפי נושא</h3>
+    ${_courseStatsRadar(subjectCounts)}
+    <div class="course-stats-subject-list">
+      ${Object.entries(subjectCounts).sort((a, b) => b[1] - a[1]).map(([subject, count]) =>
+        `<div><span>${esc(subject)}</span><strong>${count}</strong></div>`).join('') ||
+        '<div class="course-stats-empty">אין עדיין נתוני שאלות</div>'}
     </div>`;
 }
-
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'hidden') _stopStudyTracking();
   else if (STATE.page === 'exam' && STATE.courseId && !STATE.studyTracking) {
@@ -3279,13 +3313,7 @@ async function openCourseStatsModal(courseId) {
   });
 
   const totalSeconds = _getCourseStudySeconds(courseId);
-  let wideStats = null;
-  try {
-    const wideStatsSnap = await db.collection('course_statistics').doc(courseId).get();
-    wideStats = wideStatsSnap.exists ? wideStatsSnap.data() : null;
-  } catch (error) {
-    console.warn('Course-wide statistics unavailable:', error.message);
-  }
+  const wideStats = await _fetchCourseWideStats(courseId);
   const modal = document.createElement('div');
   modal.id = 'course-stats-modal';
   modal.className = 'course-stats-overlay';
