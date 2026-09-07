@@ -60,55 +60,71 @@ function buildEntitySubjects(examDocs, topicNames, assignmentDocs) {
 }
 
 async function buildCourseStatistics(courseId) {
+  const cutoffMs = Date.now() - 30 * 24 * 60 * 60 * 1000;
   const [usersSnap, examsSnap, topicsSnap, assignmentsSnap] = await Promise.all([
     db.collection('users').get(),
     db.collection('exams').where('courseId', '==', courseId).get(),
     db.collection('courses').doc(courseId).collection('topics').get(),
     db.collection('topic_assignments').where('courseId', '==', courseId).get(),
   ]);
+
   const topicNames = {};
   topicsSnap.forEach(doc => { topicNames[doc.id] = doc.data().name || doc.id; });
   const entitySubjects = buildEntitySubjects(examsSnap.docs, topicNames, assignmentsSnap.docs);
   const examIds = new Set(examsSnap.docs.map(doc => doc.id));
 
   let studentCount = 0;
-  let totalStudySeconds = 0;
   let totalCompletedExams = 0;
   let totalRatedQuestions = 0;
   const subjectCounts = {};
 
   usersSnap.forEach(userDoc => {
     const user = userDoc.data();
-    const savedCourses = Array.isArray(user.savedCourses) ? user.savedCourses : [];
-    const studySeconds = Number(user.studyTimeByCourse && user.studyTimeByCourse[courseId]) || 0;
-    const completedExamCount = (Array.isArray(user.doneExams) ? user.doneExams : [])
-      .filter(id => examIds.has(id)).length;
-    let ratedInCourse = 0;
+    if (timestampMs(user.courseExamLastOpenedAt && user.courseExamLastOpenedAt[courseId]) < cutoffMs) return;
+
+    studentCount += 1;
+
+    Object.entries(user.doneExamMeta || {}).forEach(([examId, meta]) => {
+      if (!examIds.has(examId)) return;
+      if (meta && meta.courseId && meta.courseId !== courseId) return;
+      if (!meta || meta.status !== 'done') return;
+      if (timestampMs(meta.updatedAt) < cutoffMs) return;
+      totalCompletedExams += 1;
+    });
 
     Object.keys(user.difficultyVotes || {}).forEach(entityId => {
+      const meta = (user.difficultyVoteMeta || {})[entityId] || {};
+      if (meta.courseId && meta.courseId !== courseId) return;
+      if (timestampMs(meta.updatedAt) < cutoffMs) return;
       const subject = entitySubjects.get(entityId);
       if (!subject) return;
-      ratedInCourse += 1;
       totalRatedQuestions += 1;
       subjectCounts[subject] = (subjectCounts[subject] || 0) + 1;
     });
-
-    if (!savedCourses.includes(courseId) && !studySeconds && !completedExamCount && !ratedInCourse) return;
-    studentCount += 1;
-    totalStudySeconds += studySeconds;
-    totalCompletedExams += completedExamCount;
   });
 
-  await db.collection('course_statistics').doc(courseId).set({
+  const result = {
     studentCount,
-    averageStudyTimeSeconds: studentCount ? Math.round(totalStudySeconds / studentCount) : 0,
+    windowDays: 30,
     averageCompletedExams: studentCount ? Number((totalCompletedExams / studentCount).toFixed(2)) : 0,
     totalRatedQuestions,
     subjectCounts,
     updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-  }, { merge: false });
+  };
+
+  await db.collection('course_statistics').doc(courseId).set(result, { merge: false });
+  return { ...result, updatedAt: new Date().toISOString() };
 }
 
+function timestampMs(value) {
+  if (!value) return 0;
+  if (typeof value === 'number') return value;
+  if (value instanceof Date) return value.getTime();
+  if (typeof value.toMillis === 'function') return value.toMillis();
+  if (typeof value.seconds === 'number') return value.seconds * 1000;
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
 async function allCourseIds() {
   const snap = await db.collection('courses').get();
   return snap.docs.map(doc => doc.id);
@@ -122,8 +138,11 @@ exports.courseStatisticsRefresh = functions.onDocumentWritten('users/{userId}', 
     ...(Array.isArray(after.savedCourses) ? after.savedCourses : []),
     ...Object.keys(before.studyTimeByCourse || {}),
     ...Object.keys(after.studyTimeByCourse || {}),
+    ...Object.keys(before.courseExamLastOpenedAt || {}),
+    ...Object.keys(after.courseExamLastOpenedAt || {}),
   ]);
-  if (JSON.stringify(before.difficultyVotes || {}) !== JSON.stringify(after.difficultyVotes || {})) {
+  if (JSON.stringify(before.difficultyVotes || {}) !== JSON.stringify(after.difficultyVotes || {}) ||
+      JSON.stringify(before.doneExamMeta || {}) !== JSON.stringify(after.doneExamMeta || {})) {
     (await allCourseIds()).forEach(courseId => courseIds.add(courseId));
   }
   await Promise.all([...courseIds].map(buildCourseStatistics));

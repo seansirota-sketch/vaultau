@@ -95,6 +95,7 @@ function buildEntitySubjects(examDocs, topicNames, assignmentDocs) {
 }
 
 async function buildCourseStatistics(db, courseId) {
+  const cutoffMs = Date.now() - 30 * 24 * 60 * 60 * 1000;
   const [usersSnap, examsSnap, topicsSnap, assignmentsSnap] = await Promise.all([
     db.collection('users').get(),
     db.collection('exams').where('courseId', '==', courseId).get(),
@@ -108,36 +109,38 @@ async function buildCourseStatistics(db, courseId) {
   const examIds = new Set(examsSnap.docs.map(doc => doc.id));
 
   let studentCount = 0;
-  let totalStudySeconds = 0;
   let totalCompletedExams = 0;
   let totalRatedQuestions = 0;
   const subjectCounts = {};
 
   usersSnap.forEach(userDoc => {
     const user = userDoc.data();
-    const savedCourses = Array.isArray(user.savedCourses) ? user.savedCourses : [];
-    const studySeconds = Number(user.studyTimeByCourse && user.studyTimeByCourse[courseId]) || 0;
-    const completedExamCount = (Array.isArray(user.doneExams) ? user.doneExams : [])
-      .filter(id => examIds.has(id)).length;
-    let ratedInCourse = 0;
+    if (timestampMs(user.courseExamLastOpenedAt && user.courseExamLastOpenedAt[courseId]) < cutoffMs) return;
+
+    studentCount += 1;
+
+    Object.entries(user.doneExamMeta || {}).forEach(([examId, meta]) => {
+      if (!examIds.has(examId)) return;
+      if (meta && meta.courseId && meta.courseId !== courseId) return;
+      if (!meta || meta.status !== 'done') return;
+      if (timestampMs(meta.updatedAt) < cutoffMs) return;
+      totalCompletedExams += 1;
+    });
 
     Object.keys(user.difficultyVotes || {}).forEach(entityId => {
+      const meta = (user.difficultyVoteMeta || {})[entityId] || {};
+      if (meta.courseId && meta.courseId !== courseId) return;
+      if (timestampMs(meta.updatedAt) < cutoffMs) return;
       const subject = entitySubjects.get(entityId);
       if (!subject) return;
-      ratedInCourse += 1;
       totalRatedQuestions += 1;
       subjectCounts[subject] = (subjectCounts[subject] || 0) + 1;
     });
-
-    if (!savedCourses.includes(courseId) && !studySeconds && !completedExamCount && !ratedInCourse) return;
-    studentCount += 1;
-    totalStudySeconds += studySeconds;
-    totalCompletedExams += completedExamCount;
   });
 
   const result = {
     studentCount,
-    averageStudyTimeSeconds: studentCount ? Math.round(totalStudySeconds / studentCount) : 0,
+    windowDays: 30,
     averageCompletedExams: studentCount ? Number((totalCompletedExams / studentCount).toFixed(2)) : 0,
     totalRatedQuestions,
     subjectCounts,
@@ -148,6 +151,15 @@ async function buildCourseStatistics(db, courseId) {
   return { ...result, updatedAt: new Date().toISOString() };
 }
 
+function timestampMs(value) {
+  if (!value) return 0;
+  if (typeof value === 'number') return value;
+  if (value instanceof Date) return value.getTime();
+  if (typeof value.toMillis === 'function') return value.toMillis();
+  if (typeof value.seconds === 'number') return value.seconds * 1000;
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
 exports.handler = async (event) => {
   const origin = event.headers.origin || event.headers.Origin || '';
   if (event.httpMethod === 'OPTIONS') return { statusCode: 204, headers: corsHeaders(origin), body: '' };
