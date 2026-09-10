@@ -1,10 +1,45 @@
-'use strict';
+/* ============================================================
+   Course-wide student statistics.
 
-const functions = require('firebase-functions/v2/firestore');
+   Computes privacy-safe aggregates for logged-in students without exposing
+   other users' documents to the browser.
+   ============================================================ */
+
 const admin = require('firebase-admin');
 
-if (!admin.apps.length) admin.initializeApp();
-const db = admin.firestore();
+const ALLOWED_ORIGINS = (process.env.ADMIN_FUNCTION_ORIGINS ||
+  'https://vaultau.netlify.app,http://localhost:8888,http://localhost:5173,http://127.0.0.1:8888'
+).split(',').map(s => s.trim()).filter(Boolean);
+
+function corsHeaders(origin) {
+  const allow = ALLOWED_ORIGINS.includes(origin) ? origin : ALLOWED_ORIGINS[0];
+  return {
+    'Access-Control-Allow-Origin': allow,
+    'Vary': 'Origin',
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+    'Access-Control-Allow-Methods': 'GET, OPTIONS',
+  };
+}
+
+function json(statusCode, body, origin) {
+  return {
+    statusCode,
+    headers: { ...corsHeaders(origin), 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  };
+}
+
+function getAdmin() {
+  if (admin.apps.length) return admin;
+  if (process.env.FIREBASE_AUTH_EMULATOR_HOST || process.env.FIRESTORE_EMULATOR_HOST) {
+    admin.initializeApp({ projectId: process.env.GCLOUD_PROJECT || 'eaxmbank' });
+    return admin;
+  }
+  const sa = process.env.FIREBASE_SERVICE_ACCOUNT;
+  if (!sa) return null;
+  admin.initializeApp({ credential: admin.credential.cert(JSON.parse(sa)) });
+  return admin;
+}
 
 function normalizeSubject(raw) {
   return String(raw || '').trim().replace(/\s+/g, ' ');
@@ -59,7 +94,7 @@ function buildEntitySubjects(examDocs, topicNames, assignmentDocs) {
   return entitySubjects;
 }
 
-async function buildCourseStatistics(courseId) {
+async function buildCourseStatistics(db, courseId) {
   const cutoffMs = Date.now() - 30 * 24 * 60 * 60 * 1000;
   const cutoff = admin.firestore.Timestamp.fromMillis(cutoffMs);
   const [usersSnap, examsSnap, topicsSnap, assignmentsSnap, courseSnap, eventsSnap] = await Promise.all([
@@ -198,25 +233,36 @@ function timestampMs(value) {
   const parsed = Date.parse(value);
   return Number.isFinite(parsed) ? parsed : 0;
 }
-async function allCourseIds() {
-  const snap = await db.collection('courses').get();
-  return snap.docs.map(doc => doc.id);
-}
+exports.handler = async (event) => {
+  const origin = event.headers.origin || event.headers.Origin || '';
+  if (event.httpMethod === 'OPTIONS') return { statusCode: 204, headers: corsHeaders(origin), body: '' };
+  if (event.httpMethod !== 'GET') return json(405, { error: 'Method Not Allowed' }, origin);
 
-exports.courseStatisticsRefresh = functions.onDocumentWritten('users/{userId}', async event => {
-  const before = event.data?.before?.data() || {};
-  const after = event.data?.after?.data() || {};
-  const courseIds = new Set([
-    ...(Array.isArray(before.savedCourses) ? before.savedCourses : []),
-    ...(Array.isArray(after.savedCourses) ? after.savedCourses : []),
-    ...Object.keys(before.studyTimeByCourse || {}),
-    ...Object.keys(after.studyTimeByCourse || {}),
-    ...Object.keys(before.courseExamLastOpenedAt || {}),
-    ...Object.keys(after.courseExamLastOpenedAt || {}),
-  ]);
-  if (JSON.stringify(before.difficultyVotes || {}) !== JSON.stringify(after.difficultyVotes || {}) ||
-      JSON.stringify(before.doneExamMeta || {}) !== JSON.stringify(after.doneExamMeta || {})) {
-    (await allCourseIds()).forEach(courseId => courseIds.add(courseId));
+  const a = getAdmin();
+  if (!a) {
+    console.error('Missing env var: FIREBASE_SERVICE_ACCOUNT');
+    return json(500, { error: 'Server misconfiguration' }, origin);
   }
-  await Promise.all([...courseIds].map(buildCourseStatistics));
-});
+
+  const authHeader = event.headers.authorization || event.headers.Authorization || '';
+  const idToken = authHeader.startsWith('Bearer ') ? authHeader.slice(7).trim() : '';
+  if (!idToken) return json(401, { error: 'Missing Authorization bearer token' }, origin);
+
+  try {
+    await a.auth().verifyIdToken(idToken);
+  } catch (error) {
+    console.warn('verifyIdToken failed:', error.message);
+    return json(401, { error: 'Invalid ID token' }, origin);
+  }
+
+  const courseId = normalizeSubject(event.queryStringParameters && event.queryStringParameters.courseId);
+  if (!courseId || courseId.length > 128) return json(400, { error: 'Invalid courseId' }, origin);
+
+  try {
+    const stats = await buildCourseStatistics(a.firestore(), courseId);
+    return json(200, stats, origin);
+  } catch (error) {
+    console.error('course statistics failed:', error);
+    return json(500, { error: 'Failed to calculate course statistics' }, origin);
+  }
+};

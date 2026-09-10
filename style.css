@@ -228,6 +228,12 @@ body {
 }
 .course-stats-panel { display: none; }
 .course-stats-panel.active { display: block; }
+.course-stats-loading {
+  min-height: 220px; display: flex; flex-direction: column;
+  align-items: center; justify-content: center; gap: .75rem;
+  color: var(--muted); text-align: center;
+}
+.course-stats-loading .spinner { width: 34px; height: 34px; }
 .course-stats-wide-note {
   margin: 0 0 1rem; color: var(--muted); font-size: .85rem; text-align: center;
 }

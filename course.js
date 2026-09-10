@@ -740,6 +740,7 @@ let STATE = {
   // Local caches to avoid re-fetching
   courses:  null,     // Array<Course>
   exams:    {},       // { [courseId]: Array<Exam> }
+  fullCourseExams: {},// { [courseId]: Array<Exam> } for statistics/details
   examVotes: {},     // { [questionId]: { easy, medium, hard, unsolved } }
   doneExams: [],     // Array<examId> — exams marked as done by user
   inProgressExams: [], // Array<examId> — exams marked as in-progress by user
@@ -794,6 +795,17 @@ function _getCourseStudySeconds(courseId) {
   return saved + Math.max(0, Math.floor((Date.now() - tracking.startedAt) / 1000));
 }
 
+function _recordCourseExamOpen(courseId, examId) {
+  const uid = STATE.fireUser?.uid;
+  if (!uid || !courseId || !examId) return;
+  const openedAt = { ...(STATE.userData?.courseExamLastOpenedAt || {}) };
+  openedAt[courseId] = Date.now();
+  STATE.userData = { ...(STATE.userData || {}), courseExamLastOpenedAt: openedAt };
+  saveUserData(uid, { courseExamLastOpenedAt: openedAt }).catch(err => {
+    console.warn('Failed to save course exam open:', err.message);
+  });
+}
+
 function _formatStudyTime(seconds) {
   const totalMinutes = Math.floor(Math.max(0, Number(seconds) || 0) / 60);
   if (totalMinutes < 60) return `${totalMinutes} דקות`;
@@ -802,30 +814,64 @@ function _formatStudyTime(seconds) {
   return minutes ? `${hours} שעות ו-${minutes} דקות` : `${hours} שעות`;
 }
 
-function _courseWideStatsHtml(stats) {
-  if (!stats || !Number(stats.studentCount)) {
-    return '<div class="course-stats-empty">אין עדיין נתונים של סטודנטים פעילים בקורס</div>';
-  }
-  const graph = Array.isArray(stats.questionSolvedGraph) ? stats.questionSolvedGraph : [];
-  const maxAverage = Math.max(1, ...graph.map(item => Number(item.average) || 0));
-  return `
-    <div class="course-stats-wide-note">מבוסס על ${stats.studentCount} סטודנטים שלומדים כרגע בקורס</div>
-    <div class="course-stats-summary">
-      <div><strong>${esc(_formatStudyTime(stats.averageStudyTimeSeconds))}</strong><span>זמן לימוד ממוצע</span></div>
-      <div><strong>${Number(stats.averageCompletedExams || 0).toFixed(1)}</strong><span>מבחנים ממוצעים לסטודנט</span></div>
-      <div><strong>${stats.studentCount}</strong><span>סטודנטים פעילים</span></div>
-    </div>
-    <h3>שאלות שדורגו לפי נושא</h3>
-    <div class="course-stats-bar-chart">
-      ${graph.map(item => `
-        <div class="course-stats-bar-row">
-          <span>${esc(item.subject)}</span>
-          <div><i style="width:${Math.round((Number(item.average) || 0) / maxAverage * 100)}%"></i></div>
-          <strong>${Number(item.average || 0).toFixed(1)}</strong>
-        </div>`).join('') || '<div class="course-stats-empty">אין עדיין נתוני שאלות</div>'}
-    </div>`;
+function _normalizeCourseWideStats(raw) {
+  if (!raw) return null;
+  const subjectCounts = raw.subjectCounts || Object.fromEntries(
+    (Array.isArray(raw.questionSolvedGraph) ? raw.questionSolvedGraph : [])
+      .map(item => [item.subject, Number(item.total) || 0])
+      .filter(([subject]) => subject)
+  );
+  return {
+    studentCount: Number(raw.studentCount) || 0,
+    averageCompletedExams: Number(raw.averageCompletedExams) || 0,
+    totalRatedQuestions: Number(raw.totalRatedQuestions) || Object.values(subjectCounts).reduce((sum, n) => sum + (Number(n) || 0), 0),
+    subjectCounts,
+  };
 }
 
+async function _fetchCourseWideStats(courseId) {
+  try {
+    const idToken = await STATE.fireUser?.getIdToken();
+    if (idToken) {
+      const res = await fetch('/.netlify/functions/course-statistics?courseId=' + encodeURIComponent(courseId), {
+        headers: { 'Authorization': 'Bearer ' + idToken },
+      });
+      if (res.ok) return _normalizeCourseWideStats(await res.json());
+      console.warn('Course statistics function failed:', res.status);
+    }
+  } catch (error) {
+    console.warn('Course statistics function unavailable:', error.message);
+  }
+
+  try {
+    const snap = await db.collection('course_statistics').doc(courseId).get();
+    return snap.exists ? _normalizeCourseWideStats(snap.data()) : null;
+  } catch (error) {
+    console.warn('Course-wide statistics aggregate unavailable:', error.message);
+    return null;
+  }
+}
+
+function _courseWideStatsHtml(stats) {
+  if (!stats || !Number(stats.studentCount)) {
+    return '<div class="course-stats-empty">אין עדיין נתונים של סטודנטים שפתחו מבחן בקורס ב-30 הימים האחרונים</div>';
+  }
+  const subjectCounts = stats.subjectCounts || {};
+  return `
+    <div class="course-stats-wide-note">מבוסס על ${stats.studentCount} סטודנטים שפתחו מבחן בקורס ב-30 הימים האחרונים</div>
+    <div class="course-stats-summary">
+      <div><strong>${Number(stats.averageCompletedExams || 0).toFixed(1)}</strong><span>מבחנים ממוצעים לסטודנט</span></div>
+      <div><strong>${Number(stats.totalRatedQuestions || 0)}</strong><span>סה״כ שאלות שדורגו</span></div>
+      <div><strong>${stats.studentCount}</strong><span>סטודנטים פעילים</span></div>
+    </div>
+    <h3>התפלגות שאלות שדורגו לפי נושא</h3>
+    ${_courseStatsRadar(subjectCounts)}
+    <div class="course-stats-subject-list">
+      ${Object.entries(subjectCounts).sort((a, b) => b[1] - a[1]).map(([subject, count]) =>
+        `<div><span>${esc(subject)}</span><strong>${count}</strong></div>`).join('') ||
+        '<div class="course-stats-empty">אין עדיין נתוני שאלות</div>'}
+    </div>`;
+}
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'hidden') _stopStudyTracking();
   else if (STATE.page === 'exam' && STATE.courseId && !STATE.studyTracking) {
@@ -2172,7 +2218,7 @@ async function doLogout() {
   _stopUserInboxListener();
   await auth.signOut();
   STATE = { page: 'home', courseId: null, examId: null, tab: 'exams',
-            fireUser: null, userData: null, courses: null, exams: {}, examVotes: {},
+            fireUser: null, userData: null, courses: null, exams: {}, fullCourseExams: {}, examVotes: {},
             doneExams: [], inProgressExams: [], savedFilters: {}, subjectFilters: {},
             courseAccessSettings: null, isAnalyticsOn: true, courseCode: '', examLabel: '', examQuestions: [],
             studyTracking: null };
@@ -3247,19 +3293,24 @@ function _courseStatsRadar(subjectCounts) {
   </div>`;
 }
 
-async function openCourseStatsModal(courseId) {
-  const course = (STATE.courses || []).find(c => c.id === courseId);
+function _courseStatsLoadingHtml(text) {
+  return `<div class="course-stats-loading"><div class="spinner"></div><p>${esc(text)}</p></div>`;
+}
+
+async function _loadFullCourseExams(courseId) {
+  if (Array.isArray(STATE.fullCourseExams?.[courseId])) return STATE.fullCourseExams[courseId];
   const examSummaries = STATE.exams[courseId] || await fetchExamsForCourse(courseId);
-  const exams = await Promise.all(examSummaries.map(exam => fetchExam(exam.id)));
-  const loadedExams = exams.filter(Boolean);
-  await loadCourseTopicNames(courseId);
+  const exams = (await Promise.all(examSummaries.map(exam => fetchExam(exam.id)))).filter(Boolean);
+  STATE.fullCourseExams = { ...(STATE.fullCourseExams || {}), [courseId]: exams };
+  return exams;
+}
+
+function _renderPersonalCourseStatsHtml(courseId, loadedExams) {
   const examIds = new Set(loadedExams.map(exam => exam.id));
   const doneCount = (STATE.doneExams || []).filter(id => examIds.has(id)).length;
   const votes = STATE.userData?.difficultyVotes || {};
   const ratedEntities = new Map();
 
-  // Use the same canonical subject entries as the course's נושאים tab so
-  // statistics and subject browsing resolve assignments identically.
   collectCourseSubjectEntries(loadedExams).forEach(entry => {
     const questionSubject = effectiveQuestionSubject(entry.q);
     if (questionSubject) ratedEntities.set(entry.q.id, questionSubject);
@@ -3278,42 +3329,57 @@ async function openCourseStatsModal(courseId) {
     subjectCounts[subject] = (subjectCounts[subject] || 0) + 1;
   });
 
-  const totalSeconds = _getCourseStudySeconds(courseId);
-  let wideStats = null;
+  return `
+    <div class="course-stats-summary">
+      <div><strong>${esc(_formatStudyTime(_getCourseStudySeconds(courseId)))}</strong><span>זמן לימוד</span></div>
+      <div><strong>${doneCount}</strong><span>מבחנים שבוצעו</span></div>
+      <div><strong>${solvedCount}</strong><span>שאלות שדורגו</span></div>
+    </div>
+    <h3>שאלות לפי נושא</h3>
+    ${_courseStatsRadar(subjectCounts)}
+    <div class="course-stats-subject-list">
+      ${Object.entries(subjectCounts).sort((a, b) => b[1] - a[1]).map(([subject, count]) =>
+        `<div><span>${esc(subject)}</span><strong>${count}</strong></div>`).join('') ||
+        '<div class="course-stats-empty">אין עדיין נתונים להצגה</div>'}
+    </div>`;
+}
+
+async function _loadPersonalCourseStats(courseId, panel) {
   try {
-    const wideStatsSnap = await db.collection('course_statistics').doc(courseId).get();
-    wideStats = wideStatsSnap.exists ? wideStatsSnap.data() : null;
+    const loadedExams = await _loadFullCourseExams(courseId);
+    await loadCourseTopicNames(courseId);
+    panel.innerHTML = _renderPersonalCourseStatsHtml(courseId, loadedExams);
   } catch (error) {
-    console.warn('Course-wide statistics unavailable:', error.message);
+    console.warn('Personal course statistics unavailable:', error.message);
+    panel.innerHTML = '<div class="course-stats-empty">לא הצלחנו לטעון את הסטטיסטיקות</div>';
   }
+}
+
+async function _loadWideCourseStats(courseId, panel) {
+  if (panel.dataset.loaded === '1') return;
+  panel.dataset.loaded = '1';
+  panel.innerHTML = _courseStatsLoadingHtml('טוען סטטיסטיקה כללית...');
+  const wideStats = await _fetchCourseWideStats(courseId);
+  panel.innerHTML = _courseWideStatsHtml(wideStats);
+}
+
+function openCourseStatsModal(courseId) {
+  const existing = document.getElementById('course-stats-modal');
+  if (existing) existing.remove();
+  const course = (STATE.courses || []).find(c => c.id === courseId);
   const modal = document.createElement('div');
   modal.id = 'course-stats-modal';
   modal.className = 'course-stats-overlay';
   modal.innerHTML = `
     <div class="course-stats-modal" role="dialog" aria-modal="true" aria-labelledby="course-stats-title">
-      <button class="course-stats-close" type="button" onclick="closeCourseStatsModal()" aria-label="סגור">×</button>
-      <h2 id="course-stats-title">Statistics${course?.name ? ` — ${esc(course.name)}` : ''}</h2>
+      <button class="course-stats-close" type="button" onclick="closeCourseStatsModal()" aria-label="סגור">x</button>
+      <h2 id="course-stats-title">Statistics${course?.name ? ` - ${esc(course.name)}` : ''}</h2>
       <div class="course-stats-tabs" role="tablist">
         <button class="course-stats-tab active" type="button" role="tab" aria-selected="true" data-stats-tab="mine">הסטטיסטיקות שלי</button>
         <button class="course-stats-tab" type="button" role="tab" aria-selected="false" data-stats-tab="wide">סטטיסטיקה כללית</button>
       </div>
-      <section class="course-stats-panel active" data-stats-panel="mine">
-        <div class="course-stats-summary">
-          <div><strong>${esc(_formatStudyTime(totalSeconds))}</strong><span>זמן לימוד</span></div>
-          <div><strong>${doneCount}</strong><span>מבחנים שבוצעו</span></div>
-          <div><strong>${solvedCount}</strong><span>שאלות שדורגו</span></div>
-        </div>
-        <h3>שאלות לפי נושא</h3>
-        ${_courseStatsRadar(subjectCounts)}
-        <div class="course-stats-subject-list">
-          ${Object.entries(subjectCounts).sort((a, b) => b[1] - a[1]).map(([subject, count]) =>
-            `<div><span>${esc(subject)}</span><strong>${count}</strong></div>`).join('') ||
-            '<div class="course-stats-empty">אין עדיין נתונים להצגה</div>'}
-        </div>
-      </section>
-      <section class="course-stats-panel" data-stats-panel="wide">
-        ${_courseWideStatsHtml(wideStats)}
-      </section>
+      <section class="course-stats-panel active" data-stats-panel="mine">${_courseStatsLoadingHtml('טוען את הסטטיסטיקות שלך...')}</section>
+      <section class="course-stats-panel" data-stats-panel="wide"></section>
     </div>`;
   modal.addEventListener('click', event => { if (event.target === modal) closeCourseStatsModal(); });
   modal.querySelectorAll('[data-stats-tab]').forEach(button => {
@@ -3327,10 +3393,12 @@ async function openCourseStatsModal(courseId) {
       modal.querySelectorAll('[data-stats-panel]').forEach(panel => {
         panel.classList.toggle('active', panel.dataset.statsPanel === tab);
       });
+      if (tab === 'wide') _loadWideCourseStats(courseId, modal.querySelector('[data-stats-panel="wide"]'));
     });
   });
   document.body.appendChild(modal);
   document.body.style.overflow = 'hidden';
+  _loadPersonalCourseStats(courseId, modal.querySelector('[data-stats-panel="mine"]'));
 }
 window.openCourseStatsModal = openCourseStatsModal;
 window.closeCourseStatsModal = closeCourseStatsModal;
@@ -3713,7 +3781,13 @@ async function toggleDone(examId) {
 
   STATE.doneExams = done;
   if (!STATE.userData) STATE.userData = {};
-  STATE.userData = { ...STATE.userData, doneExams: done };
+  const doneExamMeta = { ...(STATE.userData?.doneExamMeta || {}) };
+  doneExamMeta[examId] = {
+    courseId: STATE.courseId || '',
+    status: adding ? 'done' : 'undone',
+    updatedAt: Date.now(),
+  };
+  STATE.userData = { ...STATE.userData, doneExams: done, doneExamMeta };
 
   // completedExams — separate array for admin tracking (only grows, never shrinks)
   const completed = [...(STATE.userData?.completedExams || [])];
@@ -3727,8 +3801,9 @@ async function toggleDone(examId) {
       doneExams:      done,
       inProgressExams: STATE.inProgressExams,
       completedExams:  completed,
+      doneExamMeta,
     });
-    _logEvent('exam_status_changed', { examId: _examRef(examId), status: adding ? 'done' : 'undone', courseCode: STATE.courseCode || STATE.courseId });
+      _logEvent('exam_status_changed', { examId: _examRef(examId), rawExamId: examId, status: adding ? 'done' : 'undone', courseCode: STATE.courseCode || STATE.courseId, courseId: STATE.courseId || '' });
     _ga('mark_status', { course_code: _cc(), exam_id: _examRef(examId) || _eid(), status_type: 'done', action: adding ? 'add' : 'remove' });
   } catch (e) {
     console.error('Failed to save doneExams:', e);
@@ -4081,7 +4156,6 @@ async function renderExam() {
     STATE.examLabel = [STATE.courseCode, exam.year, _heToLat(exam.semester), _heToLat(exam.moed)].filter(Boolean).join('_');
 
     _ga('view_exam', { course_code: _cc(), exam_id: _eid() });
-    _logEvent('exam_open', { examId: STATE.examLabel || STATE.examId, courseCode: STATE.courseCode || STATE.courseId });
 
     // Fetch userData only if not cached; fetch votes and video map in parallel
     const [_, votes, videoMap] = await Promise.all([
@@ -4090,6 +4164,8 @@ async function renderExam() {
       fetchExamVideoMap(exam.questions || []),
     ]);
     STATE.examVotes = votes;
+    _recordCourseExamOpen(course.id, exam.id);
+    _logEvent('exam_open', { examId: STATE.examLabel || STATE.examId, rawExamId: exam.id, courseCode: STATE.courseCode || STATE.courseId, courseId: course.id });
     const starred   = STATE.userData?.starredQuestions || [];
     const questions = exam.questions || [];
     STATE.examQuestions = questions;
@@ -4765,7 +4841,7 @@ function updateSkillWeightForVote(qid, topic, score) {
     changedTopics.add(topicKey);
   }
 
-  voteMeta[qid] = { topic: topicKey, score };
+  voteMeta[qid] = { topic: topicKey, score, courseId: STATE.courseId || '', updatedAt: Date.now() };
   changedTopics.forEach(changedTopic => {
     skillWeights[changedTopic] = Number(calculateSkillWeight(Number(solvedCounts[changedTopic]) || 0).toFixed(4));
   });
@@ -4786,7 +4862,17 @@ async function voteDifficulty(qid, rawScore, topic = '') {
   const userVotes = { ...(STATE.userData?.difficultyVotes || {}) };
   const prevVote  = userVotes[qid];
   const prevScore = normalizeDifficultyScore(prevVote);
-  if (prevScore !== null && prevScore === score) return;
+  if (prevScore !== null && prevScore === score) {
+    const skillUpdates = updateSkillWeightForVote(qid, topic, score);
+    STATE.userData = { ...STATE.userData, difficultyVotes: userVotes, ...skillUpdates };
+    await saveUserData(uid, {
+      difficultyVotes: userVotes,
+      topicSolvedCounts: skillUpdates.topicSolvedCounts,
+      topicSkillWeights: skillUpdates.topicSkillWeights,
+      difficultyVoteMeta: skillUpdates.difficultyVoteMeta,
+    });
+    return;
+  }
   const prevBucket = getDifficultyBucketFromVote(prevVote);
   const nextBucket = getDifficultyBucketFromScore(score);
 
@@ -4824,10 +4910,13 @@ async function voteDifficulty(qid, rawScore, topic = '') {
     const finalScore = normalizeDifficultyScore(STATE.userData?.difficultyVotes?.[qid]);
     if (finalScore === null) return;
     _logEvent('difficulty_voted', {
-      questionId: _questionRef(qid),
-      score:      finalScore,
+      questionId:    _questionRef(qid),
+      rawQuestionId: qid,
+      score:         finalScore,
       courseCode: STATE.courseCode || STATE.courseId,
+      courseId:   STATE.courseId || '',
       examId:     STATE.examLabel || STATE.examId || '',
+      rawExamId:  STATE.examId || '',
     });
   }, 10_000);
 
