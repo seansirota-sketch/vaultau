@@ -4910,8 +4910,9 @@ async function voteDifficulty(qid, rawScore, topic = '') {
     const finalScore = normalizeDifficultyScore(STATE.userData?.difficultyVotes?.[qid]);
     if (finalScore === null) return;
     _logEvent('difficulty_voted', {
-      questionId: _questionRef(qid),
-      score:      finalScore,
+      questionId:    _questionRef(qid),
+      rawQuestionId: qid,
+      score:         finalScore,
       courseCode: STATE.courseCode || STATE.courseId,
       courseId:   STATE.courseId || '',
       examId:     STATE.examLabel || STATE.examId || '',

@@ -61,59 +61,132 @@ function buildEntitySubjects(examDocs, topicNames, assignmentDocs) {
 
 async function buildCourseStatistics(courseId) {
   const cutoffMs = Date.now() - 30 * 24 * 60 * 60 * 1000;
-  const [usersSnap, examsSnap, topicsSnap, assignmentsSnap] = await Promise.all([
+  const cutoff = admin.firestore.Timestamp.fromMillis(cutoffMs);
+  const [usersSnap, examsSnap, topicsSnap, assignmentsSnap, courseSnap, eventsSnap] = await Promise.all([
     db.collection('users').get(),
     db.collection('exams').where('courseId', '==', courseId).get(),
     db.collection('courses').doc(courseId).collection('topics').get(),
     db.collection('topic_assignments').where('courseId', '==', courseId).get(),
+    db.collection('courses').doc(courseId).get(),
+    db.collection('analytics_events').where('timestamp', '>=', cutoff).get(),
   ]);
 
   const topicNames = {};
   topicsSnap.forEach(doc => { topicNames[doc.id] = doc.data().name || doc.id; });
   const entitySubjects = buildEntitySubjects(examsSnap.docs, topicNames, assignmentsSnap.docs);
-  const examIds = new Set(examsSnap.docs.map(doc => doc.id));
+  const courseCode = normalizeSubject(courseSnap.exists ? courseSnap.data().code : '');
+  const examsById = new Map();
+  const examsByLabel = new Map();
+  examsSnap.docs.forEach(doc => {
+    const exam = { id: doc.id, ...doc.data() };
+    examsById.set(exam.id, exam);
+    const label = examLabel(courseCode, exam);
+    if (label) examsByLabel.set(label, exam);
+  });
 
-  let studentCount = 0;
-  let totalCompletedExams = 0;
-  let totalRatedQuestions = 0;
-  const subjectCounts = {};
+  const usersById = new Map();
+  usersSnap.docs.forEach(doc => {
+    const user = doc.data();
+    usersById.set(user.uid || doc.id, user);
+  });
+  const events = eventsSnap.docs.map(doc => doc.data()).sort((a, b) => timestampMs(a.timestamp) - timestampMs(b.timestamp));
+  const activeUids = new Set();
 
-  usersSnap.forEach(userDoc => {
-    const user = userDoc.data();
-    if (timestampMs(user.courseExamLastOpenedAt && user.courseExamLastOpenedAt[courseId]) < cutoffMs) return;
+  usersById.forEach((user, uid) => {
+    if (timestampMs(user.courseExamLastOpenedAt && user.courseExamLastOpenedAt[courseId]) >= cutoffMs) activeUids.add(uid);
+  });
+  events.forEach(event => {
+    if (event.event === 'exam_open' && eventMatchesCourse(event, courseId, courseCode, examsById, examsByLabel)) {
+      if (event.uid) activeUids.add(event.uid);
+    }
+  });
 
-    studentCount += 1;
+  const doneStates = new Map();
+  const ratedSubjects = new Map();
 
+  activeUids.forEach(uid => {
+    const user = usersById.get(uid) || {};
     Object.entries(user.doneExamMeta || {}).forEach(([examId, meta]) => {
-      if (!examIds.has(examId)) return;
-      if (meta && meta.courseId && meta.courseId !== courseId) return;
-      if (!meta || meta.status !== 'done') return;
-      if (timestampMs(meta.updatedAt) < cutoffMs) return;
-      totalCompletedExams += 1;
+      if (!examsById.has(examId) || timestampMs(meta && meta.updatedAt) < cutoffMs) return;
+      doneStates.set(uid + ':' + examId, meta.status === 'done');
     });
-
     Object.keys(user.difficultyVotes || {}).forEach(entityId => {
       const meta = (user.difficultyVoteMeta || {})[entityId] || {};
-      if (meta.courseId && meta.courseId !== courseId) return;
       if (timestampMs(meta.updatedAt) < cutoffMs) return;
+      if (meta.courseId && meta.courseId !== courseId) return;
       const subject = entitySubjects.get(entityId);
-      if (!subject) return;
-      totalRatedQuestions += 1;
-      subjectCounts[subject] = (subjectCounts[subject] || 0) + 1;
+      if (subject) ratedSubjects.set(uid + ':' + entityId, subject);
     });
   });
 
+  events.forEach(event => {
+    if (!event.uid || !activeUids.has(event.uid)) return;
+    if (!eventMatchesCourse(event, courseId, courseCode, examsById, examsByLabel)) return;
+    const payload = event.payload || {};
+    if (event.event === 'exam_status_changed') {
+      const exam = resolveEventExam(payload, examsById, examsByLabel);
+      const key = event.uid + ':' + (exam ? exam.id : (payload.rawExamId || payload.examId || ''));
+      if (key.endsWith(':')) return;
+      doneStates.set(key, payload.status === 'done');
+    }
+    if (event.event === 'difficulty_voted') {
+      const resolved = resolveEventQuestion(payload, examsById, examsByLabel, entitySubjects);
+      if (resolved) ratedSubjects.set(event.uid + ':' + resolved.entityId, resolved.subject);
+    }
+  });
+
+  const totalCompletedExams = [...doneStates.values()].filter(Boolean).length;
+  const subjectCounts = {};
+  ratedSubjects.forEach(subject => { subjectCounts[subject] = (subjectCounts[subject] || 0) + 1; });
+  const studentCount = activeUids.size;
   const result = {
     studentCount,
     windowDays: 30,
     averageCompletedExams: studentCount ? Number((totalCompletedExams / studentCount).toFixed(2)) : 0,
-    totalRatedQuestions,
+    totalRatedQuestions: ratedSubjects.size,
     subjectCounts,
     updatedAt: admin.firestore.FieldValue.serverTimestamp(),
   };
 
   await db.collection('course_statistics').doc(courseId).set(result, { merge: false });
   return { ...result, updatedAt: new Date().toISOString() };
+}
+
+function latinLabel(value) {
+  const map = { '\u05d0': 'A', '\u05d1': 'B', '\u05d2': 'C', '\u05d3': 'D' };
+  return map[value] || String(value || '').toUpperCase();
+}
+
+function examLabel(courseCode, exam) {
+  return [courseCode, exam.year, latinLabel(exam.semester), latinLabel(exam.moed)].filter(Boolean).join('_');
+}
+
+function resolveEventExam(payload, examsById, examsByLabel) {
+  return examsById.get(payload.rawExamId) || examsById.get(payload.examId) || examsByLabel.get(payload.examId) || null;
+}
+
+function eventMatchesCourse(event, courseId, courseCode, examsById, examsByLabel) {
+  const payload = event.payload || {};
+  if (payload.courseId === courseId) return true;
+  const eventCourse = normalizeSubject(payload.courseCode);
+  if (eventCourse === normalizeSubject(courseId) || (courseCode && eventCourse === courseCode)) return true;
+  return !!resolveEventExam(payload, examsById, examsByLabel);
+}
+
+function resolveEventQuestion(payload, examsById, examsByLabel, entitySubjects) {
+  if (payload.rawQuestionId && entitySubjects.has(payload.rawQuestionId)) {
+    return { entityId: payload.rawQuestionId, subject: entitySubjects.get(payload.rawQuestionId) };
+  }
+  const exam = resolveEventExam(payload, examsById, examsByLabel);
+  const match = /^Q(\d+)([a-z])?$/i.exec(String(payload.questionId || ''));
+  if (!exam || !match) return null;
+  const question = (exam.questions || [])[Number(match[1]) - 1];
+  if (!question) return null;
+  let entity = question;
+  if (match[2]) entity = (question.subs || question.parts || [])[match[2].toLowerCase().charCodeAt(0) - 97];
+  if (!entity || !entity.id) return null;
+  const subject = entitySubjects.get(entity.id);
+  return subject ? { entityId: entity.id, subject } : null;
 }
 
 function timestampMs(value) {
