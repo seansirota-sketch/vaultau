@@ -397,7 +397,15 @@ function inferListBlocksFromText(text) {
     if (content) blocks.push({ type: 'paragraph', content });
     paragraphLines = [];
   };
-  const listItem = line => line.match(/^\s*(?:[-*•])\s+(.+)$/) || line.match(/^\s*\d+[\.)]\s+(.+)$/);
+  const listItem = line => {
+    const value = String(line || '').replace(/[\u200E\u200F\u202A-\u202E\u2066-\u2069]/g, '').trim();
+    return value.match(/^(?:[-*•])\s*(.+)$/)
+      || value.match(/^(.+?)\s*(?:[-*•])$/)
+      || value.match(/^\d+[\.)]\s+(.+)$/);
+  };
+  const isOrderedListItem = line => /^\d+[\.)]\s+/.test(
+    String(line || '').replace(/[\u200E\u200F\u202A-\u202E\u2066-\u2069]/g, '').trim()
+  );
 
   for (let i = 0; i < lines.length;) {
     const firstItem = listItem(lines[i]);
@@ -407,12 +415,12 @@ function inferListBlocksFromText(text) {
       continue;
     }
 
-    const ordered = /^\s*\d+[\.)]\s+/.test(lines[i]);
+    const ordered = isOrderedListItem(lines[i]);
     const items = [];
     let end = i;
     while (end < lines.length) {
       const item = listItem(lines[end]);
-      const itemIsOrdered = /^\s*\d+[\.)]\s+/.test(lines[end]);
+      const itemIsOrdered = isOrderedListItem(lines[end]);
       if (!item || itemIsOrdered !== ordered) break;
       items.push(item[1].trim());
       end += 1;
@@ -2996,6 +3004,7 @@ async function processSingleQuestionImage(file) {
 - type "code" עבור קוד (כולל C, MIPS וכו׳), עם content ששומר הזחות ושבירות שורה.
 - type "table" עבור טבלה, עם headers ו-rows. אל תמיר טבלאות לטקסט.
 - type "list" עבור רשימות, עם items ו-ordered.
+סימני bullet שמופיעים מימין לטקסט בגלל כיוון RTL הם עדיין פריטי רשימה, לא טקסט רגיל.
 שים טקסט לפני קוד או טבלה בבלוק paragraph לפניו, וטקסט אחריהם בבלוק paragraph אחריהם.
 השאר text ריק כאשר blocks כוללים את תוכן השאלה הראשית.
 החזר JSON מובנה בלבד באמצעות הכלי:

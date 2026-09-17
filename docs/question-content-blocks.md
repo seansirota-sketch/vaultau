@@ -37,5 +37,6 @@ C- or MIPS-style multi-line code fragment as plain text, the editor separates
 that fragment into a code block automatically while preserving surrounding
 text as paragraph blocks.
 
-Likewise, consecutive lines beginning with `-`, `*`, or `•` are converted into
-a bullet-list block; consecutive numbered lines become a numbered-list block.
+Likewise, consecutive lines with `-`, `*`, or `•` at either the beginning or
+end of the extracted RTL line are converted into a bullet-list block;
+consecutive numbered lines become a numbered-list block.
