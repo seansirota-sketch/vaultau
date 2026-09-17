@@ -27,3 +27,7 @@ When a question with existing text receives its first content block, its text
 is converted into the first text block automatically. Use the “הוסף כאן”
 controls between blocks to insert text, tables, code, or lists in the required
 position. The arrow controls move a block up or down.
+
+Sub-questions are intentionally displayed after the full ordered block
+sequence in both the editor and the student view. This keeps the authoring
+order consistent with the saved question.

@@ -315,6 +315,31 @@ function hasQuestionBlocks(blocks) {
   });
 }
 
+function normalizeQuestionBlocks(blocks) {
+  if (!Array.isArray(blocks)) return [];
+  return blocks.flatMap(block => {
+    if (!block || typeof block !== 'object') return [];
+    if (block.type === 'code') return [{
+      type: 'code',
+      language: String(block.language || 'text'),
+      content: String(block.content || ''),
+    }];
+    if (block.type === 'list') return [{
+      type: 'list',
+      ordered: block.ordered === true,
+      items: Array.isArray(block.items) ? block.items.map(item => String(item || '')) : [],
+    }];
+    if (block.type === 'table') return [{
+      type: 'table',
+      headers: Array.isArray(block.headers) ? block.headers.map(cell => String(cell || '')) : [],
+      rows: Array.isArray(block.rows) ? block.rows.map(row => Array.isArray(row)
+        ? row.map(cell => String(cell || '')) : []) : [],
+    }];
+    if (block.type === 'paragraph') return [{ type: 'paragraph', content: String(block.content || '') }];
+    return [];
+  });
+}
+
 function repairParsedQuestions(questions) {
   const repaired = [];
   const notes = [];
@@ -366,10 +391,16 @@ function normalizeQuestionSubject(raw) {
 }
 
 function normalizeParsedQuestion(q) {
+  const blocks = normalizeQuestionBlocks(q.blocks);
+  const text = String(q.text || '');
+  if (hasQuestionBlocks(blocks) && text.trim()) {
+    blocks.unshift({ type: 'paragraph', content: text });
+  }
   return {
     ...q,
+    text: hasQuestionBlocks(blocks) ? '' : text,
     subject: normalizeQuestionSubject(q.subject || q.topic || ''),
-    blocks: Array.isArray(q.blocks) ? q.blocks : [],
+    blocks,
     subs: (q.subs || q.parts || []).map((s, si) => normalizeSubEntry(s, si)),
   };
 }
@@ -2842,8 +2873,15 @@ async function processSingleQuestionImage(file) {
 אם יש סעיפים (א)(ב)(ג) או (1)(2)(3), החזר אותם ב-parts עם letter ללא סוגריים.
 החזר את הטקסט של הסעיף בלי לחזור על תווית הסעיף בתחילתו.
 אם לא ניתן לזהות נושא, השאר subject ריק.
+החזר blocks מסודרים לפי הסדר החזותי של התמונה עבור תוכן השאלה הראשית:
+- type "paragraph" לכל פסקת טקסט.
+- type "code" עבור קוד (כולל C, MIPS וכו׳), עם content ששומר הזחות ושבירות שורה.
+- type "table" עבור טבלה, עם headers ו-rows. אל תמיר טבלאות לטקסט.
+- type "list" עבור רשימות, עם items ו-ordered.
+שים טקסט לפני קוד או טבלה בבלוק paragraph לפניו, וטקסט אחריהם בבלוק paragraph אחריהם.
+השאר text ריק כאשר blocks כוללים את תוכן השאלה הראשית.
 החזר JSON מובנה בלבד באמצעות הכלי:
-{"questions":[{"number":1,"text":"...","subject":"","isBonus":false,"parts":[{"letter":"א","text":"...","subject":""}]}]}`;
+{"questions":[{"number":1,"text":"","blocks":[{"type":"paragraph","content":"..."},{"type":"code","language":"c","content":"..."},{"type":"table","headers":["..."],"rows":[["..."]]}],"subject":"","isBonus":false,"parts":[{"letter":"א","text":"...","subject":""}]}]}`;
 
   const data = await callClaudeViaEdge([{
     role: 'user',
@@ -4314,7 +4352,8 @@ function renderPreview() {
          onblur="scheduleHideSubjectAutocomplete()"
          style="flex:1;min-width:220px;padding:.5rem .65rem;border:1.5px solid var(--border);border-radius:8px;box-sizing:border-box;font:inherit;color:var(--text)">
       </div>
-      ${q.subs.length ? renderSubsPreview(q.subs, i) : `
+      ${renderQuestionBlockEditor(q.blocks, i)}
+      ${q.subs.length ? renderSubsPreview(q.subs, i) : !q.blocks?.length ? `
         <div style="font-size:.78rem;color:var(--muted);margin:.6rem 1.1rem .2rem;font-weight:600">תוכן השאלה:</div>
         <textarea class="pq-textarea" id="qbody-${i}" rows="4"
          oninput="updateQuestionText(${i},this.value)"
@@ -4323,8 +4362,7 @@ function renderPreview() {
           ondragleave="clearImageDropState(event)"
           ondrop="dropImageIntoQuestionText(event,${i})"
           placeholder="טקסט השאלה כאן...">${esc(q.text)}</textarea>
-        <div id="qb-inline-preview-${i}">${renderEditorInlineImagePreview(q.text, q.inlineImages, `qb-${i}`, i, null)}</div>`}
-      ${renderQuestionBlockEditor(q.blocks, i)}
+        <div id="qb-inline-preview-${i}">${renderEditorInlineImagePreview(q.text, q.inlineImages, `qb-${i}`, i, null)}</div>` : ''}
       ${renderClueSection(q.clues, `updateQuestionClue(${i},`)}
     </div>`).join('');
 
@@ -4703,8 +4741,9 @@ async function extractQuestionFromImage(input, qi) {
 
   try {
     const result = await processSingleQuestionImage(file);
-    const extracted = result.questions?.[0];
-    if (!extracted || (!(extracted.text || '').trim() && !extracted.subs?.length)) {
+    const rawExtracted = result.questions?.[0];
+    const extracted = rawExtracted ? normalizeParsedQuestion(rawExtracted) : null;
+    if (!extracted || (!(extracted.text || '').trim() && !hasQuestionBlocks(extracted.blocks) && !extracted.subs?.length)) {
       throw new Error('לא זוהתה שאלה בתמונה');
     }
     parsedQuestions[qi] = {
@@ -4713,7 +4752,7 @@ async function extractQuestionFromImage(input, qi) {
       subject: extracted.subject || '',
       isBonus: extracted.isBonus === true,
       subs: extracted.subs || [],
-      blocks: [],
+      blocks: normalizeQuestionBlocks(extracted.blocks),
       inlineImages: question.inlineImages || {},
     };
     renderPreview();

@@ -57,6 +57,23 @@ const EXAM_TOOL = {
           properties: {
             number:  { type: ['number', 'string'] },
             text:    { type: 'string' },
+            blocks: {
+              type: 'array',
+              description: 'Optional ordered rich-content blocks for the main question. Use when the source contains code, tables, lists, or text that must appear around them.',
+              items: {
+                type: 'object',
+                properties: {
+                  type: { type: 'string', enum: ['paragraph', 'code', 'list', 'table'] },
+                  content: { type: 'string' },
+                  language: { type: 'string' },
+                  ordered: { type: 'boolean' },
+                  items: { type: 'array', items: { type: 'string' } },
+                  headers: { type: 'array', items: { type: 'string' } },
+                  rows: { type: 'array', items: { type: 'array', items: { type: 'string' } } },
+                },
+                required: ['type'],
+              },
+            },
             subject: { type: ['string', 'null'] },
             isBonus: { type: 'boolean' },
             parts: {
