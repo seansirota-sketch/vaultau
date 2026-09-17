@@ -3022,6 +3022,7 @@ function _normalizeResult(parsed) {
       id:      genId(),
       index:   q.number || i + 1,
       text,
+      blocks: normalizeQuestionBlocks(q.blocks),
       subject: normalizeQuestionSubject(q.subject || q.topic || ''),
       inlineImages: {},
       isBonus: bonus,
