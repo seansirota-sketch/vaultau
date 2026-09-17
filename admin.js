@@ -340,6 +340,59 @@ function normalizeQuestionBlocks(blocks) {
   });
 }
 
+function isLikelyCodeLine(line) {
+  const value = String(line || '');
+  return /^\s*(?:#include\b|(?:unsigned\s+)?(?:int|float|double|char|long|short|void|bool)\b|for\s*\(|while\s*\(|if\s*\(|else\b|return\b|[A-Za-z_]\w*(?:\[[^\]]+\])+\s*=|[A-Za-z_]\w*\s*:|(?:addi|add|sub|lw|sw|move|bne|beq|jal|jr)\b)/.test(value);
+}
+
+function inferCodeBlocksFromText(text) {
+  const lines = String(text || '').replace(/\r\n?/g, '\n').split('\n');
+  const blocks = [];
+  let paragraphLines = [];
+  let foundCode = false;
+
+  const addParagraph = () => {
+    const content = paragraphLines.join('\n').trim();
+    if (content) blocks.push({ type: 'paragraph', content });
+    paragraphLines = [];
+  };
+
+  for (let i = 0; i < lines.length;) {
+    if (!isLikelyCodeLine(lines[i])) {
+      paragraphLines.push(lines[i]);
+      i += 1;
+      continue;
+    }
+
+    let end = i;
+    while (end < lines.length && (isLikelyCodeLine(lines[end]) || !lines[end].trim())) end += 1;
+    const codeLines = lines.slice(i, end);
+    const codeLineCount = codeLines.filter(line => line.trim()).length;
+    if (codeLineCount < 2) {
+      paragraphLines.push(...codeLines);
+      i = end;
+      continue;
+    }
+
+    addParagraph();
+    const content = codeLines.join('\n').trim();
+    const language = /^\s*(?:addi|add|sub|lw|sw|move|bne|beq|jal|jr)\b/m.test(content) ? 'mips' : 'c';
+    blocks.push({ type: 'code', language, content });
+    foundCode = true;
+    i = end;
+  }
+
+  addParagraph();
+  return foundCode ? blocks : null;
+}
+
+function recoverCodeBlocks(blocks) {
+  return blocks.flatMap(block => {
+    if (block.type !== 'paragraph') return [block];
+    return inferCodeBlocksFromText(block.content) || [block];
+  });
+}
+
 function repairParsedQuestions(questions) {
   const repaired = [];
   const notes = [];
@@ -391,9 +444,14 @@ function normalizeQuestionSubject(raw) {
 }
 
 function normalizeParsedQuestion(q) {
-  const blocks = normalizeQuestionBlocks(q.blocks);
+  let blocks = normalizeQuestionBlocks(q.blocks);
   const text = String(q.text || '');
-  if (hasQuestionBlocks(blocks) && text.trim()) {
+  if (blocks.length) {
+    blocks = recoverCodeBlocks(blocks);
+  } else {
+    blocks = inferCodeBlocksFromText(text) || [];
+  }
+  if (hasQuestionBlocks(blocks) && text.trim() && normalizeQuestionBlocks(q.blocks).length) {
     blocks.unshift({ type: 'paragraph', content: text });
   }
   return {

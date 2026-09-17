@@ -31,3 +31,8 @@ position. The arrow controls move a block up or down.
 Sub-questions are intentionally displayed after the full ordered block
 sequence in both the editor and the student view. This keeps the authoring
 order consistent with the saved question.
+
+Image extraction requests structured blocks from the AI. If the AI returns a
+C- or MIPS-style multi-line code fragment as plain text, the editor separates
+that fragment into a code block automatically while preserving surrounding
+text as paragraph blocks.
