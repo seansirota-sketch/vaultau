@@ -1061,6 +1061,47 @@ body {
   background: #eff6ff;
   box-shadow: inset 0 0 0 2px #93c5fd;
 }
+.question-block-editor {
+  display: flex;
+  flex-direction: column;
+  gap: .65rem;
+  margin: .7rem 1.1rem;
+}
+.question-block-card {
+  padding: .65rem;
+  border: 1px solid var(--border-s);
+  border-radius: 8px;
+  background: var(--card2);
+}
+.question-block-header {
+  display: flex;
+  align-items: center;
+  gap: .55rem;
+  margin-bottom: .5rem;
+  font-size: .8rem;
+}
+.question-block-header strong { margin-inline-end: auto; }
+.question-block-header select,
+.question-block-header label,
+.question-block-input,
+.question-block-table input {
+  font: inherit;
+  font-size: .8rem;
+}
+.question-block-input {
+  box-sizing: border-box;
+  width: 100%;
+  margin-bottom: .4rem;
+  padding: .45rem .55rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+.question-block-code { min-height: 150px; direction: ltr; text-align: left; }
+.question-block-paragraph { min-height: 100px; }
+.question-block-table-wrap { overflow-x: auto; margin-bottom: .5rem; }
+.question-block-table { border-collapse: collapse; min-width: 420px; width: 100%; }
+.question-block-table th, .question-block-table td { border: 1px solid var(--border); padding: .25rem; }
+.question-block-table input { box-sizing: border-box; width: 100%; min-width: 100px; border: 0; padding: .35rem; background: transparent; }
 .pq-image-tools {
   display: flex;
   align-items: center;
@@ -1675,6 +1716,32 @@ mjx-container { direction: ltr; }
 .qv-inline-image.align-left { text-align: left; }
 .qv-inline-image.align-center { text-align: center; }
 .qv-inline-image.align-right { text-align: right; }
+
+.question-paragraph { margin: .55rem 0; }
+.question-code {
+  direction: ltr;
+  text-align: left;
+  overflow-x: auto;
+  margin: .8rem 0;
+  padding: .85rem 1rem;
+  border-radius: 8px;
+  background: #172033;
+  color: #eef4ff;
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  line-height: 1.5;
+  white-space: pre;
+}
+.question-list { margin: .7rem 0; padding-inline-start: 1.75rem; }
+.question-list li { margin: .3rem 0; }
+.question-table-wrap { overflow-x: auto; margin: .85rem 0; }
+.question-table { width: 100%; border-collapse: collapse; background: #fff; }
+.question-table th, .question-table td {
+  padding: .55rem .75rem;
+  border: 1px solid #dce2ea;
+  text-align: start;
+  vertical-align: top;
+}
+.question-table th { background: #f3f6fa; font-weight: 700; }
 
 /* ── Display math blocks ($$...$$) ── */
 .math-display {

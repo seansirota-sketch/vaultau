@@ -305,6 +305,16 @@ function normalizeSubEntry(rawSub, fallbackIndex = 0) {
  * - merges duplicate sub labels within a question
  * - fixes missing/duplicate question numbering
  */
+function hasQuestionBlocks(blocks) {
+  return Array.isArray(blocks) && blocks.some(block => {
+    if (!block || typeof block !== 'object') return false;
+    if (block.type === 'table') return [...(block.headers || []), ...(block.rows || []).flat()]
+      .some(cell => String(cell || '').trim());
+    if (block.type === 'list') return (block.items || []).some(item => String(item || '').trim());
+    return String(block.content || '').trim();
+  });
+}
+
 function repairParsedQuestions(questions) {
   const repaired = [];
   const notes = [];
@@ -334,7 +344,7 @@ function repairParsedQuestions(questions) {
     });
     q.subs = subs;
 
-    if (!q.text && !q.subs.length) {
+    if (!q.text && !q.subs.length && !hasQuestionBlocks(q.blocks)) {
       notes.push('הוסרה שאלה ריקה');
       return;
     }
@@ -359,6 +369,7 @@ function normalizeParsedQuestion(q) {
   return {
     ...q,
     subject: normalizeQuestionSubject(q.subject || q.topic || ''),
+    blocks: Array.isArray(q.blocks) ? q.blocks : [],
     subs: (q.subs || q.parts || []).map((s, si) => normalizeSubEntry(s, si)),
   };
 }
@@ -3737,6 +3748,100 @@ function updateQuestionText(qi, val) {
   refreshInlinePreviewContainer(`qb-inline-preview-${qi}`, val, parsedQuestions[qi].inlineImages, `qb-${qi}`, qi, null);
 }
 
+function newQuestionBlock(type) {
+  if (type === 'code') return { type, language: 'text', content: '' };
+  if (type === 'list') return { type, ordered: false, items: [''] };
+  if (type === 'table') return { type, headers: ['', ''], rows: [['', '']] };
+  return { type: 'paragraph', content: '' };
+}
+
+function addQuestionBlock(qi, type) {
+  const question = parsedQuestions[qi];
+  if (!question) return;
+  if (!Array.isArray(question.blocks)) question.blocks = [];
+  question.blocks.push(newQuestionBlock(type));
+  renderPreview();
+}
+window.addQuestionBlock = addQuestionBlock;
+
+function removeQuestionBlock(qi, bi) {
+  if (!parsedQuestions[qi]?.blocks?.[bi]) return;
+  parsedQuestions[qi].blocks.splice(bi, 1);
+  renderPreview();
+}
+window.removeQuestionBlock = removeQuestionBlock;
+
+function updateQuestionBlock(qi, bi, value) {
+  const block = parsedQuestions[qi]?.blocks?.[bi];
+  if (block && typeof block.content === 'string') block.content = value;
+}
+window.updateQuestionBlock = updateQuestionBlock;
+
+function updateQuestionBlockListItem(qi, bi, ii, value) {
+  const block = parsedQuestions[qi]?.blocks?.[bi];
+  if (block?.type === 'list' && Array.isArray(block.items)) block.items[ii] = value;
+}
+window.updateQuestionBlockListItem = updateQuestionBlockListItem;
+
+function addQuestionBlockListItem(qi, bi) {
+  const block = parsedQuestions[qi]?.blocks?.[bi];
+  if (block?.type !== 'list') return;
+  block.items.push('');
+  renderPreview();
+}
+window.addQuestionBlockListItem = addQuestionBlockListItem;
+
+function updateQuestionBlockCell(qi, bi, row, column, value) {
+  const block = parsedQuestions[qi]?.blocks?.[bi];
+  if (block?.type !== 'table') return;
+  const target = row === -1 ? block.headers : block.rows?.[row];
+  if (Array.isArray(target)) target[column] = value;
+}
+window.updateQuestionBlockCell = updateQuestionBlockCell;
+
+function addQuestionBlockTableRow(qi, bi) {
+  const block = parsedQuestions[qi]?.blocks?.[bi];
+  if (block?.type !== 'table') return;
+  block.rows.push(Array(block.headers.length).fill(''));
+  renderPreview();
+}
+window.addQuestionBlockTableRow = addQuestionBlockTableRow;
+
+function addQuestionBlockTableColumn(qi, bi) {
+  const block = parsedQuestions[qi]?.blocks?.[bi];
+  if (block?.type !== 'table') return;
+  block.headers.push('');
+  block.rows.forEach(row => row.push(''));
+  renderPreview();
+}
+window.addQuestionBlockTableColumn = addQuestionBlockTableColumn;
+
+function renderQuestionBlockEditor(blocks, qi) {
+  if (!Array.isArray(blocks) || !blocks.length) return '';
+  return `<div class="question-block-editor">${blocks.map((block, bi) => {
+    if (block.type === 'code') return `<div class="question-block-card">
+      <div class="question-block-header"><strong>קוד</strong>
+        <select onchange="parsedQuestions[${qi}].blocks[${bi}].language=this.value">
+          ${['text', 'c', 'cpp', 'python', 'mips', 'java'].map(language => `<option value="${language}"${block.language === language ? ' selected' : ''}>${language}</option>`).join('')}
+        </select><button class="btn-icon btn-sm" onclick="removeQuestionBlock(${qi},${bi})">✕</button></div>
+      <textarea class="pq-textarea question-block-code" dir="ltr" oninput="updateQuestionBlock(${qi},${bi},this.value)" placeholder="הדבק קוד כאן...">${esc(block.content || '')}</textarea></div>`;
+    if (block.type === 'list') return `<div class="question-block-card">
+      <div class="question-block-header"><strong>${block.ordered ? 'רשימה ממוספרת' : 'רשימה'}</strong>
+        <label><input type="checkbox" ${block.ordered ? 'checked' : ''} onchange="parsedQuestions[${qi}].blocks[${bi}].ordered=this.checked"> ממוספרת</label>
+        <button class="btn-icon btn-sm" onclick="removeQuestionBlock(${qi},${bi})">✕</button></div>
+      ${(block.items || []).map((item, ii) => `<input class="question-block-input" value="${esc(item || '')}" oninput="updateQuestionBlockListItem(${qi},${bi},${ii},this.value)" placeholder="פריט ברשימה">`).join('')}
+      <button class="btn btn-sm btn-secondary" onclick="addQuestionBlockListItem(${qi},${bi})">+ פריט</button></div>`;
+    if (block.type === 'table') return `<div class="question-block-card">
+      <div class="question-block-header"><strong>טבלה</strong><button class="btn-icon btn-sm" onclick="removeQuestionBlock(${qi},${bi})">✕</button></div>
+      <div class="question-block-table-wrap"><table class="question-block-table"><thead><tr>${(block.headers || []).map((cell, ci) => `<th><input value="${esc(cell || '')}" oninput="updateQuestionBlockCell(${qi},${bi},-1,${ci},this.value)" placeholder="כותרת"></th>`).join('')}</tr></thead>
+      <tbody>${(block.rows || []).map((row, ri) => `<tr>${row.map((cell, ci) => `<td><input value="${esc(cell || '')}" oninput="updateQuestionBlockCell(${qi},${bi},${ri},${ci},this.value)"></td>`).join('')}</tr>`).join('')}</tbody></table></div>
+      <button class="btn btn-sm btn-secondary" onclick="addQuestionBlockTableRow(${qi},${bi})">+ שורה</button>
+      <button class="btn btn-sm btn-secondary" onclick="addQuestionBlockTableColumn(${qi},${bi})">+ עמודה</button></div>`;
+    return `<div class="question-block-card"><div class="question-block-header"><strong>טקסט</strong><button class="btn-icon btn-sm" onclick="removeQuestionBlock(${qi},${bi})">✕</button></div>
+      <textarea class="pq-textarea question-block-paragraph" oninput="updateQuestionBlock(${qi},${bi},this.value)" placeholder="טקסט, LaTex ותמונות...">${esc(block.content || '')}</textarea></div>`;
+  }).join('')}</div>`;
+}
+
 function updateQuestionSubject(qi, val) {
   if (!parsedQuestions[qi]) return;
   parsedQuestions[qi].subject = normalizeQuestionSubject(val);
@@ -4147,6 +4252,10 @@ function renderPreview() {
               onchange="toggleAIGen(${i}, this.checked)"> ✨ AI
           </label>
           ${!q.text?.trim() && !q._showIntro ? `<button class="btn btn-sm btn-secondary" onclick="addIntroToPreview(${i})">+ הקדמה</button>` : ''}
+          <button class="btn btn-sm btn-secondary" onclick="addQuestionBlock(${i},'paragraph')">+ טקסט</button>
+          <button class="btn btn-sm btn-secondary" onclick="addQuestionBlock(${i},'code')">+ קוד</button>
+          <button class="btn btn-sm btn-secondary" onclick="addQuestionBlock(${i},'table')">+ טבלה</button>
+          <button class="btn btn-sm btn-secondary" onclick="addQuestionBlock(${i},'list')">+ רשימה</button>
           <button class="btn btn-sm btn-secondary" onclick="addSubToPreview(${i})">+ סעיף</button>
           <label class="btn btn-sm btn-secondary" title="חלץ שאלה וסעיפים מתמונה">
             📷 תמונה ל-AI
@@ -4188,6 +4297,7 @@ function renderPreview() {
           ondrop="dropImageIntoQuestionText(event,${i})"
           placeholder="טקסט השאלה כאן...">${esc(q.text)}</textarea>
         <div id="qb-inline-preview-${i}">${renderEditorInlineImagePreview(q.text, q.inlineImages, `qb-${i}`, i, null)}</div>`}
+      ${renderQuestionBlockEditor(q.blocks, i)}
       ${renderClueSection(q.clues, `updateQuestionClue(${i},`)}
     </div>`).join('');
 
@@ -4230,6 +4340,21 @@ function _previewFormatText(text, inlineImages = null) {
   }).join('');
 }
 
+function _previewRenderBlocks(blocks) {
+  if (!Array.isArray(blocks)) return '';
+  return blocks.map(block => {
+    if (block?.type === 'code') return `<pre class="question-code" dir="ltr"><code>${esc(block.content || '')}</code></pre>`;
+    if (block?.type === 'list') {
+      const tag = block.ordered ? 'ol' : 'ul';
+      return `<${tag} class="question-list">${(block.items || []).map(item => `<li>${_previewFormatText(esc(item || ''))}</li>`).join('')}</${tag}>`;
+    }
+    if (block?.type === 'table') return `<div class="question-table-wrap"><table class="question-table">
+      ${(block.headers || []).length ? `<thead><tr>${block.headers.map(cell => `<th>${_previewFormatText(esc(cell || ''))}</th>`).join('')}</tr></thead>` : ''}
+      <tbody>${(block.rows || []).map(row => `<tr>${row.map(cell => `<td>${_previewFormatText(esc(cell || ''))}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`;
+    return `<div class="question-paragraph">${_previewFormatText(esc(block?.content || ''))}</div>`;
+  }).join('');
+}
+
 // Build student-like HTML for a single parsed question (stem + sub-parts).
 function _renderPreviewQuestionCard(q, qi) {
   if (!q) return '';
@@ -4237,8 +4362,8 @@ function _renderPreviewQuestionCard(q, qi) {
   const subs    = q.subs || q.parts || [];
   const label   = isBonus ? 'שאלת בונוס' : 'שאלה ' + (q.index || qi + 1);
   const bonusBadge = isBonus ? `<span class="qv-bonus-badge">⭐ שאלת בונוס</span>` : '';
-  const stem = (q.text && q.text.trim())
-    ? `<div class="qv-text">${_previewFormatText(q.text, q.inlineImages)}</div>`
+  const stem = (q.text && q.text.trim()) || hasQuestionBlocks(q.blocks)
+    ? `<div class="qv-text">${hasQuestionBlocks(q.blocks) ? _previewRenderBlocks(q.blocks) : _previewFormatText(q.text, q.inlineImages)}</div>`
     : '';
 
   let partsHtml = '';
@@ -4255,7 +4380,7 @@ function _renderPreviewQuestionCard(q, qi) {
     }).join('')}</div>`;
   }
 
-  const emptyNote = (!(q.text && q.text.trim()) && !subs.length)
+  const emptyNote = (!(q.text && q.text.trim()) && !hasQuestionBlocks(q.blocks) && !subs.length)
     ? `<div class="qv-text" style="color:var(--muted);font-style:italic">— אין תוכן לשאלה זו —</div>`
     : '';
 
@@ -4561,6 +4686,7 @@ async function extractQuestionFromImage(input, qi) {
       subject: extracted.subject || '',
       isBonus: extracted.isBonus === true,
       subs: extracted.subs || [],
+      blocks: [],
       inlineImages: question.inlineImages || {},
     };
     renderPreview();
@@ -4642,7 +4768,7 @@ async function submitAddExam() {
   const questions = parsedQuestions.filter(q => {
     const subs = q.subs || [];
     const hasSubContent = subs.some(s => String(s.text || '').trim());
-    return String(q.text || '').trim() || hasSubContent;
+    return String(q.text || '').trim() || hasQuestionBlocks(q.blocks) || hasSubContent;
   });
   if (!questions.length && !confirm('לא זוהו שאלות. לשמור מבחן ריק?')) return;
 
@@ -4748,6 +4874,25 @@ async function submitAddExam() {
       questions: questions.map(q => ({
         id:      q.id || genId(),
         text:    q.text,
+        blocks: (q.blocks || []).map(block => {
+          if (block.type === 'code') return {
+            type: 'code',
+            language: String(block.language || 'text'),
+            content: String(block.content || ''),
+          };
+          if (block.type === 'list') return {
+            type: 'list',
+            ordered: block.ordered === true,
+            items: (block.items || []).map(item => String(item || '')),
+          };
+          if (block.type === 'table') return {
+            type: 'table',
+            headers: (block.headers || []).map(cell => String(cell || '')),
+            rows: (block.rows || []).map(row => Array.isArray(row)
+              ? row.map(cell => String(cell || '')) : []),
+          };
+          return { type: 'paragraph', content: String(block.content || '') };
+        }),
         subject: normalizeQuestionSubject(q.subject || ''),
         inlineImages: Object.fromEntries(
           Object.entries(filterInlineImagesForText(q.text, q.inlineImages)).map(([k, v]) => {

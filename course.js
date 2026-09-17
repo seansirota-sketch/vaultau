@@ -46,6 +46,62 @@ function formatMathText(text, inlineImages = null) {
     return nl2br(trimmed);
   }).join('');
 }
+
+function hasQuestionBlocks(blocks) {
+  return Array.isArray(blocks) && blocks.some(block => {
+    if (!block || typeof block !== 'object') return false;
+    if (block.type === 'table') return [...(block.headers || []), ...(block.rows || []).flat()]
+      .some(cell => String(cell || '').trim());
+    if (block.type === 'list') return (block.items || []).some(item => String(item || '').trim());
+    return String(block.content || '').trim();
+  });
+}
+
+function questionBlocksText(blocks) {
+  if (!Array.isArray(blocks)) return '';
+  return blocks.map(block => {
+    if (!block || typeof block !== 'object') return '';
+    if (block.type === 'table') {
+      return (block.rows || []).map(row => Array.isArray(row) ? row.join('\t') : '').join('\n');
+    }
+    if (block.type === 'list') return (block.items || []).join('\n');
+    return String(block.content || '');
+  }).filter(Boolean).join('\n\n');
+}
+
+function renderQuestionBlocks(blocks) {
+  if (!Array.isArray(blocks) || !blocks.length) return '';
+  return blocks.filter(block => hasQuestionBlocks([block])).map(block => {
+    if (!block || typeof block !== 'object') return '';
+    if (block.type === 'code') {
+      return `<pre class="question-code" dir="ltr"><code>${esc(block.content || '')}</code></pre>`;
+    }
+    if (block.type === 'list') {
+      const items = Array.isArray(block.items) ? block.items : [];
+      const tag = block.ordered === true ? 'ol' : 'ul';
+      return `<${tag} class="question-list">${items.map(item => `<li>${formatMathText(esc(item || ''))}</li>`).join('')}</${tag}>`;
+    }
+    if (block.type === 'table') {
+      const headers = Array.isArray(block.headers) ? block.headers : [];
+      const rows = Array.isArray(block.rows) ? block.rows : [];
+      const head = headers.length
+        ? `<thead><tr>${headers.map(cell => `<th>${formatMathText(esc(cell || ''))}</th>`).join('')}</tr></thead>`
+        : '';
+      const body = rows.map(row => Array.isArray(row)
+        ? `<tr>${row.map(cell => `<td>${formatMathText(esc(cell || ''))}</td>`).join('')}</tr>`
+        : '').join('');
+      return `<div class="question-table-wrap"><table class="question-table">${head}<tbody>${body}</tbody></table></div>`;
+    }
+    return `<div class="question-paragraph" dir="auto">${formatMathText(esc(block.content || ''))}</div>`;
+  }).join('');
+}
+
+function renderQuestionContent(question) {
+  if (hasQuestionBlocks(question?.blocks)) {
+    return renderQuestionBlocks(question.blocks);
+  }
+  return formatMathText(question?.text || '', question?.inlineImages || null);
+}
 /* ============================================================
    EXAM BANK  —  course.js  (Firebase edition)
    Requires: firebase-config.js loaded first (via script tag)
@@ -3965,7 +4021,7 @@ function renderStarredTab(exams, starred) {
     const { q } = it;
     const subs  = q.subs || q.parts || [];
     const qEl   = tc.querySelector(`#sc-${q.id} .qv-text`);
-    if (qEl) qEl.innerHTML = formatMathText(q.text || '', q.inlineImages || null);
+    if (qEl) qEl.innerHTML = renderQuestionContent(q);
     subs.forEach(s => {
       const sEl = tc.querySelector(`#sc-si-${s.id} .qv-part-text`);
       if (sEl) sEl.innerHTML = formatMathText(s.text || '', s.inlineImages || null);
@@ -4102,7 +4158,7 @@ async function renderVideosTab(exams) {
       // Set HTML content for question/subs (same pattern as renderExam)
       const subs = q.subs || q.parts || [];
       const textEl = body.querySelector(`#qc-${q.id} .qv-text`);
-      if (textEl) textEl.innerHTML = formatMathText(q.text || '', q.inlineImages || null);
+      if (textEl) textEl.innerHTML = renderQuestionContent(q);
       subs.forEach(s => {
         const subEl = body.querySelector(`#si-${s.id} .qv-part-text`);
         if (subEl) subEl.innerHTML = formatMathText(s.text || '', s.inlineImages || null);
@@ -4230,7 +4286,7 @@ async function renderExam() {
     questions.forEach(q => {
       const subs   = q.subs || q.parts || [];
       const textEl = page.querySelector(`#qc-${q.id} .qv-text`);
-      if (textEl) textEl.innerHTML = formatMathText(q.text || '', q.inlineImages || null);
+      if (textEl) textEl.innerHTML = renderQuestionContent(q);
       subs.forEach(s => {
         const subEl = page.querySelector(`#si-${s.id} .qv-part-text`);
         if (subEl) subEl.innerHTML = formatMathText(s.text || '', s.inlineImages || null);
@@ -4313,11 +4369,11 @@ function renderQuestionCard(q, qi, starred, userVotes = {}, videoMap = {}, isAdm
 
   // Top copy button copies the full question: stem + all sub-parts
   const fullQText = hasSubs
-    ? [qText, ...subs.map((s, si) => {
+    ? [qText || questionBlocksText(q.blocks), ...subs.map((s, si) => {
         const lbl = normalizeSubLabel(s.label || s.letter || '', si);
         return lbl + ' ' + (s.text || '');
       })].filter(Boolean).join('\n\n')
-    : qText;
+    : qText || questionBlocksText(q.blocks);
   COPY_MAP.set(qCopyId, fullQText);
 
   const starSVG = (on) => `<svg width="18" height="18" viewBox="0 0 24 24"
@@ -4589,7 +4645,7 @@ function renderSubjectQuestionsTab(course, subjectEntries, subjectOptions) {
       const questionHtml = renderQuestionCard(entry.q, entry.qi, starred, userVotes, {}, isAdmin, entry.exam.id, entry.examTitle, { hideQuestionLabel: isPremiumCourse });
       body.innerHTML = questionHtml;
       const qEl = body.querySelector(`#qc-${entry.q.id} .qv-text`);
-      if (qEl) qEl.innerHTML = formatMathText(entry.q.text || '', entry.q.inlineImages || null);
+      if (qEl) qEl.innerHTML = renderQuestionContent(entry.q);
       const subs = entry.q.subs || entry.q.parts || [];
       subs.forEach(s => {
         const sEl = body.querySelector(`#si-${s.id} .qv-part-text`);
