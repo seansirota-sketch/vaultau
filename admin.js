@@ -386,10 +386,70 @@ function inferCodeBlocksFromText(text) {
   return foundCode ? blocks : null;
 }
 
-function recoverCodeBlocks(blocks) {
+function inferListBlocksFromText(text) {
+  const lines = String(text || '').replace(/\r\n?/g, '\n').split('\n');
+  const blocks = [];
+  let paragraphLines = [];
+  let foundList = false;
+
+  const addParagraph = () => {
+    const content = paragraphLines.join('\n').trim();
+    if (content) blocks.push({ type: 'paragraph', content });
+    paragraphLines = [];
+  };
+  const listItem = line => line.match(/^\s*(?:[-*•])\s+(.+)$/) || line.match(/^\s*\d+[\.)]\s+(.+)$/);
+
+  for (let i = 0; i < lines.length;) {
+    const firstItem = listItem(lines[i]);
+    if (!firstItem) {
+      paragraphLines.push(lines[i]);
+      i += 1;
+      continue;
+    }
+
+    const ordered = /^\s*\d+[\.)]\s+/.test(lines[i]);
+    const items = [];
+    let end = i;
+    while (end < lines.length) {
+      const item = listItem(lines[end]);
+      const itemIsOrdered = /^\s*\d+[\.)]\s+/.test(lines[end]);
+      if (!item || itemIsOrdered !== ordered) break;
+      items.push(item[1].trim());
+      end += 1;
+    }
+    if (items.length < 2) {
+      paragraphLines.push(lines[i]);
+      i += 1;
+      continue;
+    }
+
+    addParagraph();
+    blocks.push({ type: 'list', ordered, items });
+    foundList = true;
+    i = end;
+  }
+
+  addParagraph();
+  return foundList ? blocks : null;
+}
+
+function inferStructuredBlocksFromText(text) {
+  const codeBlocks = inferCodeBlocksFromText(text);
+  const sourceBlocks = codeBlocks || [{ type: 'paragraph', content: String(text || '') }];
+  let foundStructuredContent = Boolean(codeBlocks);
+  const blocks = sourceBlocks.flatMap(block => {
+    if (block.type !== 'paragraph') return [block];
+    const listBlocks = inferListBlocksFromText(block.content);
+    if (listBlocks) foundStructuredContent = true;
+    return listBlocks || [block];
+  });
+  return foundStructuredContent ? blocks : null;
+}
+
+function recoverStructuredBlocks(blocks) {
   return blocks.flatMap(block => {
     if (block.type !== 'paragraph') return [block];
-    return inferCodeBlocksFromText(block.content) || [block];
+    return inferStructuredBlocksFromText(block.content) || [block];
   });
 }
 
@@ -447,9 +507,9 @@ function normalizeParsedQuestion(q) {
   let blocks = normalizeQuestionBlocks(q.blocks);
   const text = String(q.text || '');
   if (blocks.length) {
-    blocks = recoverCodeBlocks(blocks);
+    blocks = recoverStructuredBlocks(blocks);
   } else {
-    blocks = inferCodeBlocksFromText(text) || [];
+    blocks = inferStructuredBlocksFromText(text) || [];
   }
   if (hasQuestionBlocks(blocks) && text.trim() && normalizeQuestionBlocks(q.blocks).length) {
     blocks.unshift({ type: 'paragraph', content: text });
