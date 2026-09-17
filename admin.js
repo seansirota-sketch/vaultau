@@ -305,6 +305,162 @@ function normalizeSubEntry(rawSub, fallbackIndex = 0) {
  * - merges duplicate sub labels within a question
  * - fixes missing/duplicate question numbering
  */
+function hasQuestionBlocks(blocks) {
+  return Array.isArray(blocks) && blocks.some(block => {
+    if (!block || typeof block !== 'object') return false;
+    if (block.type === 'table') return [...(block.headers || []), ...(block.rows || []).flat()]
+      .some(cell => String(cell || '').trim());
+    if (block.type === 'list') return (block.items || []).some(item => String(item || '').trim());
+    return String(block.content || '').trim();
+  });
+}
+
+function normalizeQuestionBlocks(blocks) {
+  if (!Array.isArray(blocks)) return [];
+  return blocks.flatMap(block => {
+    if (!block || typeof block !== 'object') return [];
+    if (block.type === 'code') return [{
+      type: 'code',
+      language: String(block.language || 'text'),
+      content: String(block.content || ''),
+    }];
+    if (block.type === 'list') return [{
+      type: 'list',
+      ordered: block.ordered === true,
+      items: Array.isArray(block.items) ? block.items.map(item => String(item || '')) : [],
+    }];
+    if (block.type === 'table') return [{
+      type: 'table',
+      headers: Array.isArray(block.headers) ? block.headers.map(cell => String(cell || '')) : [],
+      rows: Array.isArray(block.rows) ? block.rows.map(row => Array.isArray(row)
+        ? row.map(cell => String(cell || '')) : []) : [],
+    }];
+    if (block.type === 'paragraph') return [{ type: 'paragraph', content: String(block.content || '') }];
+    return [];
+  });
+}
+
+function isLikelyCodeLine(line) {
+  const value = String(line || '');
+  return /^\s*(?:#include\b|(?:unsigned\s+)?(?:int|float|double|char|long|short|void|bool)\b|for\s*\(|while\s*\(|if\s*\(|else\b|return\b|[A-Za-z_]\w*(?:\[[^\]]+\])+\s*=|[A-Za-z_]\w*\s*:|(?:addi|add|sub|lw|sw|move|bne|beq|jal|jr)\b)/.test(value);
+}
+
+function inferCodeBlocksFromText(text) {
+  const lines = String(text || '').replace(/\r\n?/g, '\n').split('\n');
+  const blocks = [];
+  let paragraphLines = [];
+  let foundCode = false;
+
+  const addParagraph = () => {
+    const content = paragraphLines.join('\n').trim();
+    if (content) blocks.push({ type: 'paragraph', content });
+    paragraphLines = [];
+  };
+
+  for (let i = 0; i < lines.length;) {
+    if (!isLikelyCodeLine(lines[i])) {
+      paragraphLines.push(lines[i]);
+      i += 1;
+      continue;
+    }
+
+    let end = i;
+    while (end < lines.length && (isLikelyCodeLine(lines[end]) || !lines[end].trim())) end += 1;
+    const codeLines = lines.slice(i, end);
+    const codeLineCount = codeLines.filter(line => line.trim()).length;
+    if (codeLineCount < 2) {
+      paragraphLines.push(...codeLines);
+      i = end;
+      continue;
+    }
+
+    addParagraph();
+    const content = codeLines.join('\n').trim();
+    const language = /^\s*(?:addi|add|sub|lw|sw|move|bne|beq|jal|jr)\b/m.test(content) ? 'mips' : 'c';
+    blocks.push({ type: 'code', language, content });
+    foundCode = true;
+    i = end;
+  }
+
+  addParagraph();
+  return foundCode ? blocks : null;
+}
+
+function inferListBlocksFromText(text) {
+  const lines = String(text || '').replace(/\r\n?/g, '\n').split('\n');
+  const blocks = [];
+  let paragraphLines = [];
+  let foundList = false;
+
+  const addParagraph = () => {
+    const content = paragraphLines.join('\n').trim();
+    if (content) blocks.push({ type: 'paragraph', content });
+    paragraphLines = [];
+  };
+  const listItem = line => {
+    const value = String(line || '').replace(/[\u200E\u200F\u202A-\u202E\u2066-\u2069]/g, '').trim();
+    return value.match(/^(?:[-*•])\s*(.+)$/)
+      || value.match(/^(.+?)\s*(?:[-*•])$/)
+      || value.match(/^\d+[\.)]\s+(.+)$/);
+  };
+  const isOrderedListItem = line => /^\d+[\.)]\s+/.test(
+    String(line || '').replace(/[\u200E\u200F\u202A-\u202E\u2066-\u2069]/g, '').trim()
+  );
+
+  for (let i = 0; i < lines.length;) {
+    const firstItem = listItem(lines[i]);
+    if (!firstItem) {
+      paragraphLines.push(lines[i]);
+      i += 1;
+      continue;
+    }
+
+    const ordered = isOrderedListItem(lines[i]);
+    const items = [];
+    let end = i;
+    while (end < lines.length) {
+      const item = listItem(lines[end]);
+      const itemIsOrdered = isOrderedListItem(lines[end]);
+      if (!item || itemIsOrdered !== ordered) break;
+      items.push(item[1].trim());
+      end += 1;
+    }
+    if (items.length < 2) {
+      paragraphLines.push(lines[i]);
+      i += 1;
+      continue;
+    }
+
+    addParagraph();
+    blocks.push({ type: 'list', ordered, items });
+    foundList = true;
+    i = end;
+  }
+
+  addParagraph();
+  return foundList ? blocks : null;
+}
+
+function inferStructuredBlocksFromText(text) {
+  const codeBlocks = inferCodeBlocksFromText(text);
+  const sourceBlocks = codeBlocks || [{ type: 'paragraph', content: String(text || '') }];
+  let foundStructuredContent = Boolean(codeBlocks);
+  const blocks = sourceBlocks.flatMap(block => {
+    if (block.type !== 'paragraph') return [block];
+    const listBlocks = inferListBlocksFromText(block.content);
+    if (listBlocks) foundStructuredContent = true;
+    return listBlocks || [block];
+  });
+  return foundStructuredContent ? blocks : null;
+}
+
+function recoverStructuredBlocks(blocks) {
+  return blocks.flatMap(block => {
+    if (block.type !== 'paragraph') return [block];
+    return inferStructuredBlocksFromText(block.content) || [block];
+  });
+}
+
 function repairParsedQuestions(questions) {
   const repaired = [];
   const notes = [];
@@ -334,7 +490,7 @@ function repairParsedQuestions(questions) {
     });
     q.subs = subs;
 
-    if (!q.text && !q.subs.length) {
+    if (!q.text && !q.subs.length && !hasQuestionBlocks(q.blocks)) {
       notes.push('הוסרה שאלה ריקה');
       return;
     }
@@ -356,9 +512,21 @@ function normalizeQuestionSubject(raw) {
 }
 
 function normalizeParsedQuestion(q) {
+  let blocks = normalizeQuestionBlocks(q.blocks);
+  const text = String(q.text || '');
+  if (blocks.length) {
+    blocks = recoverStructuredBlocks(blocks);
+  } else {
+    blocks = inferStructuredBlocksFromText(text) || [];
+  }
+  if (hasQuestionBlocks(blocks) && text.trim() && normalizeQuestionBlocks(q.blocks).length) {
+    blocks.unshift({ type: 'paragraph', content: text });
+  }
   return {
     ...q,
+    text: hasQuestionBlocks(blocks) ? '' : text,
     subject: normalizeQuestionSubject(q.subject || q.topic || ''),
+    blocks,
     subs: (q.subs || q.parts || []).map((s, si) => normalizeSubEntry(s, si)),
   };
 }
@@ -2831,8 +2999,16 @@ async function processSingleQuestionImage(file) {
 אם יש סעיפים (א)(ב)(ג) או (1)(2)(3), החזר אותם ב-parts עם letter ללא סוגריים.
 החזר את הטקסט של הסעיף בלי לחזור על תווית הסעיף בתחילתו.
 אם לא ניתן לזהות נושא, השאר subject ריק.
+החזר blocks מסודרים לפי הסדר החזותי של התמונה עבור תוכן השאלה הראשית:
+- type "paragraph" לכל פסקת טקסט.
+- type "code" עבור קוד (כולל C, MIPS וכו׳), עם content ששומר הזחות ושבירות שורה.
+- type "table" עבור טבלה, עם headers ו-rows. אל תמיר טבלאות לטקסט.
+- type "list" עבור רשימות, עם items ו-ordered.
+סימני bullet שמופיעים מימין לטקסט בגלל כיוון RTL הם עדיין פריטי רשימה, לא טקסט רגיל.
+שים טקסט לפני קוד או טבלה בבלוק paragraph לפניו, וטקסט אחריהם בבלוק paragraph אחריהם.
+השאר text ריק כאשר blocks כוללים את תוכן השאלה הראשית.
 החזר JSON מובנה בלבד באמצעות הכלי:
-{"questions":[{"number":1,"text":"...","subject":"","isBonus":false,"parts":[{"letter":"א","text":"...","subject":""}]}]}`;
+{"questions":[{"number":1,"text":"","blocks":[{"type":"paragraph","content":"..."},{"type":"code","language":"c","content":"..."},{"type":"table","headers":["..."],"rows":[["..."]]}],"subject":"","isBonus":false,"parts":[{"letter":"א","text":"...","subject":""}]}]}`;
 
   const data = await callClaudeViaEdge([{
     role: 'user',
@@ -2915,6 +3091,7 @@ function _normalizeResult(parsed) {
       id:      genId(),
       index:   q.number || i + 1,
       text,
+      blocks: normalizeQuestionBlocks(q.blocks),
       subject: normalizeQuestionSubject(q.subject || q.topic || ''),
       inlineImages: {},
       isBonus: bonus,
@@ -3737,6 +3914,127 @@ function updateQuestionText(qi, val) {
   refreshInlinePreviewContainer(`qb-inline-preview-${qi}`, val, parsedQuestions[qi].inlineImages, `qb-${qi}`, qi, null);
 }
 
+function newQuestionBlock(type) {
+  if (type === 'code') return { type, language: 'text', content: '' };
+  if (type === 'list') return { type, ordered: false, items: [''] };
+  if (type === 'table') return { type, headers: ['', ''], rows: [['', '']] };
+  return { type: 'paragraph', content: '' };
+}
+
+function addQuestionBlock(qi, type, insertAt) {
+  const question = parsedQuestions[qi];
+  if (!question) return;
+  if (!Array.isArray(question.blocks)) question.blocks = [];
+  if (!question.blocks.length && String(question.text || '').trim()) {
+    question.blocks.push({ type: 'paragraph', content: question.text });
+    question.text = '';
+    delete question._showIntro;
+  }
+  const position = Number.isInteger(insertAt)
+    ? Math.max(0, Math.min(insertAt, question.blocks.length))
+    : question.blocks.length;
+  question.blocks.splice(position, 0, newQuestionBlock(type));
+  renderPreview();
+}
+window.addQuestionBlock = addQuestionBlock;
+
+function moveQuestionBlock(qi, bi, direction) {
+  const blocks = parsedQuestions[qi]?.blocks;
+  const nextIndex = bi + direction;
+  if (!blocks?.[bi] || nextIndex < 0 || nextIndex >= blocks.length) return;
+  [blocks[bi], blocks[nextIndex]] = [blocks[nextIndex], blocks[bi]];
+  renderPreview();
+}
+window.moveQuestionBlock = moveQuestionBlock;
+
+function removeQuestionBlock(qi, bi) {
+  if (!parsedQuestions[qi]?.blocks?.[bi]) return;
+  parsedQuestions[qi].blocks.splice(bi, 1);
+  renderPreview();
+}
+window.removeQuestionBlock = removeQuestionBlock;
+
+function updateQuestionBlock(qi, bi, value) {
+  const block = parsedQuestions[qi]?.blocks?.[bi];
+  if (block && typeof block.content === 'string') block.content = value;
+}
+window.updateQuestionBlock = updateQuestionBlock;
+
+function updateQuestionBlockListItem(qi, bi, ii, value) {
+  const block = parsedQuestions[qi]?.blocks?.[bi];
+  if (block?.type === 'list' && Array.isArray(block.items)) block.items[ii] = value;
+}
+window.updateQuestionBlockListItem = updateQuestionBlockListItem;
+
+function addQuestionBlockListItem(qi, bi) {
+  const block = parsedQuestions[qi]?.blocks?.[bi];
+  if (block?.type !== 'list') return;
+  block.items.push('');
+  renderPreview();
+}
+window.addQuestionBlockListItem = addQuestionBlockListItem;
+
+function updateQuestionBlockCell(qi, bi, row, column, value) {
+  const block = parsedQuestions[qi]?.blocks?.[bi];
+  if (block?.type !== 'table') return;
+  const target = row === -1 ? block.headers : block.rows?.[row];
+  if (Array.isArray(target)) target[column] = value;
+}
+window.updateQuestionBlockCell = updateQuestionBlockCell;
+
+function addQuestionBlockTableRow(qi, bi) {
+  const block = parsedQuestions[qi]?.blocks?.[bi];
+  if (block?.type !== 'table') return;
+  block.rows.push(Array(block.headers.length).fill(''));
+  renderPreview();
+}
+window.addQuestionBlockTableRow = addQuestionBlockTableRow;
+
+function addQuestionBlockTableColumn(qi, bi) {
+  const block = parsedQuestions[qi]?.blocks?.[bi];
+  if (block?.type !== 'table') return;
+  block.headers.push('');
+  block.rows.forEach(row => row.push(''));
+  renderPreview();
+}
+window.addQuestionBlockTableColumn = addQuestionBlockTableColumn;
+
+function renderQuestionBlockEditor(blocks, qi) {
+  if (!Array.isArray(blocks) || !blocks.length) return '';
+  const insertButtons = (position) => `<div class="question-block-insert">
+    <span>הוסף כאן:</span>
+    <button class="btn btn-sm btn-secondary" onclick="addQuestionBlock(${qi},'paragraph',${position})">טקסט</button>
+    <button class="btn btn-sm btn-secondary" onclick="addQuestionBlock(${qi},'code',${position})">קוד</button>
+    <button class="btn btn-sm btn-secondary" onclick="addQuestionBlock(${qi},'table',${position})">טבלה</button>
+    <button class="btn btn-sm btn-secondary" onclick="addQuestionBlock(${qi},'list',${position})">רשימה</button>
+  </div>`;
+  return `<div class="question-block-editor">${insertButtons(0)}${blocks.map((block, bi) => {
+    const controls = `<button class="btn-icon btn-sm" onclick="moveQuestionBlock(${qi},${bi},-1)" ${bi === 0 ? 'disabled' : ''} title="הזז למעלה">↑</button>
+      <button class="btn-icon btn-sm" onclick="moveQuestionBlock(${qi},${bi},1)" ${bi === blocks.length - 1 ? 'disabled' : ''} title="הזז למטה">↓</button>
+      <button class="btn-icon btn-sm" onclick="removeQuestionBlock(${qi},${bi})" title="מחק בלוק">✕</button>`;
+    if (block.type === 'code') return `<div class="question-block-card">
+      <div class="question-block-header"><strong>קוד</strong>
+        <select onchange="parsedQuestions[${qi}].blocks[${bi}].language=this.value">
+          ${['text', 'c', 'cpp', 'python', 'mips', 'java'].map(language => `<option value="${language}"${block.language === language ? ' selected' : ''}>${language}</option>`).join('')}
+        </select>${controls}</div>
+      <textarea class="pq-textarea question-block-code" dir="ltr" oninput="updateQuestionBlock(${qi},${bi},this.value)" placeholder="הדבק קוד כאן...">${esc(block.content || '')}</textarea></div>${insertButtons(bi + 1)}`;
+    if (block.type === 'list') return `<div class="question-block-card">
+      <div class="question-block-header"><strong>${block.ordered ? 'רשימה ממוספרת' : 'רשימה'}</strong>
+        <label><input type="checkbox" ${block.ordered ? 'checked' : ''} onchange="parsedQuestions[${qi}].blocks[${bi}].ordered=this.checked"> ממוספרת</label>
+        ${controls}</div>
+      ${(block.items || []).map((item, ii) => `<input class="question-block-input" value="${esc(item || '')}" oninput="updateQuestionBlockListItem(${qi},${bi},${ii},this.value)" placeholder="פריט ברשימה">`).join('')}
+      <button class="btn btn-sm btn-secondary" onclick="addQuestionBlockListItem(${qi},${bi})">+ פריט</button></div>${insertButtons(bi + 1)}`;
+    if (block.type === 'table') return `<div class="question-block-card">
+      <div class="question-block-header"><strong>טבלה</strong>${controls}</div>
+      <div class="question-block-table-wrap"><table class="question-block-table"><thead><tr>${(block.headers || []).map((cell, ci) => `<th><input value="${esc(cell || '')}" oninput="updateQuestionBlockCell(${qi},${bi},-1,${ci},this.value)" placeholder="כותרת"></th>`).join('')}</tr></thead>
+      <tbody>${(block.rows || []).map((row, ri) => `<tr>${row.map((cell, ci) => `<td><input value="${esc(cell || '')}" oninput="updateQuestionBlockCell(${qi},${bi},${ri},${ci},this.value)"></td>`).join('')}</tr>`).join('')}</tbody></table></div>
+      <button class="btn btn-sm btn-secondary" onclick="addQuestionBlockTableRow(${qi},${bi})">+ שורה</button>
+      <button class="btn btn-sm btn-secondary" onclick="addQuestionBlockTableColumn(${qi},${bi})">+ עמודה</button></div>${insertButtons(bi + 1)}`;
+    return `<div class="question-block-card"><div class="question-block-header"><strong>טקסט</strong>${controls}</div>
+      <textarea class="pq-textarea question-block-paragraph" oninput="updateQuestionBlock(${qi},${bi},this.value)" placeholder="טקסט, LaTex ותמונות...">${esc(block.content || '')}</textarea></div>${insertButtons(bi + 1)}`;
+  }).join('')}</div>`;
+}
+
 function updateQuestionSubject(qi, val) {
   if (!parsedQuestions[qi]) return;
   parsedQuestions[qi].subject = normalizeQuestionSubject(val);
@@ -4147,6 +4445,10 @@ function renderPreview() {
               onchange="toggleAIGen(${i}, this.checked)"> ✨ AI
           </label>
           ${!q.text?.trim() && !q._showIntro ? `<button class="btn btn-sm btn-secondary" onclick="addIntroToPreview(${i})">+ הקדמה</button>` : ''}
+          <button class="btn btn-sm btn-secondary" onclick="addQuestionBlock(${i},'paragraph')">+ טקסט</button>
+          <button class="btn btn-sm btn-secondary" onclick="addQuestionBlock(${i},'code')">+ קוד</button>
+          <button class="btn btn-sm btn-secondary" onclick="addQuestionBlock(${i},'table')">+ טבלה</button>
+          <button class="btn btn-sm btn-secondary" onclick="addQuestionBlock(${i},'list')">+ רשימה</button>
           <button class="btn btn-sm btn-secondary" onclick="addSubToPreview(${i})">+ סעיף</button>
           <label class="btn btn-sm btn-secondary" title="חלץ שאלה וסעיפים מתמונה">
             📷 תמונה ל-AI
@@ -4178,7 +4480,8 @@ function renderPreview() {
          onblur="scheduleHideSubjectAutocomplete()"
          style="flex:1;min-width:220px;padding:.5rem .65rem;border:1.5px solid var(--border);border-radius:8px;box-sizing:border-box;font:inherit;color:var(--text)">
       </div>
-      ${q.subs.length ? renderSubsPreview(q.subs, i) : `
+      ${renderQuestionBlockEditor(q.blocks, i)}
+      ${q.subs.length ? renderSubsPreview(q.subs, i) : !q.blocks?.length ? `
         <div style="font-size:.78rem;color:var(--muted);margin:.6rem 1.1rem .2rem;font-weight:600">תוכן השאלה:</div>
         <textarea class="pq-textarea" id="qbody-${i}" rows="4"
          oninput="updateQuestionText(${i},this.value)"
@@ -4187,7 +4490,7 @@ function renderPreview() {
           ondragleave="clearImageDropState(event)"
           ondrop="dropImageIntoQuestionText(event,${i})"
           placeholder="טקסט השאלה כאן...">${esc(q.text)}</textarea>
-        <div id="qb-inline-preview-${i}">${renderEditorInlineImagePreview(q.text, q.inlineImages, `qb-${i}`, i, null)}</div>`}
+        <div id="qb-inline-preview-${i}">${renderEditorInlineImagePreview(q.text, q.inlineImages, `qb-${i}`, i, null)}</div>` : ''}
       ${renderClueSection(q.clues, `updateQuestionClue(${i},`)}
     </div>`).join('');
 
@@ -4230,6 +4533,21 @@ function _previewFormatText(text, inlineImages = null) {
   }).join('');
 }
 
+function _previewRenderBlocks(blocks, inlineImages = null) {
+  if (!Array.isArray(blocks)) return '';
+  return blocks.map(block => {
+    if (block?.type === 'code') return `<pre class="question-code" dir="ltr"><code>${esc(block.content || '')}</code></pre>`;
+    if (block?.type === 'list') {
+      const tag = block.ordered ? 'ol' : 'ul';
+      return `<${tag} class="question-list">${(block.items || []).map(item => `<li>${_previewFormatText(esc(item || ''), inlineImages)}</li>`).join('')}</${tag}>`;
+    }
+    if (block?.type === 'table') return `<div class="question-table-wrap"><table class="question-table">
+      ${(block.headers || []).length ? `<thead><tr>${block.headers.map(cell => `<th>${_previewFormatText(esc(cell || ''), inlineImages)}</th>`).join('')}</tr></thead>` : ''}
+      <tbody>${(block.rows || []).map(row => `<tr>${row.map(cell => `<td>${_previewFormatText(esc(cell || ''), inlineImages)}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`;
+    return `<div class="question-paragraph">${_previewFormatText(esc(block?.content || ''), inlineImages)}</div>`;
+  }).join('');
+}
+
 // Build student-like HTML for a single parsed question (stem + sub-parts).
 function _renderPreviewQuestionCard(q, qi) {
   if (!q) return '';
@@ -4237,8 +4555,8 @@ function _renderPreviewQuestionCard(q, qi) {
   const subs    = q.subs || q.parts || [];
   const label   = isBonus ? 'שאלת בונוס' : 'שאלה ' + (q.index || qi + 1);
   const bonusBadge = isBonus ? `<span class="qv-bonus-badge">⭐ שאלת בונוס</span>` : '';
-  const stem = (q.text && q.text.trim())
-    ? `<div class="qv-text">${_previewFormatText(q.text, q.inlineImages)}</div>`
+  const stem = (q.text && q.text.trim()) || hasQuestionBlocks(q.blocks)
+    ? `<div class="qv-text">${hasQuestionBlocks(q.blocks) ? _previewRenderBlocks(q.blocks, q.inlineImages) : _previewFormatText(q.text, q.inlineImages)}</div>`
     : '';
 
   let partsHtml = '';
@@ -4255,7 +4573,7 @@ function _renderPreviewQuestionCard(q, qi) {
     }).join('')}</div>`;
   }
 
-  const emptyNote = (!(q.text && q.text.trim()) && !subs.length)
+  const emptyNote = (!(q.text && q.text.trim()) && !hasQuestionBlocks(q.blocks) && !subs.length)
     ? `<div class="qv-text" style="color:var(--muted);font-style:italic">— אין תוכן לשאלה זו —</div>`
     : '';
 
@@ -4551,8 +4869,9 @@ async function extractQuestionFromImage(input, qi) {
 
   try {
     const result = await processSingleQuestionImage(file);
-    const extracted = result.questions?.[0];
-    if (!extracted || (!(extracted.text || '').trim() && !extracted.subs?.length)) {
+    const rawExtracted = result.questions?.[0];
+    const extracted = rawExtracted ? normalizeParsedQuestion(rawExtracted) : null;
+    if (!extracted || (!(extracted.text || '').trim() && !hasQuestionBlocks(extracted.blocks) && !extracted.subs?.length)) {
       throw new Error('לא זוהתה שאלה בתמונה');
     }
     parsedQuestions[qi] = {
@@ -4561,6 +4880,7 @@ async function extractQuestionFromImage(input, qi) {
       subject: extracted.subject || '',
       isBonus: extracted.isBonus === true,
       subs: extracted.subs || [],
+      blocks: normalizeQuestionBlocks(extracted.blocks),
       inlineImages: question.inlineImages || {},
     };
     renderPreview();
@@ -4642,7 +4962,7 @@ async function submitAddExam() {
   const questions = parsedQuestions.filter(q => {
     const subs = q.subs || [];
     const hasSubContent = subs.some(s => String(s.text || '').trim());
-    return String(q.text || '').trim() || hasSubContent;
+    return String(q.text || '').trim() || hasQuestionBlocks(q.blocks) || hasSubContent;
   });
   if (!questions.length && !confirm('לא זוהו שאלות. לשמור מבחן ריק?')) return;
 
@@ -4748,9 +5068,33 @@ async function submitAddExam() {
       questions: questions.map(q => ({
         id:      q.id || genId(),
         text:    q.text,
+        blocks: (q.blocks || []).map(block => {
+          if (block.type === 'code') return {
+            type: 'code',
+            language: String(block.language || 'text'),
+            content: String(block.content || ''),
+          };
+          if (block.type === 'list') return {
+            type: 'list',
+            ordered: block.ordered === true,
+            items: (block.items || []).map(item => String(item || '')),
+          };
+          if (block.type === 'table') return {
+            type: 'table',
+            headers: (block.headers || []).map(cell => String(cell || '')),
+            rows: (block.rows || []).map(row => Array.isArray(row)
+              ? row.map(cell => String(cell || '')) : []),
+          };
+          return { type: 'paragraph', content: String(block.content || '') };
+        }),
         subject: normalizeQuestionSubject(q.subject || ''),
         inlineImages: Object.fromEntries(
-          Object.entries(filterInlineImagesForText(q.text, q.inlineImages)).map(([k, v]) => {
+          Object.entries(filterInlineImagesForText([q.text, ...(q.blocks || []).map(block => [
+            block.content || '',
+            ...(block.items || []),
+            ...(block.headers || []),
+            ...(block.rows || []).flat(),
+          ].join('\n'))].join('\n'), q.inlineImages)).map(([k, v]) => {
             const url = typeof v === 'string' ? normalizeHttpUrl(v) : normalizeHttpUrl(v?.url || '');
             return [k, url || ''];
           }).filter(([, url]) => !!url)
