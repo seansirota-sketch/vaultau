@@ -1067,6 +1067,15 @@ body {
   gap: .65rem;
   margin: .7rem 1.1rem;
 }
+.question-block-insert {
+  display: flex;
+  align-items: center;
+  gap: .35rem;
+  flex-wrap: wrap;
+  padding: .3rem 0;
+  color: var(--muted);
+  font-size: .75rem;
+}
 .question-block-card {
   padding: .65rem;
   border: 1px solid var(--border-s);

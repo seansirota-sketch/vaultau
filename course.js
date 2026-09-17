@@ -69,7 +69,7 @@ function questionBlocksText(blocks) {
   }).filter(Boolean).join('\n\n');
 }
 
-function renderQuestionBlocks(blocks) {
+function renderQuestionBlocks(blocks, inlineImages = null) {
   if (!Array.isArray(blocks) || !blocks.length) return '';
   return blocks.filter(block => hasQuestionBlocks([block])).map(block => {
     if (!block || typeof block !== 'object') return '';
@@ -79,26 +79,26 @@ function renderQuestionBlocks(blocks) {
     if (block.type === 'list') {
       const items = Array.isArray(block.items) ? block.items : [];
       const tag = block.ordered === true ? 'ol' : 'ul';
-      return `<${tag} class="question-list">${items.map(item => `<li>${formatMathText(esc(item || ''))}</li>`).join('')}</${tag}>`;
+      return `<${tag} class="question-list">${items.map(item => `<li>${formatMathText(esc(item || ''), inlineImages)}</li>`).join('')}</${tag}>`;
     }
     if (block.type === 'table') {
       const headers = Array.isArray(block.headers) ? block.headers : [];
       const rows = Array.isArray(block.rows) ? block.rows : [];
       const head = headers.length
-        ? `<thead><tr>${headers.map(cell => `<th>${formatMathText(esc(cell || ''))}</th>`).join('')}</tr></thead>`
+        ? `<thead><tr>${headers.map(cell => `<th>${formatMathText(esc(cell || ''), inlineImages)}</th>`).join('')}</tr></thead>`
         : '';
       const body = rows.map(row => Array.isArray(row)
-        ? `<tr>${row.map(cell => `<td>${formatMathText(esc(cell || ''))}</td>`).join('')}</tr>`
+        ? `<tr>${row.map(cell => `<td>${formatMathText(esc(cell || ''), inlineImages)}</td>`).join('')}</tr>`
         : '').join('');
       return `<div class="question-table-wrap"><table class="question-table">${head}<tbody>${body}</tbody></table></div>`;
     }
-    return `<div class="question-paragraph" dir="auto">${formatMathText(esc(block.content || ''))}</div>`;
+    return `<div class="question-paragraph" dir="auto">${formatMathText(esc(block.content || ''), inlineImages)}</div>`;
   }).join('');
 }
 
 function renderQuestionContent(question) {
   if (hasQuestionBlocks(question?.blocks)) {
-    return renderQuestionBlocks(question.blocks);
+    return renderQuestionBlocks(question.blocks, question?.inlineImages || null);
   }
   return formatMathText(question?.text || '', question?.inlineImages || null);
 }

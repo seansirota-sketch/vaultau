@@ -3755,14 +3755,31 @@ function newQuestionBlock(type) {
   return { type: 'paragraph', content: '' };
 }
 
-function addQuestionBlock(qi, type) {
+function addQuestionBlock(qi, type, insertAt) {
   const question = parsedQuestions[qi];
   if (!question) return;
   if (!Array.isArray(question.blocks)) question.blocks = [];
-  question.blocks.push(newQuestionBlock(type));
+  if (!question.blocks.length && String(question.text || '').trim()) {
+    question.blocks.push({ type: 'paragraph', content: question.text });
+    question.text = '';
+    delete question._showIntro;
+  }
+  const position = Number.isInteger(insertAt)
+    ? Math.max(0, Math.min(insertAt, question.blocks.length))
+    : question.blocks.length;
+  question.blocks.splice(position, 0, newQuestionBlock(type));
   renderPreview();
 }
 window.addQuestionBlock = addQuestionBlock;
+
+function moveQuestionBlock(qi, bi, direction) {
+  const blocks = parsedQuestions[qi]?.blocks;
+  const nextIndex = bi + direction;
+  if (!blocks?.[bi] || nextIndex < 0 || nextIndex >= blocks.length) return;
+  [blocks[bi], blocks[nextIndex]] = [blocks[nextIndex], blocks[bi]];
+  renderPreview();
+}
+window.moveQuestionBlock = moveQuestionBlock;
 
 function removeQuestionBlock(qi, bi) {
   if (!parsedQuestions[qi]?.blocks?.[bi]) return;
@@ -3818,27 +3835,37 @@ window.addQuestionBlockTableColumn = addQuestionBlockTableColumn;
 
 function renderQuestionBlockEditor(blocks, qi) {
   if (!Array.isArray(blocks) || !blocks.length) return '';
-  return `<div class="question-block-editor">${blocks.map((block, bi) => {
+  const insertButtons = (position) => `<div class="question-block-insert">
+    <span>הוסף כאן:</span>
+    <button class="btn btn-sm btn-secondary" onclick="addQuestionBlock(${qi},'paragraph',${position})">טקסט</button>
+    <button class="btn btn-sm btn-secondary" onclick="addQuestionBlock(${qi},'code',${position})">קוד</button>
+    <button class="btn btn-sm btn-secondary" onclick="addQuestionBlock(${qi},'table',${position})">טבלה</button>
+    <button class="btn btn-sm btn-secondary" onclick="addQuestionBlock(${qi},'list',${position})">רשימה</button>
+  </div>`;
+  return `<div class="question-block-editor">${insertButtons(0)}${blocks.map((block, bi) => {
+    const controls = `<button class="btn-icon btn-sm" onclick="moveQuestionBlock(${qi},${bi},-1)" ${bi === 0 ? 'disabled' : ''} title="הזז למעלה">↑</button>
+      <button class="btn-icon btn-sm" onclick="moveQuestionBlock(${qi},${bi},1)" ${bi === blocks.length - 1 ? 'disabled' : ''} title="הזז למטה">↓</button>
+      <button class="btn-icon btn-sm" onclick="removeQuestionBlock(${qi},${bi})" title="מחק בלוק">✕</button>`;
     if (block.type === 'code') return `<div class="question-block-card">
       <div class="question-block-header"><strong>קוד</strong>
         <select onchange="parsedQuestions[${qi}].blocks[${bi}].language=this.value">
           ${['text', 'c', 'cpp', 'python', 'mips', 'java'].map(language => `<option value="${language}"${block.language === language ? ' selected' : ''}>${language}</option>`).join('')}
-        </select><button class="btn-icon btn-sm" onclick="removeQuestionBlock(${qi},${bi})">✕</button></div>
-      <textarea class="pq-textarea question-block-code" dir="ltr" oninput="updateQuestionBlock(${qi},${bi},this.value)" placeholder="הדבק קוד כאן...">${esc(block.content || '')}</textarea></div>`;
+        </select>${controls}</div>
+      <textarea class="pq-textarea question-block-code" dir="ltr" oninput="updateQuestionBlock(${qi},${bi},this.value)" placeholder="הדבק קוד כאן...">${esc(block.content || '')}</textarea></div>${insertButtons(bi + 1)}`;
     if (block.type === 'list') return `<div class="question-block-card">
       <div class="question-block-header"><strong>${block.ordered ? 'רשימה ממוספרת' : 'רשימה'}</strong>
         <label><input type="checkbox" ${block.ordered ? 'checked' : ''} onchange="parsedQuestions[${qi}].blocks[${bi}].ordered=this.checked"> ממוספרת</label>
-        <button class="btn-icon btn-sm" onclick="removeQuestionBlock(${qi},${bi})">✕</button></div>
+        ${controls}</div>
       ${(block.items || []).map((item, ii) => `<input class="question-block-input" value="${esc(item || '')}" oninput="updateQuestionBlockListItem(${qi},${bi},${ii},this.value)" placeholder="פריט ברשימה">`).join('')}
-      <button class="btn btn-sm btn-secondary" onclick="addQuestionBlockListItem(${qi},${bi})">+ פריט</button></div>`;
+      <button class="btn btn-sm btn-secondary" onclick="addQuestionBlockListItem(${qi},${bi})">+ פריט</button></div>${insertButtons(bi + 1)}`;
     if (block.type === 'table') return `<div class="question-block-card">
-      <div class="question-block-header"><strong>טבלה</strong><button class="btn-icon btn-sm" onclick="removeQuestionBlock(${qi},${bi})">✕</button></div>
+      <div class="question-block-header"><strong>טבלה</strong>${controls}</div>
       <div class="question-block-table-wrap"><table class="question-block-table"><thead><tr>${(block.headers || []).map((cell, ci) => `<th><input value="${esc(cell || '')}" oninput="updateQuestionBlockCell(${qi},${bi},-1,${ci},this.value)" placeholder="כותרת"></th>`).join('')}</tr></thead>
       <tbody>${(block.rows || []).map((row, ri) => `<tr>${row.map((cell, ci) => `<td><input value="${esc(cell || '')}" oninput="updateQuestionBlockCell(${qi},${bi},${ri},${ci},this.value)"></td>`).join('')}</tr>`).join('')}</tbody></table></div>
       <button class="btn btn-sm btn-secondary" onclick="addQuestionBlockTableRow(${qi},${bi})">+ שורה</button>
-      <button class="btn btn-sm btn-secondary" onclick="addQuestionBlockTableColumn(${qi},${bi})">+ עמודה</button></div>`;
-    return `<div class="question-block-card"><div class="question-block-header"><strong>טקסט</strong><button class="btn-icon btn-sm" onclick="removeQuestionBlock(${qi},${bi})">✕</button></div>
-      <textarea class="pq-textarea question-block-paragraph" oninput="updateQuestionBlock(${qi},${bi},this.value)" placeholder="טקסט, LaTex ותמונות...">${esc(block.content || '')}</textarea></div>`;
+      <button class="btn btn-sm btn-secondary" onclick="addQuestionBlockTableColumn(${qi},${bi})">+ עמודה</button></div>${insertButtons(bi + 1)}`;
+    return `<div class="question-block-card"><div class="question-block-header"><strong>טקסט</strong>${controls}</div>
+      <textarea class="pq-textarea question-block-paragraph" oninput="updateQuestionBlock(${qi},${bi},this.value)" placeholder="טקסט, LaTex ותמונות...">${esc(block.content || '')}</textarea></div>${insertButtons(bi + 1)}`;
   }).join('')}</div>`;
 }
 
@@ -4340,18 +4367,18 @@ function _previewFormatText(text, inlineImages = null) {
   }).join('');
 }
 
-function _previewRenderBlocks(blocks) {
+function _previewRenderBlocks(blocks, inlineImages = null) {
   if (!Array.isArray(blocks)) return '';
   return blocks.map(block => {
     if (block?.type === 'code') return `<pre class="question-code" dir="ltr"><code>${esc(block.content || '')}</code></pre>`;
     if (block?.type === 'list') {
       const tag = block.ordered ? 'ol' : 'ul';
-      return `<${tag} class="question-list">${(block.items || []).map(item => `<li>${_previewFormatText(esc(item || ''))}</li>`).join('')}</${tag}>`;
+      return `<${tag} class="question-list">${(block.items || []).map(item => `<li>${_previewFormatText(esc(item || ''), inlineImages)}</li>`).join('')}</${tag}>`;
     }
     if (block?.type === 'table') return `<div class="question-table-wrap"><table class="question-table">
-      ${(block.headers || []).length ? `<thead><tr>${block.headers.map(cell => `<th>${_previewFormatText(esc(cell || ''))}</th>`).join('')}</tr></thead>` : ''}
-      <tbody>${(block.rows || []).map(row => `<tr>${row.map(cell => `<td>${_previewFormatText(esc(cell || ''))}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`;
-    return `<div class="question-paragraph">${_previewFormatText(esc(block?.content || ''))}</div>`;
+      ${(block.headers || []).length ? `<thead><tr>${block.headers.map(cell => `<th>${_previewFormatText(esc(cell || ''), inlineImages)}</th>`).join('')}</tr></thead>` : ''}
+      <tbody>${(block.rows || []).map(row => `<tr>${row.map(cell => `<td>${_previewFormatText(esc(cell || ''), inlineImages)}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`;
+    return `<div class="question-paragraph">${_previewFormatText(esc(block?.content || ''), inlineImages)}</div>`;
   }).join('');
 }
 
@@ -4363,7 +4390,7 @@ function _renderPreviewQuestionCard(q, qi) {
   const label   = isBonus ? 'שאלת בונוס' : 'שאלה ' + (q.index || qi + 1);
   const bonusBadge = isBonus ? `<span class="qv-bonus-badge">⭐ שאלת בונוס</span>` : '';
   const stem = (q.text && q.text.trim()) || hasQuestionBlocks(q.blocks)
-    ? `<div class="qv-text">${hasQuestionBlocks(q.blocks) ? _previewRenderBlocks(q.blocks) : _previewFormatText(q.text, q.inlineImages)}</div>`
+    ? `<div class="qv-text">${hasQuestionBlocks(q.blocks) ? _previewRenderBlocks(q.blocks, q.inlineImages) : _previewFormatText(q.text, q.inlineImages)}</div>`
     : '';
 
   let partsHtml = '';
@@ -4895,7 +4922,12 @@ async function submitAddExam() {
         }),
         subject: normalizeQuestionSubject(q.subject || ''),
         inlineImages: Object.fromEntries(
-          Object.entries(filterInlineImagesForText(q.text, q.inlineImages)).map(([k, v]) => {
+          Object.entries(filterInlineImagesForText([q.text, ...(q.blocks || []).map(block => [
+            block.content || '',
+            ...(block.items || []),
+            ...(block.headers || []),
+            ...(block.rows || []).flat(),
+          ].join('\n'))].join('\n'), q.inlineImages)).map(([k, v]) => {
             const url = typeof v === 'string' ? normalizeHttpUrl(v) : normalizeHttpUrl(v?.url || '');
             return [k, url || ''];
           }).filter(([, url]) => !!url)
