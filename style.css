@@ -2,8 +2,6 @@
    EXAM BANK — style.css
    University Dashboard  |  RTL Hebrew
    ============================================================ */
-@import url('https://fonts.googleapis.com/css2?family=Heebo:wght@400;500;600;700;800&display=swap');
-
 *,*::before,*::after { box-sizing: border-box; margin: 0; padding: 0; }
 
 /* ── Design tokens ─────────────────────────────────────────── */
@@ -1449,16 +1447,48 @@ mjx-container { direction: ltr; }
 /* ── Responsive ── */
 @media (max-width: 900px) {
   .admin-layout { grid-template-columns: 1fr; }
-  .admin-sidebar { height: auto; position: static; }
-  .admin-main { padding: 1.25rem; }
+  .admin-sidebar {
+    height: auto;
+    position: sticky;
+    top: 0;
+    z-index: 300;
+    overflow: visible;
+  }
+  .sidebar-logo { padding: .75rem 1rem; }
+  .admin-nav {
+    flex-direction: row;
+    overflow-x: auto;
+    padding: .35rem .5rem .5rem;
+    scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
+  }
+  .admin-nav::-webkit-scrollbar { display: none; }
+  .admin-nav a {
+    flex: 0 0 auto;
+    min-height: 42px;
+    white-space: nowrap;
+    padding: .55rem .7rem;
+  }
+  .admin-nav .nav-divider { display: none; }
+  .admin-main { padding: 1.25rem; min-width: 0; }
   #sec-add-exam.active { min-width: auto; }
+  #sec-broadcast.active { min-width: auto; }
 }
 @media (max-width: 768px) {
-  .form-row { grid-template-columns: 1fr; }
-  .courses-grid { grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); }
+  .form-row, .form-row-3 { grid-template-columns: 1fr; }
+  .container { padding: 1.25rem 1rem; }
+  .courses-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .75rem; }
   .filters-bar { flex-wrap: wrap; }
+  .filters-bar .form-group { flex-basis: calc(50% - .75rem); }
   .page-header { flex-direction: column; align-items: flex-start; }
-  .navbar { padding: 0 1rem; }
+  .navbar { height: 60px; padding: 0 .75rem; }
+  .navbar-actions { gap: .35rem; }
+  .navbar-user { padding: .3rem .5rem; }
+  .navbar-user > span { max-width: 110px; overflow: hidden; text-overflow: ellipsis; }
+  .nav-menu-btn, .navbar-message-btn { width: 44px; height: 44px; }
+  .nav-dropdown { min-width: min(232px, calc(100vw - 1rem)); max-width: calc(100vw - 1rem); }
+  .home-extras-row > .course-card { width: calc(50% - .5rem); }
+  .exam-item { align-items: flex-start; }
   .upload-zone { margin: 0 .85rem; }
   .progress-bar-wrap { margin: 0 .85rem .4rem; }
   .import-area { margin: 0 .85rem 1rem; }
@@ -1473,7 +1503,7 @@ mjx-container { direction: ltr; }
   background: #fff; border-bottom: 1px solid #dde1e7;
   padding: .65rem 1.5rem;
   display: flex; align-items: center; justify-content: space-between;
-  position: sticky; top: 0; z-index: 10;
+  position: sticky; top: 56px; z-index: 10;
   box-shadow: 0 1px 3px rgba(0,0,0,.06);
 }
 .ev-back {
@@ -1701,10 +1731,70 @@ mjx-container { direction: ltr; }
 .qv-part-text .MathJax { direction: ltr; display: inline-block; }
 
 @media (max-width: 600px) {
+  .admin-main { padding: 1rem .75rem; }
+  .ac { overflow-x: auto; }
+  .ac > *:not(.ac-title):not(.upload-zone):not(.progress-bar-wrap):not(.import-area):not(.parse-row):not(#upload-status):not(.or-divider) {
+    padding-left: .9rem;
+    padding-right: .9rem;
+  }
+  .stats-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .tbl { min-width: 620px; }
+  .status-btn-group { flex-wrap: wrap; min-width: 300px; }
+  .manage-tabs { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  .manage-tab { min-height: 44px; flex-shrink: 0; }
+  body { overflow-x: hidden; }
+  .auth-wrap, #adm-login { padding: .75rem; align-items: flex-start; padding-top: 8vh; }
+  .auth-card { padding: 1.5rem 1.1rem; }
+  .course-card { padding: 1rem .75rem; }
+  .page-title { font-size: 1.2rem; }
+  .tabs-bar { width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  .tab-btn { flex: 1 0 auto; min-height: 44px; }
+  .filters-bar { gap: .65rem; padding: .8rem; }
+  .filters-bar .form-group { flex-basis: 100%; min-width: 0; }
+  .form-group input, .form-group select, .form-group textarea { font-size: 16px; }
+  .btn { min-height: 44px; }
+  .btn-sm { min-height: 38px; }
   .ev-banner-title { font-size: 1.1rem; }
-  .ev-body { padding: 1rem .5rem 2rem; }
-  .qv-head { padding: .7rem .9rem; }
-  .qv-text, .qv-parts { padding-right: .9rem; padding-left: .9rem; }
+  .ev-topbar {
+    top: 60px;
+    padding: .6rem .75rem;
+    gap: .5rem;
+    flex-wrap: wrap;
+  }
+  .ev-back { min-height: 42px; }
+  .ev-topbar .report-exam-btn { order: 2; }
+  .ev-topbar-meta { order: 3; width: 100%; justify-content: center; text-align: center; }
+  .ev-banner { overflow: hidden; }
+  .ev-body { padding: .75rem .45rem 2rem; gap: .7rem; }
+  .qv-head {
+    padding: .7rem .75rem;
+    align-items: stretch;
+    flex-direction: column;
+    gap: .65rem;
+  }
+  .qv-head-right { flex-wrap: wrap; }
+  .qv-actions { flex-wrap: wrap; gap: .35rem; }
+  .qv-actions-sep { display: none; }
+  .diff-btn { min-height: 38px; padding: .4rem .65rem; }
+  .qv-btn { width: 40px; height: 40px; }
+  .qv-text, .qv-parts { padding-right: .75rem; padding-left: .75rem; }
+  .qv-text { font-size: .95rem; line-height: 1.8; overflow-wrap: anywhere; }
+  .qv-part-head { flex-wrap: wrap; gap: .5rem; }
+  .qv-part-text { font-size: .93rem; overflow-wrap: anywhere; }
+  .math-display { max-width: 100%; }
+  .qv-image { max-height: 70vh; }
+  .modal-overlay, .gemini-modal-overlay, .video-modal-overlay { padding: .5rem; align-items: flex-end; }
+  .modal-card, .gemini-modal, .video-modal-card, .admin-modal {
+    width: 100%;
+    max-height: 94dvh;
+    border-radius: 16px 16px 10px 10px;
+  }
+  .toast-wrap, #rp-toast-wrap {
+    left: .75rem;
+    right: .75rem;
+    bottom: .75rem;
+  }
+  .toast, .rp-toast { max-width: 100%; }
 }
 
 /* ── LECTURER SEPARATOR ─────────────────────────────────────── */

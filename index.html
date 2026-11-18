@@ -4,6 +4,10 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
 <title>VaultAU</title>
+<link rel="preconnect" href="https://www.gstatic.com" crossorigin>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Heebo:wght@400;500;600;700;800&display=swap">
 <link rel="stylesheet" href="style.css">
 
 <!-- Google Analytics -->
@@ -18,12 +22,12 @@
 </script>
 
 <!-- Firebase v9 compat SDK -->
-<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
+<script defer src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+<script defer src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
+<script defer src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
 
 <!-- Shared Firebase config + helpers (must load before course.js) -->
-<script src="firebase-config.js"></script>
+<script defer src="firebase-config.js"></script>
 
 <!-- MathJax -->
 <script>
@@ -33,7 +37,8 @@ window.MathJax = {
   startup: { typeset: false }
 };
 </script>
-<script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js" async></script>
+<script id="mathjax-script" src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js" async
+  onload="window.dispatchEvent(new Event('vaultau:mathjax-ready'))"></script>
 </head>
 <body>
 <div id="app">
@@ -46,7 +51,7 @@ window.MathJax = {
     </div>
   </div>
 </div>
-<script src="utils.js"></script>
-<script src="course.js"></script>
+<script defer src="utils.js"></script>
+<script defer src="course.js"></script>
 </body>
 </html>

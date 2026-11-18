@@ -1661,16 +1661,18 @@ document.addEventListener('DOMContentLoaded', () => {
 /* ── INIT ─────────────────────────────────────────────────── */
 async function initAdmin() {
   try {
-    await loadApiKeys();
-    await populateAllSelects();
-    await refreshDashboard();
-    await renderManageTable();
-    // טעינת בדאג'ים ברקע
-    _loadReportsBadge();
-    await renderCoursesList();
     setupUploadZone();
     setupBulkZone();
     setupBulkSolZone();
+
+    // Load only the data needed by the visible dashboard during startup.
+    await Promise.all([
+      populateAllSelects(),
+      refreshDashboard(),
+    ]);
+
+    loadApiKeys();
+    _loadReportsBadge();
     _renderLecturersWidget();
     // ── Auto-add lecturer when user leaves the input field ───────
     const lecInp = document.getElementById('ae-lecturer-input');

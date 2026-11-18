@@ -46,6 +46,44 @@ function formatMathText(text, inlineImages = null) {
     return nl2br(trimmed);
   }).join('');
 }
+
+function typesetMathElements(elements) {
+  if (window.MathJax?.typesetPromise) {
+    return window.MathJax.typesetPromise(elements);
+  }
+  return new Promise(resolve => {
+    window.addEventListener('vaultau:mathjax-ready', () => {
+      if (!window.MathJax?.typesetPromise) return resolve();
+      window.MathJax.typesetPromise(elements)
+        .then(resolve)
+        .catch(err => {
+          console.warn('MathJax typeset error:', err);
+          resolve();
+        });
+    }, { once: true });
+  });
+}
+
+function typesetExamQuestions(container) {
+  const cards = [...container.querySelectorAll('.qv-card')];
+  if (!cards.length) return;
+  if (!('IntersectionObserver' in window)) {
+    typesetMathElements(cards).catch(err => console.warn('MathJax typeset error:', err));
+    return;
+  }
+
+  const observer = new IntersectionObserver(entries => {
+    entries.forEach(entry => {
+      if (!entry.isIntersecting) return;
+      observer.unobserve(entry.target);
+      typesetMathElements([entry.target]).catch(err =>
+        console.warn('MathJax typeset error:', err)
+      );
+    });
+  }, { rootMargin: '500px 0px' });
+  cards.forEach(card => observer.observe(card));
+}
+
 /* ============================================================
    EXAM BANK  —  course.js  (Firebase edition)
    Requires: firebase-config.js loaded first (via script tag)
@@ -614,59 +652,39 @@ async function initAppBootstrap() {
         return;
       }
 
-      const email = (user.email || '').toLowerCase().trim();
-
       STATE.fireUser = user;
-      // Save user data on first sign-in — only create if doc doesn't exist yet.
-      // Must include role:'student' to satisfy Firestore create rule.
-      if (!STATE.userData) {
-        try {
-          const docSnap = await db.collection('users').doc(user.uid).get();
-          if (!docSnap.exists) {
-            await db.collection('users').doc(user.uid).set({
-              uid:         user.uid,
-              email:       email,
-              displayName: user.displayName || '',
-              authOrigin:  'web',
-              authMethods: ['web'],
-              lastSignInMethod: 'web',
-              createdAt:   firebase.firestore.FieldValue.serverTimestamp(),
-              role:        'student',
-            });
-          } else {
-            // User doc exists (possibly from LTI), update to track web login
-            const existingData = docSnap.data();
-            const rawAuthMethods = Array.isArray(existingData.authMethods) ? existingData.authMethods : [];
-            const newAuthMethods = rawAuthMethods
-              .flatMap((m) => Array.isArray(m) ? m : [m])
-              .filter((m) => typeof m === 'string');
-            if (!newAuthMethods.includes('web')) {
-              newAuthMethods.push('web');
-            }
-            const newAuthOrigin = newAuthMethods.includes('lti') && newAuthMethods.includes('web') 
-              ? 'both' 
-              : (newAuthMethods.includes('lti') ? 'lti' : 'web');
-            
-            await db.collection('users').doc(user.uid).update({
-              authMethods: newAuthMethods,
-              authOrigin: newAuthOrigin,
-              lastSignInMethod: 'web',
-              lastSignInAt: new Date(),
-            });
-          }
-        } catch (e) {
-          console.error('Failed to create/update user document on login:', e);
-        }
-      }
-      STATE.userData = await fetchUserData(user.uid, user.email);
+      const [userData, globalSnap] = await Promise.all([
+        STATE.userData || fetchUserData(user.uid, user.email),
+        db.collection('settings').doc('global').get().catch(e => {
+          console.warn('Could not load global settings:', e);
+          return null;
+        }),
+      ]);
+      STATE.userData = userData;
       STATE.doneExams       = STATE.userData?.doneExams       || [];
       STATE.inProgressExams = STATE.userData?.inProgressExams || [];
 
       // ── Analytics kill switch ──────────────────────────────
-      try {
-        const globalSnap = await db.collection('settings').doc('global').get();
-        STATE.isAnalyticsOn = globalSnap.data()?.isAnalyticsOn ?? true;
-      } catch (_e) { STATE.isAnalyticsOn = true; }
+      STATE.isAnalyticsOn = globalSnap?.data()?.isAnalyticsOn ?? true;
+
+      // Track login metadata without delaying the first render.
+      const rawAuthMethods = Array.isArray(STATE.userData?.authMethods)
+        ? STATE.userData.authMethods
+        : [];
+      const authMethods = rawAuthMethods
+        .flatMap((m) => Array.isArray(m) ? m : [m])
+        .filter((m) => typeof m === 'string');
+      if (!authMethods.includes('web')) authMethods.push('web');
+      const authOrigin = authMethods.includes('lti') ? 'both' : 'web';
+      db.collection('users').doc(user.uid).set({
+        displayName: user.displayName || STATE.userData.displayName || '',
+        authOrigin,
+        authMethods,
+        lastSignInMethod: 'web',
+        lastSignInAt: firebase.firestore.FieldValue.serverTimestamp(),
+      }, { merge: true }).catch(e => {
+        console.error('Failed to update user login metadata:', e);
+      });
       // ── 0. First-time LTI password setup ───────────────────
       // Show password setup if: user arrived via LTI this session AND has no password yet
       const hasPasswordProvider = user.providerData.some(p => p.providerId === 'password');
@@ -741,6 +759,7 @@ let STATE = {
   courses:  null,     // Array<Course>
   exams:    {},       // { [courseId]: Array<Exam> }
   fullCourseExams: {},// { [courseId]: Array<Exam> } for statistics/details
+  examVideoMaps: {},  // { [examId]: { [questionId]: video } }
   examVotes: {},     // { [questionId]: { easy, medium, hard, unsolved } }
   doneExams: [],     // Array<examId> — exams marked as done by user
   inProgressExams: [], // Array<examId> — exams marked as in-progress by user
@@ -2218,7 +2237,8 @@ async function doLogout() {
   _stopUserInboxListener();
   await auth.signOut();
   STATE = { page: 'home', courseId: null, examId: null, tab: 'exams',
-            fireUser: null, userData: null, courses: null, exams: {}, fullCourseExams: {}, examVotes: {},
+            fireUser: null, userData: null, courses: null, exams: {}, fullCourseExams: {},
+            examVideoMaps: {}, examVotes: {},
             doneExams: [], inProgressExams: [], savedFilters: {}, subjectFilters: {},
             courseAccessSettings: null, isAnalyticsOn: true, courseCode: '', examLabel: '', examQuestions: [],
             studyTracking: null };
@@ -3972,7 +3992,7 @@ function renderStarredTab(exams, starred) {
     });
   });
 
-  if (window.MathJax) MathJax.typesetPromise([tc]);
+  typesetMathElements([tc]);
 }
 
 /* ══════════════════════════════════════════════════════════
@@ -4107,7 +4127,7 @@ async function renderVideosTab(exams) {
         const subEl = body.querySelector(`#si-${s.id} .qv-part-text`);
         if (subEl) subEl.innerHTML = formatMathText(s.text || '', s.inlineImages || null);
       });
-      if (window.MathJax) MathJax.typesetPromise([body]);
+      typesetMathElements([body]);
       _updateEntityTimerDisplays();
 
       body.dataset.loaded = '1';
@@ -4125,17 +4145,21 @@ async function renderExam() {
   page.innerHTML = `<div class="container"><div class="spinner" style="margin-top:3rem"></div></div>`;
 
   try {
-    // Check if user is admin
     const isAdmin = STATE.userData?.role === 'admin';
-    
-    // Fetch the course directly by ID
-    const courseDoc = await db.collection('courses').doc(STATE.courseId).get();
-    if (!courseDoc.exists) return goHome();
-    
-    const course = { ...courseDoc.data(), id: courseDoc.id };
+    const cachedCourse = (STATE.courses || []).find(c => c.id === STATE.courseId);
+    const cachedExam = (STATE.exams[STATE.courseId] || []).find(e => e.id === STATE.examId);
+    const [course, exam] = await Promise.all([
+      cachedCourse || db.collection('courses').doc(STATE.courseId).get().then(doc =>
+        doc.exists ? { ...doc.data(), id: doc.id } : null
+      ),
+      cachedExam || fetchExam(STATE.examId),
+    ]);
+    if (!course || !exam || (exam.courseId && exam.courseId !== STATE.courseId)) {
+      return goHome();
+    }
     STATE.courseAccessSettings = normalizeCourseAccessSettings(course.accessSettings);
     STATE.courseName = course.name || '';
-    
+
     // Check access:
     // - draft: no one can access
     // - admin: only admins can access
@@ -4150,20 +4174,10 @@ async function renderExam() {
     }
     STATE.courseCode = course.code || '';
 
-    const exam = await fetchExam(STATE.examId);
-    if (!exam) return goCourse(STATE.courseId);
     STATE.examYear = String(exam.year || '');
     STATE.examLabel = [STATE.courseCode, exam.year, _heToLat(exam.semester), _heToLat(exam.moed)].filter(Boolean).join('_');
 
     _ga('view_exam', { course_code: _cc(), exam_id: _eid() });
-
-    // Fetch userData only if not cached; fetch votes and video map in parallel
-    const [_, votes, videoMap] = await Promise.all([
-      STATE.userData ? Promise.resolve() : fetchUserData(STATE.fireUser.uid, STATE.fireUser.email).then(d => { STATE.userData = d; }),
-      fetchExamVotes(exam.questions || []),
-      fetchExamVideoMap(exam.questions || []),
-    ]);
-    STATE.examVotes = votes;
     _recordCourseExamOpen(course.id, exam.id);
     _logEvent('exam_open', { examId: STATE.examLabel || STATE.examId, rawExamId: exam.id, courseCode: STATE.courseCode || STATE.courseId, courseId: course.id });
     const starred   = STATE.userData?.starredQuestions || [];
@@ -4219,12 +4233,15 @@ async function renderExam() {
           </div>
         </div>
 
-          <div class="ev-body" id="ev-questions-body">
-            ${!questions.length
-              ? `<div class="empty"><span class="ei">📝</span><h3>אין שאלות עדיין</h3></div>`
-              : questions.map((q, qi) => renderQuestionCard(q, qi, starred, userVotes, videoMap, isAdminNow, exam.id, examTitle)).join('')}
-          </div>
-        </div>`;
+        <div class="ev-body" id="ev-questions-body">
+          ${!questions.length
+            ? `<div class="empty"><span class="ei">📝</span><h3>אין שאלות עדיין</h3></div>`
+            : questions.map((q, qi) => renderQuestionCard(
+              q, qi, starred, userVotes, STATE.examVideoMaps[exam.id] || {},
+              isAdminNow, exam.id, examTitle
+            )).join('')}
+        </div>
+      </div>`;
 
     // Set text via innerHTML after DOM is built (safe for LaTeX/HTML)
     questions.forEach(q => {
@@ -4237,8 +4254,19 @@ async function renderExam() {
       });
     });
 
-    if (window.MathJax) MathJax.typesetPromise([page]);
+    typesetExamQuestions(page);
     _updateEntityTimerDisplays();
+
+    const renderedPage = STATE.page;
+    const renderedExamId = STATE.examId;
+    if (!STATE.examVideoMaps[exam.id]) {
+      fetchExamVideoMap(questions).then(videoMap => {
+        STATE.examVideoMaps[exam.id] = videoMap;
+        if (STATE.page === renderedPage && STATE.examId === renderedExamId) {
+          hydrateExamVideoButtons(page, questions, videoMap);
+        }
+      });
+    }
 
   } catch (e) {
     page.innerHTML = `<div class="container">
@@ -4288,6 +4316,40 @@ function hideClue(entityId, idx) {
   if (btn)  btn.style.display = '';
 }
 window.hideClue = hideClue;
+
+function hydrateExamVideoButtons(page, questions, videoMap) {
+  const videoSVG = `<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="5" width="14" height="14" rx="2.5" ry="2.5"/><polygon points="16 8 22 12 16 16"/></svg>`;
+  const addButton = (actions, video, entityId, label) => {
+    if (!actions) return;
+    const exists = [...actions.querySelectorAll('[data-entity-id]')]
+      .some(button => button.dataset.entityId === entityId);
+    if (exists) return;
+    actions.insertAdjacentHTML('beforeend',
+      `<button class="qv-btn qv-video-btn" data-lib="${esc(video.libraryId)}" data-vid="${esc(video.videoId)}" data-title="${esc(video.title || 'פתרון מוצג')}" data-entity-id="${esc(entityId)}" data-entity-label="${esc(label)}" onclick="openVideoModalFromBtn(this)" title="צפה בסרטון פתרון">${videoSVG}</button>`
+    );
+  };
+
+  questions.forEach((q, qi) => {
+    if (videoMap[q.id]) {
+      addButton(
+        document.getElementById('dw-' + q.id),
+        videoMap[q.id],
+        q.id,
+        'שאלה ' + (qi + 1)
+      );
+    }
+    (q.subs || q.parts || []).forEach((sub, si) => {
+      if (!videoMap[sub.id]) return;
+      const label = sub.label || (sub.letter ? '(' + sub.letter + ')' : '(' + String.fromCharCode(0x05D0 + si) + ')');
+      addButton(
+        document.getElementById('si-' + sub.id)?.querySelector('.qv-actions'),
+        videoMap[sub.id],
+        sub.id,
+        'שאלה ' + (qi + 1) + ' ' + label
+      );
+    });
+  });
+}
 
 function renderQuestionCard(q, qi, starred, userVotes = {}, videoMap = {}, isAdmin = false, examId = '', examTitle = '', opts = {}) {
   // Lecturers (Hebrew or English role) and admins can upload a video for any question.
@@ -5766,7 +5828,7 @@ async function _renderGeminiResult(container, text) {
   wrapper.textContent = text;
 
   if (window.MathJax) {
-    await MathJax.typesetPromise([wrapper]);
+    await typesetMathElements([wrapper]);
     // After MathJax, convert remaining newlines to <br> and bold in text nodes
     const walk = document.createTreeWalker(wrapper, NodeFilter.SHOW_TEXT);
     const textNodes = [];
@@ -5965,7 +6027,7 @@ function renderAIQuestionsTab() {
     if (origEl) _renderGeminiResult(origEl, item.originalText || '');
   });
 
-  if (window.MathJax) MathJax.typesetPromise([tc]);
+  typesetMathElements([tc]);
 }
 
 async function copyAiQuestion(index) {
@@ -6406,6 +6468,7 @@ async function saveVideoAttach(entityId) {
       updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
     });
     toast('✅ הסרטון נשמר בהצלחה', 'info');
+    delete STATE.examVideoMaps[STATE.examId];
     document.getElementById('video-attach-modal')?.remove();
     renderExam(); // reload to show the new play button
   } catch (e) {
@@ -6420,6 +6483,7 @@ async function detachQuestionVideo(entityId) {
   try {
     await db.collection('question_videos').doc(entityId).delete();
     toast('סרטון הוסר', 'info');
+    delete STATE.examVideoMaps[STATE.examId];
     document.getElementById('video-attach-modal')?.remove();
     renderExam();
   } catch (e) {

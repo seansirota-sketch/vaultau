@@ -43,6 +43,7 @@
   display: flex; align-items: center; justify-content: center;
   font-weight: 700; font-size: .72rem; flex-shrink: 0;
 }
+
 .rp-role-badge {
   font-size: .68rem; font-weight: 700;
   padding: .1rem .4rem; border-radius: 3px;
@@ -617,6 +618,54 @@
   margin-bottom: .75rem; margin-top: 1rem;
 }
 .rp-section-header:first-child { margin-top: 0; }
+
+@media (max-width: 600px) {
+  .rp-topbar {
+    height: auto;
+    min-height: 60px;
+    padding: .55rem .75rem;
+    gap: .5rem;
+  }
+  .rp-topbar-brand { font-size: .9rem; }
+  .rp-topbar-user { padding: .3rem .5rem; }
+  #rp-user-name, .rp-role-badge { display: none; }
+  .rp-back-link { min-height: 40px; }
+  .rp-course-row { padding: .65rem .75rem; gap: .5rem; }
+  .rp-course-select { flex: 1; width: 100%; min-width: 0; max-width: none; font-size: 16px; }
+  #rp-last-refresh { width: 100%; }
+  .rp-tabs {
+    padding: 0 .5rem;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+  .rp-tab { flex: 1 0 auto; min-height: 46px; padding: .7rem .85rem; }
+  .rp-screen { padding: 1rem .75rem; }
+  .rp-range-pills { width: 100%; }
+  .rp-range-pill { min-height: 40px; }
+  .rp-custom-popover {
+    position: fixed;
+    top: auto;
+    right: .75rem;
+    left: .75rem;
+    bottom: .75rem;
+    min-width: 0;
+    width: auto;
+  }
+  .rp-custom-popover .rp-dprow { flex-direction: column; align-items: stretch; }
+  .rp-custom-popover input[type="date"] { font-size: 16px; min-height: 44px; }
+  .rp-kpi-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .rp-card { max-width: 100%; }
+  .rp-table { min-width: 560px; }
+  .rp-card:has(.rp-table) { overflow-x: auto; }
+  .rp-exam-row { align-items: stretch; padding: .75rem; }
+  .rp-exam-select { width: 100%; min-width: 0; max-width: none; font-size: 16px; }
+  .rp-question-cards { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .rp-q-card { width: 100%; min-width: 0; }
+  .rp-exam-table-card, .rp-deepdive-charts-col { min-width: 0; width: 100%; }
+  .rp-drawer { width: 100vw; max-width: 100vw; }
+  .rp-drawer-close { width: 44px; height: 44px; }
+  .rp-drawer-body { padding: .9rem .85rem; }
+}
 
 .rp-no-data-inline {
   font-size: .8rem; color: var(--light); font-style: italic;
