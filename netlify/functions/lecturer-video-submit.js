@@ -157,7 +157,10 @@ exports.handler = async (event) => {
           questionLabel = `שאלה ${qIdx + 1}`;
         } else {
           for (let i = 0; i < qs.length; i++) {
-            const subs = Array.isArray(qs[i]?.subQuestions) ? qs[i].subQuestions : [];
+            const question = qs[i] || {};
+            const subs = Array.isArray(question.subQuestions)
+              ? question.subQuestions
+              : (Array.isArray(question.subs) ? question.subs : (Array.isArray(question.parts) ? question.parts : []));
             const sIdx = subs.findIndex(s => s && s.id === sub.questionId);
             if (sIdx >= 0) {
               const HEB_ALEF = 0x05D0;

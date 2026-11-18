@@ -91,6 +91,7 @@ async function fetchUserData(uid, email) {
     uid,
     email: email ? email.toLowerCase().trim() : null,
     role: 'student',
+    canUploadVideos: false,
     isPremium: false,
     subscriptionTier: 'free',
     starredQuestions: [],

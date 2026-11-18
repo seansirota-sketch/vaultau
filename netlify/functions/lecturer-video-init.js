@@ -143,36 +143,49 @@ exports.handler = async (event) => {
     return json(400, { error: 'examId and questionId are required' }, origin);
   }
 
-  // ── Authorize: caller must be admin OR an assigned lecturer on this exam ──
+  // ── Authorize: admin, explicitly permitted user, or assigned lecturer ──
   const db = a.firestore();
   let callerRole = 'student';
+  let canUploadVideos = false;
   try {
     const userSnap = await db.collection('users').doc(callerUid).get();
-    callerRole = userSnap.exists ? (userSnap.data().role || 'student') : 'student';
+    const userData = userSnap.exists ? userSnap.data() : {};
+    callerRole = userData.role || 'student';
+    canUploadVideos = userData.canUploadVideos === true;
   } catch (e) {
     console.error('user role lookup failed:', e);
     return json(500, { error: 'Role lookup failed' }, origin);
   }
   const isAdmin    = callerRole === 'admin';
   const isLecturer = callerRole === 'instructor' || callerRole === 'מרצה';
-  if (!isAdmin && !isLecturer) {
-    return json(403, { error: 'Forbidden: lecturer or admin role required' }, origin);
+
+  let examData;
+  try {
+    const examSnap = await db.collection('exams').doc(examId).get();
+    if (!examSnap.exists) return json(404, { error: 'Exam not found' }, origin);
+    examData = examSnap.data() || {};
+  } catch (e) {
+    console.error('exam lookup failed:', e);
+    return json(500, { error: 'Exam lookup failed' }, origin);
   }
 
-  if (!isAdmin) {
-    // Verify lecturer is assigned to this exam
-    let assigned = [];
-    try {
-      const examSnap = await db.collection('exams').doc(examId).get();
-      if (!examSnap.exists) return json(404, { error: 'Exam not found' }, origin);
-      assigned = Array.isArray(examSnap.data().assignedLecturers) ? examSnap.data().assignedLecturers : [];
-    } catch (e) {
-      console.error('exam lookup failed:', e);
-      return json(500, { error: 'Exam lookup failed' }, origin);
-    }
-    if (!assigned.includes(callerUid)) {
-      return json(403, { error: 'Forbidden: not assigned to this exam' }, origin);
-    }
+  const assigned = Array.isArray(examData.assignedLecturers) ? examData.assignedLecturers : [];
+  const isAssignedLecturer = isLecturer && assigned.includes(callerUid);
+  if (!isAdmin && !canUploadVideos && !isAssignedLecturer) {
+    return json(403, { error: 'Forbidden: video upload permission required' }, origin);
+  }
+
+  const questions = Array.isArray(examData.questions) ? examData.questions : [];
+  const questionExists = questions.some(question => {
+    if (!question) return false;
+    if (question.id === questionId) return true;
+    const parts = Array.isArray(question.subQuestions)
+      ? question.subQuestions
+      : (Array.isArray(question.subs) ? question.subs : (Array.isArray(question.parts) ? question.parts : []));
+    return parts.some(part => part && part.id === questionId);
+  });
+  if (!questionExists) {
+    return json(400, { error: 'Question does not belong to this exam' }, origin);
   }
 
   // ── Create empty Bunny video shell ──
@@ -209,7 +222,7 @@ exports.handler = async (event) => {
     });
   } catch (e) {
     console.error('draft submission write failed:', e);
-    // Non-fatal: lecturer can still upload; submit step will overwrite.
+    return json(500, { error: 'Failed to initialize submission' }, origin);
   }
 
   return json(200, {
