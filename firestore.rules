@@ -50,11 +50,11 @@ service cloud.firestore {
       allow read: if isAdmin() || (isLoggedIn() && request.auth.uid == userId);
 
       // Students can update only safe fields on their own document.
-      // role, uid, email, and analyticsConsent are BLOCKED from self-admin-writes.
+      // Privileged fields and identity fields are BLOCKED from self-admin-writes.
       allow update: if isLoggedIn()
         && request.auth.uid == userId
         && !request.resource.data.diff(resource.data).affectedKeys()
-            .hasAny(['role', 'uid', 'email']);
+            .hasAny(['role', 'canUploadVideos', 'uid', 'email']);
 
       // Admins can update any user document EXCEPT analyticsConsent and consentAuditLog
       // (IRB protection — only the user themselves can grant, revoke, or audit their consent).
@@ -62,11 +62,15 @@ service cloud.firestore {
         && !request.resource.data.diff(resource.data).affectedKeys()
             .hasAny(['analyticsConsent', 'consentAuditLog']);
 
-      // New user document creation — force role to 'student' so nobody
-      // can create their doc with role:'admin' on first login.
+      // New user document creation — force safe defaults so nobody can grant
+      // themselves a role or permission on first login.
       allow create: if isLoggedIn()
         && request.auth.uid == userId
-        && request.resource.data.role == 'student';
+        && request.resource.data.role == 'student'
+        && (
+          !('canUploadVideos' in request.resource.data)
+          || request.resource.data.canUploadVideos == false
+        );
 
       // Admins can delete user documents from the admin panel (מעקב משתמשים).
       // Note: this only removes the Firestore profile, NOT the Firebase Auth account.

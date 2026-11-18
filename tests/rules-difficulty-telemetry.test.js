@@ -22,12 +22,15 @@
  *   L-03   difficulty_ledger update by a different uid (vote forgery)
  *   AG-01  client direct write to difficulty_aggregates
  *   PS-01  client read of popularity_stats by non-admin
+ *   VU-01 student self-grants video upload permission
+ *   VU-02 new student creates a profile with video upload permission
  *
  * Positive:
  *   T1-P1  telemetry_t1 create with sessionSalt + no identity fields → OK
  *   L-P1   difficulty_ledger create by owner with deterministic id + rating 4 → OK
  *   L-P2   difficulty_ledger self-update by owner with prevRating set → OK
  *   AG-R1  any logged-in user can read difficulty_aggregates
+ *   VU-P1  admin grants video upload permission
  */
 
 'use strict';
@@ -79,6 +82,30 @@ const bobDb   = () => env.authenticatedContext('bob').firestore();
 const adminDb = () => env.authenticatedContext('carol-admin').firestore();
 
 const in90d = () => Timestamp.fromMillis(Date.now() + 90 * 86400000);
+
+// ─────────────────── Video upload permission ───────────────────
+
+test('VU-01: student cannot self-grant video upload permission', async () => {
+  await assertFails(updateDoc(doc(aliceDb(), 'users/alice'), {
+    canUploadVideos: true,
+  }));
+});
+
+test('VU-02: new student profile cannot start with video upload permission', async () => {
+  const daveDb = env.authenticatedContext('dave').firestore();
+  await assertFails(setDoc(doc(daveDb, 'users/dave'), {
+    uid: 'dave',
+    email: 'dave@x.y',
+    role: 'student',
+    canUploadVideos: true,
+  }));
+});
+
+test('VU-P1: admin can grant video upload permission', async () => {
+  await assertSucceeds(updateDoc(doc(adminDb(), 'users/alice'), {
+    canUploadVideos: true,
+  }));
+});
 
 // ─────────────────────────────── Tier 1 ────────────────────────────────────
 

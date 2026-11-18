@@ -5324,6 +5324,7 @@ async function renderManageUsers() {
           : `<span class="consent-badge consent-badge-pending">⏳ טרם</span>`;
 
       const currentRole = u.role || 'student';
+      const canUploadVideos = u.canUploadVideos === true;
       const currentTierRaw = String(u.subscriptionTier || '').toLowerCase();
       const currentTier = ['free', 'basic', 'premium'].includes(currentTierRaw)
         ? currentTierRaw
@@ -5365,6 +5366,14 @@ async function renderManageUsers() {
         </td>
         <td style="text-align:center">${consentBadge}</td>
         <td style="text-align:center">${roleSelect}</td>
+        <td style="text-align:center">
+          <label style="display:inline-flex;align-items:center;gap:.3rem;cursor:pointer;font-size:.78rem">
+            <input type="checkbox" ${canUploadVideos ? 'checked' : ''}
+              onchange="updateUserVideoUploadPermission('${esc(docId)}', this.checked, this)"
+              aria-label="אפשר העלאת סרטונים למשתמש">
+            <span>${canUploadVideos ? 'מורשה' : 'חסום'}</span>
+          </label>
+        </td>
         <td style="text-align:center">${premiumSelect}</td>
         <td style="text-align:center">${resetBtn}</td>
         <td style="text-align:center">${deleteBtn}</td>
@@ -5395,6 +5404,7 @@ async function renderManageUsers() {
               <th style="text-align:center">📜 הצהרה</th>
               <th style="text-align:center">🔬 הסכמה למעקב</th>
               <th style="text-align:center">👤 תפקיד</th>
+              <th style="text-align:center" title="הצג למשתמש כפתור העלאת סרטון ליד שאלות ושלח את הסרטון לאישור">🎬 העלאת סרטונים</th>
               <th style="text-align:center">💎 מנוי</th>
               <th style="text-align:center" title="כפה איפוס סיסמה">🔑 איפוס סיסמה</th>
               <th style="text-align:center" title="מחק משתמש לצמיתות">🗑️ מחיקה</th>
@@ -5516,6 +5526,30 @@ async function updateUserPremium(docId, newTier, selectEl) {
     if (selectEl) selectEl.value = prev;
   } finally {
     if (selectEl) selectEl.disabled = !!wasDisabled;
+  }
+}
+
+async function updateUserVideoUploadPermission(docId, enabled, checkboxEl) {
+  const previous = !enabled;
+  const action = enabled ? 'לאפשר' : 'לחסום';
+  if (!confirm(`${action} למשתמש זה להעלות סרטונים לשאלות באישור אדמין?`)) {
+    if (checkboxEl) checkboxEl.checked = previous;
+    return;
+  }
+
+  const label = checkboxEl?.parentElement?.querySelector('span');
+  if (checkboxEl) checkboxEl.disabled = true;
+  try {
+    await db.collection('users').doc(docId).update({ canUploadVideos: enabled });
+    if (label) label.textContent = enabled ? 'מורשה' : 'חסום';
+    toast?.(enabled ? 'הרשאת העלאת סרטונים הופעלה' : 'הרשאת העלאת סרטונים הוסרה');
+  } catch (e) {
+    console.error('updateUserVideoUploadPermission error:', e);
+    alert('שגיאה בעדכון הרשאת ההעלאה: ' + (e.message || e));
+    if (checkboxEl) checkboxEl.checked = previous;
+    if (label) label.textContent = previous ? 'מורשה' : 'חסום';
+  } finally {
+    if (checkboxEl) checkboxEl.disabled = false;
   }
 }
 
@@ -7133,7 +7167,7 @@ async function _renderReportsContent() {
         : r.category === 'lecturer_delete_request'
           ? `<span class="badge" style="background:#fee2e2;color:#b91c1c;border:1px solid #fca5a5">🗑 בקשת מחיקה ממרצה</span>`
           : r.category === 'lecturer_video_submission'
-            ? `<span class="badge" style="background:#dbeafe;color:#1e3a8a;border:1px solid #93c5fd">🎬 סרטון חדש ממרצה</span>`
+            ? `<span class="badge" style="background:#dbeafe;color:#1e3a8a;border:1px solid #93c5fd">🎬 סרטון חדש לאישור</span>`
             : `<span class="badge" style="background:#ede9fe;color:#5b21b6;border:1px solid #c4b5fd">✉ פנייה</span>`;
 
       const typeBadge = r.category === 'contact' && r.typeLabel
@@ -7190,7 +7224,7 @@ async function _renderReportsContent() {
       const videoReviewPanel = (r.category === 'lecturer_video_submission' && r.submissionId)
         ? `<div id="lvr-panel-${esc(r.id)}" data-submission-id="${esc(r.submissionId)}"
              style="background:#eff6ff;border:1px solid #93c5fd;border-radius:8px;padding:.65rem .9rem;display:flex;flex-direction:column;gap:.5rem">
-             <div style="font-size:.78rem;color:#1e3a8a;font-weight:600">🎬 סקירת סרטון מהמרצה</div>
+             <div style="font-size:.78rem;color:#1e3a8a;font-weight:600">🎬 סקירת סרטון שהועלה</div>
              <div style="font-size:.78rem;color:#1e3a8a">
                ${sourceLabel ? `<span>מקור: <strong>${esc(sourceLabel)}</strong></span><br>` : ''}
                <span>שאלה: <strong>${esc(r.questionId || '')}</strong>${r.examId ? ` · מבחן: <strong>${esc(r.examId)}</strong>` : ''}</span>
@@ -7766,7 +7800,7 @@ async function openLecturerVideoReview(submissionId, reportId) {
       <header class="lvr-header">
         <div class="lvr-header-icon">🎬</div>
         <div class="lvr-header-text">
-          <div class="lvr-eyebrow">סקירת סרטון מהמרצה</div>
+          <div class="lvr-eyebrow">סקירת סרטון שהועלה</div>
           <h2 id="lvr-title" class="lvr-title-text">${esc(headerSub)}</h2>
         </div>
         <button class="lvr-close" aria-label="סגור" onclick="document.getElementById('lvr-modal').remove()">×</button>
@@ -7786,7 +7820,7 @@ async function openLecturerVideoReview(submissionId, reportId) {
 
         ${sub.notes ? `
         <section class="lvr-section">
-          <div class="lvr-label"><span class="lvr-label-icon">📝</span><span>הערות המרצה</span></div>
+          <div class="lvr-label"><span class="lvr-label-icon">📝</span><span>הערות המעלה</span></div>
           <div class="lvr-notes-box">${esc(sub.notes)}</div>
         </section>` : ''}
 

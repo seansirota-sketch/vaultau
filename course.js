@@ -4116,8 +4116,10 @@ async function renderVideosTab(exams) {
       const idx = Number(d.dataset.idx);
       const entry = entries[idx];
       if (!entry) return;
-      const { q, qi } = entry;
-      body.innerHTML = renderQuestionCard(q, qi, starred, userVotes, videoMap, isAdmin, (typeof exam !== 'undefined' && exam) ? exam.id : '', (typeof exam !== 'undefined' && exam) ? (exam.title || '') : '');
+      const { exam, q, qi } = entry;
+      body.innerHTML = renderQuestionCard(q, qi, starred, userVotes, videoMap, isAdmin, exam.id, exam.title || '', {
+        canUploadVideo: canUploadVideoForExam(exam),
+      });
 
       // Set HTML content for question/subs (same pattern as renderExam)
       const subs = q.subs || q.parts || [];
@@ -4238,7 +4240,7 @@ async function renderExam() {
             ? `<div class="empty"><span class="ei">📝</span><h3>אין שאלות עדיין</h3></div>`
             : questions.map((q, qi) => renderQuestionCard(
               q, qi, starred, userVotes, STATE.examVideoMaps[exam.id] || {},
-              isAdminNow, exam.id, examTitle
+              isAdminNow, exam.id, examTitle, { canUploadVideo: canUploadVideoForExam(exam) }
             )).join('')}
         </div>
       </div>`;
@@ -4351,10 +4353,16 @@ function hydrateExamVideoButtons(page, questions, videoMap) {
   });
 }
 
+function canUploadVideoForExam(exam) {
+  const role = STATE.userData?.role;
+  if (role === 'admin' || STATE.userData?.canUploadVideos === true) return true;
+  if (role !== 'instructor' && role !== 'מרצה') return false;
+  return Array.isArray(exam?.assignedLecturers)
+    && exam.assignedLecturers.includes(STATE.fireUser?.uid);
+}
+
 function renderQuestionCard(q, qi, starred, userVotes = {}, videoMap = {}, isAdmin = false, examId = '', examTitle = '', opts = {}) {
-  // Lecturers (Hebrew or English role) and admins can upload a video for any question.
-  const _roleLocal = STATE.userData?.role;
-  const _canUploadVideo = isAdmin || _roleLocal === 'admin' || _roleLocal === 'instructor' || _roleLocal === 'מרצה';
+  const _canUploadVideo = isAdmin || opts?.canUploadVideo === true;
   const isStarredQ = starred.includes(q.id);
   const isStarLocked = isStarLockedForCurrentCourse(q.id, starred);
   const isBonus    = q.isBonus === true;
@@ -4648,7 +4656,10 @@ function renderSubjectQuestionsTab(course, subjectEntries, subjectOptions) {
       const idx = Number(d.dataset.subjectEntry);
       const entry = filtered[idx];
       if (!entry) return;
-      const questionHtml = renderQuestionCard(entry.q, entry.qi, starred, userVotes, {}, isAdmin, entry.exam.id, entry.examTitle, { hideQuestionLabel: isPremiumCourse });
+      const questionHtml = renderQuestionCard(entry.q, entry.qi, starred, userVotes, {}, isAdmin, entry.exam.id, entry.examTitle, {
+        hideQuestionLabel: isPremiumCourse,
+        canUploadVideo: canUploadVideoForExam(entry.exam),
+      });
       body.innerHTML = questionHtml;
       const qEl = body.querySelector(`#qc-${entry.q.id} .qv-text`);
       if (qEl) qEl.innerHTML = formatMathText(entry.q.text || '', entry.q.inlineImages || null);

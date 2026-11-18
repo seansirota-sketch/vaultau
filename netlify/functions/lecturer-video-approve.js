@@ -1,7 +1,7 @@
 /* ============================================================
    netlify/functions/lecturer-video-approve.js
 
-   Step 3 (admin only): approve OR reject a pending lecturer video.
+   Step 3 (admin only): approve OR reject a pending user video.
 
    Body:
      { videoGuid, action: 'approve'|'reject', adminNotes?, chapters? }
