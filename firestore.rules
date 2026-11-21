@@ -54,7 +54,7 @@ service cloud.firestore {
       allow update: if isLoggedIn()
         && request.auth.uid == userId
         && !request.resource.data.diff(resource.data).affectedKeys()
-            .hasAny(['role', 'canUploadVideos', 'uid', 'email']);
+            .hasAny(['role', 'canUploadVideos', 'courseAccess', 'uid', 'email']);
 
       // Admins can update any user document EXCEPT analyticsConsent and consentAuditLog
       // (IRB protection — only the user themselves can grant, revoke, or audit their consent).
@@ -70,7 +70,8 @@ service cloud.firestore {
         && (
           !('canUploadVideos' in request.resource.data)
           || request.resource.data.canUploadVideos == false
-        );
+        )
+        && !('courseAccess' in request.resource.data);
 
       // Admins can delete user documents from the admin panel (מעקב משתמשים).
       // Note: this only removes the Firestore profile, NOT the Firebase Auth account.
@@ -135,6 +136,12 @@ service cloud.firestore {
       allow read: if isAdmin()
         || (isLoggedIn() && resource.data.uploadedByUid == request.auth.uid);
       allow write: if false;
+    }
+
+    // Payment checkout state is server-owned. Only Netlify functions using
+    // the Admin SDK can create or process Morning checkout sessions.
+    match /payment_sessions/{purchaseId} {
+      allow read, write: if false;
     }
 
     // block delete — prevent cache wiping; create/update needed client-side.

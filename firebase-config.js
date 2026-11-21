@@ -77,6 +77,7 @@ async function fetchUserData(uid, email) {
       : (data.isPremium === true ? 'premium' : 'free');
     return {
       ...data,
+      courseAccess: data.courseAccess || {},
       subscriptionTier: normalizedTier,
       topicSolvedCounts: data.topicSolvedCounts || {},
       topicSkillWeights: data.topicSkillWeights || {},
@@ -108,7 +109,7 @@ async function fetchUserData(uid, email) {
   try {
     await db.collection('users').doc(uid).set(defaults, { merge: true });
   } catch(e) { console.warn('fetchUserData: could not create user doc', e); }
-  return defaults;
+  return { ...defaults, courseAccess: {} };
 }
 
 const ALLOWED_USER_FIELDS = [

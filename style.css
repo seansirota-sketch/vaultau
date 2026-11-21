@@ -2279,6 +2279,113 @@ mjx-container { direction: ltr; }
   color: var(--muted);
 }
 
+.morning-checkout-card {
+  max-width: 620px;
+  margin: 0 auto 1rem;
+  padding: 1.25rem;
+  border: 1px solid #c7d2fe;
+  border-radius: 16px;
+  background: linear-gradient(145deg, #fff, #eef2ff);
+}
+.morning-checkout-badge {
+  display: inline-flex;
+  padding: .3rem .65rem;
+  border-radius: 999px;
+  background: #dcfce7;
+  color: #166534;
+  font-size: .75rem;
+  font-weight: 700;
+}
+.morning-checkout-card h3 {
+  margin: .8rem 0 .35rem;
+  font-size: 1.25rem;
+}
+.morning-checkout-price {
+  display: flex;
+  align-items: baseline;
+  gap: .6rem;
+  flex-wrap: wrap;
+}
+.morning-checkout-price span {
+  font-size: 2rem;
+  font-weight: 800;
+  color: #312e81;
+}
+.morning-checkout-price small {
+  color: var(--muted);
+}
+.morning-checkout-benefits {
+  margin: 1rem 0;
+  padding-right: 1.25rem;
+  color: #334155;
+  line-height: 1.8;
+}
+.morning-terms-check {
+  display: flex;
+  align-items: flex-start;
+  gap: .5rem;
+  padding: .75rem;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  background: #fff;
+  cursor: pointer;
+}
+.morning-terms-check a {
+  margin: 0 .25rem;
+  color: #2563eb;
+  text-decoration: underline;
+}
+.morning-checkout-error {
+  margin-top: .7rem;
+  color: #b91c1c;
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+  border-radius: 8px;
+  padding: .6rem .75rem;
+  font-size: .85rem;
+}
+.morning-checkout-submit {
+  width: 100%;
+  justify-content: center;
+  margin-top: .8rem;
+}
+.morning-payment-result-card {
+  width: min(92vw, 460px);
+  padding: 2rem;
+  text-align: center;
+}
+.morning-payment-result-card h2 {
+  margin: .75rem 0 .4rem;
+}
+.morning-payment-result-card p {
+  color: var(--muted);
+  line-height: 1.6;
+}
+.morning-payment-result-icon {
+  width: 64px;
+  height: 64px;
+  margin: 0 auto;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 2rem;
+  font-weight: 800;
+}
+.morning-payment-result-icon.success {
+  color: #166534;
+  background: #dcfce7;
+}
+.morning-payment-result-icon.failure {
+  color: #991b1b;
+  background: #fee2e2;
+}
+.morning-payment-result-icon .spinner {
+  width: 28px;
+  height: 28px;
+  border-top-color: #166534;
+}
+
 /* ── Contact type buttons ────────────────────────────────────── */
 .contact-type-btn {
   flex: 1; padding: .5rem .75rem;

@@ -731,6 +731,7 @@ async function initAppBootstrap() {
         history.replaceState({ page: 'home', courseId: null, examId: null }, '');
       }
       renderPage();
+      handleMorningPaymentReturn();
 
     } else {
       // Check if URL has password reset params
@@ -910,6 +911,12 @@ const DEFAULT_COURSE_ACCESS_SETTINGS = Object.freeze({
   },
   freeAllowedSubjects: [],
   upgradeContentHtml: '',
+  payment: {
+    enabled: false,
+    price: 0,
+    currency: 'ILS',
+    durationDays: 365,
+  },
 });
 
 function normalizeCourseAccessSettings(raw) {
@@ -925,6 +932,8 @@ function normalizeCourseAccessSettings(raw) {
     .map(s => normalizeQuestionSubject(s))
     .filter(Boolean))];
   const upgradeContentHtml = String(raw?.upgradeContentHtml || '').trim();
+  const payment = raw?.payment || {};
+  const price = Number(payment.price);
   return {
     tier,
     freeLimits: {
@@ -935,6 +944,17 @@ function normalizeCourseAccessSettings(raw) {
     },
     freeAllowedSubjects,
     upgradeContentHtml,
+    payment: {
+      enabled: payment.enabled === true && Number.isFinite(price) && price > 0,
+      price: Number.isFinite(price) && price > 0 ? Math.round(price * 100) / 100 : 0,
+      currency: ['ILS', 'USD', 'EUR', 'GBP'].includes(String(payment.currency || '').toUpperCase())
+        ? String(payment.currency).toUpperCase()
+        : 'ILS',
+      durationDays: (() => {
+        const days = Math.floor(Number(payment.durationDays || 365));
+        return Number.isInteger(days) && days >= 1 && days <= 3650 ? days : 365;
+      })(),
+    },
   };
 }
 
@@ -944,11 +964,23 @@ function getUserSubscriptionTier() {
   return STATE.userData?.isPremium === true ? 'premium' : 'free';
 }
 
-function isPremiumUnlockedForCourse() {
+function getCourseEntitlement(courseId = STATE.courseId) {
+  const entitlement = STATE.userData?.courseAccess?.[courseId];
+  if (!entitlement || entitlement.hasAccess !== true) return null;
+  const expiresAt = entitlement.expiresAt;
+  const expiresAtMs = typeof expiresAt?.toMillis === 'function'
+    ? expiresAt.toMillis()
+    : (typeof expiresAt?.seconds === 'number' ? expiresAt.seconds * 1000 : Number(expiresAt));
+  if (!Number.isFinite(expiresAtMs) || expiresAtMs <= Date.now()) return null;
+  return entitlement;
+}
+
+function isPremiumUnlockedForCourse(courseId = STATE.courseId, settings = null) {
   const role = STATE.userData?.role || 'student';
   if (role === 'admin' || role === 'instructor' || role === 'מרצה') return true;
-  const settings = STATE.courseAccessSettings || DEFAULT_COURSE_ACCESS_SETTINGS;
-  if (settings.tier !== 'premium') return true;
+  const normalizedSettings = settings || STATE.courseAccessSettings || DEFAULT_COURSE_ACCESS_SETTINGS;
+  if (normalizedSettings.tier !== 'premium') return true;
+  if (getCourseEntitlement(courseId)) return true;
   const userTier = getUserSubscriptionTier();
   return userTier === 'basic' || userTier === 'premium';
 }
@@ -965,9 +997,9 @@ function getCourseFreeAllowedSubjectsSet() {
 }
 
 function isVideoLockedForCurrentCourse(accessTier = 'free') {
-  const role = STATE.userData?.role || 'student';
-  if (role === 'admin' || role === 'instructor' || role === 'מרצה') return false;
   if (accessTier !== 'premium') return false;
+  const role = STATE.userData?.role || 'student';
+  if (role === 'admin' || role === 'instructor' || role === 'מרצה' || getCourseEntitlement()) return false;
   const userTier = getUserSubscriptionTier();
   return userTier !== 'premium';
 }
@@ -975,12 +1007,17 @@ function isVideoLockedForCurrentCourse(accessTier = 'free') {
 function shouldShowUpgradeCta() {
   const settings = STATE.courseAccessSettings || DEFAULT_COURSE_ACCESS_SETTINGS;
   if (settings.tier !== 'premium') return false;
+  const role = STATE.userData?.role || 'student';
+  if (role === 'admin' || role === 'instructor' || role === 'מרצה' || getCourseEntitlement()) return false;
   return getUserSubscriptionTier() !== 'premium';
 }
 
 function renderCourseUpgradeCta() {
   if (!shouldShowUpgradeCta()) return '';
-  return `<button class="course-upgrade-side-btn" onclick="openCourseUpgradeModal()">⬆️ שדרוג</button>`;
+  const paymentEnabled = STATE.courseAccessSettings?.payment?.enabled === true;
+  return `<button class="course-upgrade-side-btn" onclick="openCourseUpgradeModal()">
+    ${paymentEnabled ? '🛒 רכישת הקורס' : '⬆️ שדרוג'}
+  </button>`;
 }
 
 function closeCourseUpgradeModal() {
@@ -1021,6 +1058,36 @@ function openCourseUpgradeModal() {
 
   const settings = STATE.courseAccessSettings || DEFAULT_COURSE_ACCESS_SETTINGS;
   const customHtml = String(settings.upgradeContentHtml || '').trim();
+  const payment = settings.payment || DEFAULT_COURSE_ACCESS_SETTINGS.payment;
+  const checkoutEnabled = payment.enabled === true && payment.price > 0;
+  const paymentSymbols = { ILS: '₪', USD: '$', EUR: '€', GBP: '£' };
+  const price = new Intl.NumberFormat('he-IL', {
+    minimumFractionDigits: payment.price % 1 ? 2 : 0,
+    maximumFractionDigits: 2,
+  }).format(payment.price);
+  const checkoutHtml = checkoutEnabled ? `
+    <section class="morning-checkout-card">
+      <div class="morning-checkout-badge">תשלום מאובטח באמצעות Morning</div>
+      <h3>${esc(STATE.courseName || 'גישה מלאה לקורס')}</h3>
+      <div class="morning-checkout-price">
+        <span>${paymentSymbols[payment.currency] || payment.currency} ${esc(price)}</span>
+        <small>גישה מלאה ל-${payment.durationDays} ימים</small>
+      </div>
+      <ul class="morning-checkout-benefits">
+        <li>גישה לכל השאלות, הנושאים והסרטונים בקורס</li>
+        <li>קבלה נשלחת אוטומטית</li>
+        <li>תשלום באשראי, Bit, Apple Pay או Google Pay בהתאם לדף התשלום של Morning</li>
+      </ul>
+      <label class="morning-terms-check">
+        <input type="checkbox" id="morning-purchase-terms">
+        <span>קראתי ואני מסכים/ה ל<a href="#" onclick="openPurchaseTerms(event)">תנאי השימוש</a></span>
+      </label>
+      <div id="morning-checkout-error" class="morning-checkout-error" hidden></div>
+      <button id="morning-checkout-submit" class="btn btn-primary morning-checkout-submit"
+        onclick="startCourseCheckout()">
+        המשך לתשלום מאובטח
+      </button>
+    </section>` : '';
   const fallbackHtml = `
     <div class="course-upgrade-fallback">
       <h3>שדרוג למסלול פרימיום</h3>
@@ -1038,6 +1105,7 @@ function openCourseUpgradeModal() {
         <button class="modal-close" onclick="closeCourseUpgradeModal()">✕</button>
       </div>
       <div class="course-upgrade-modal-body">
+        ${checkoutHtml}
         <div id="course-upgrade-custom-host"></div>
       </div>
       <div class="course-upgrade-modal-footer">
@@ -1060,8 +1128,8 @@ function openCourseUpgradeModal() {
   document.body.appendChild(overlay);
   document.body.style.overflow = 'hidden';
   const host = document.getElementById('course-upgrade-custom-host');
-  const markup = customHtml || fallbackHtml;
-  if (host && host.attachShadow) {
+  const markup = customHtml || (checkoutEnabled ? '' : fallbackHtml);
+  if (markup && host && host.attachShadow) {
     const shadow = host.attachShadow({ mode: 'open' });
     shadow.innerHTML = markup;
     shadow.addEventListener('click', (event) => {
@@ -1072,7 +1140,7 @@ function openCourseUpgradeModal() {
       const phoneValue = target.getAttribute('data-phone') || '';
       openCourseUpgradePaymentPanel(planName, priceValue, phoneValue);
     });
-  } else if (host) {
+  } else if (markup && host) {
     host.innerHTML = markup;
     host.addEventListener('click', (event) => {
       const target = event.target instanceof Element ? event.target.closest('.plan-btn') : null;
@@ -1086,9 +1154,92 @@ function openCourseUpgradeModal() {
   overlay.addEventListener('click', e => { if (e.target === overlay) closeCourseUpgradeModal(); });
 }
 
+async function openPurchaseTerms(event) {
+  event?.preventDefault();
+  const termsWindow = window.open('', '_blank');
+  if (termsWindow) termsWindow.opener = null;
+  try {
+    const snap = await db.collection('settings').doc('global').get();
+    const termsUrl = snap.exists ? String(snap.data()?.termsUrl || '').trim() : '';
+    if (!termsUrl) {
+      termsWindow?.close();
+      toast('תנאי השימוש אינם זמינים כרגע', 'error');
+      return;
+    }
+    if (termsWindow) {
+      termsWindow.location.replace(termsUrl);
+    } else {
+      toast('פתח/י את תנאי השימוש מתוך חלון חדש בדפדפן', 'error');
+    }
+  } catch (error) {
+    termsWindow?.close();
+    console.error('openPurchaseTerms failed:', error);
+    toast('שגיאה בפתיחת תנאי השימוש', 'error');
+  }
+}
+
+async function startCourseCheckout() {
+  const terms = document.getElementById('morning-purchase-terms');
+  const button = document.getElementById('morning-checkout-submit');
+  const error = document.getElementById('morning-checkout-error');
+  if (error) { error.hidden = true; error.textContent = ''; }
+  if (!terms?.checked) {
+    if (error) {
+      error.textContent = 'יש לאשר את תנאי השימוש לפני התשלום';
+      error.hidden = false;
+    }
+    terms?.focus();
+    return;
+  }
+
+  const courseId = STATE.courseId;
+  const user = STATE.fireUser;
+  if (!courseId || !user) {
+    if (error) {
+      error.textContent = 'יש להתחבר מחדש לפני הרכישה';
+      error.hidden = false;
+    }
+    return;
+  }
+
+  if (button) {
+    button.disabled = true;
+    button.textContent = 'יוצר דף תשלום מאובטח...';
+  }
+  try {
+    const idToken = await user.getIdToken();
+    const response = await fetch('/.netlify/functions/create-checkout', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${idToken}`,
+      },
+      body: JSON.stringify({ courseId, termsAccepted: true }),
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(payload.error || `Checkout failed (${response.status})`);
+
+    const checkoutUrl = new URL(payload.checkoutUrl);
+    if (checkoutUrl.protocol !== 'https:') throw new Error('דף התשלום שקיבלנו אינו מאובטח');
+    window.location.assign(checkoutUrl.toString());
+  } catch (checkoutError) {
+    console.error('startCourseCheckout failed:', checkoutError);
+    if (error) {
+      error.textContent = checkoutError.message || 'שגיאה ביצירת דף התשלום';
+      error.hidden = false;
+    }
+    if (button) {
+      button.disabled = false;
+      button.textContent = 'המשך לתשלום מאובטח';
+    }
+  }
+}
+
 window.openCourseUpgradeModal = openCourseUpgradeModal;
 window.closeCourseUpgradeModal = closeCourseUpgradeModal;
 window.closeCourseUpgradePaymentPanel = closeCourseUpgradePaymentPanel;
+window.openPurchaseTerms = openPurchaseTerms;
+window.startCourseCheckout = startCourseCheckout;
 
 function renderPremiumLockIcon(title = 'זמין למנויי פרימיום', extraClass = '') {
   const cls = `feature-lock-icon${extraClass ? ' ' + extraClass : ''}`;
@@ -2361,6 +2512,69 @@ function renderPage() {
   else if (STATE.page === 'my-exams')  renderLecturerExams();
 }
 
+function showMorningPaymentResult(status, detail, busy = false) {
+  document.getElementById('morning-payment-result')?.remove();
+  const success = status === 'success';
+  const overlay = document.createElement('div');
+  overlay.id = 'morning-payment-result';
+  overlay.className = 'modal-overlay';
+  overlay.innerHTML = `
+    <div class="modal-card morning-payment-result-card" role="dialog" aria-modal="true">
+      <div class="morning-payment-result-icon ${success ? 'success' : 'failure'}">
+        ${busy ? '<span class="spinner"></span>' : (success ? '✓' : '!')}
+      </div>
+      <h2>${success ? 'התשלום התקבל' : 'התשלום לא הושלם'}</h2>
+      <p>${esc(detail)}</p>
+      ${busy ? '' : `<button class="btn btn-primary" onclick="document.getElementById('morning-payment-result').remove()">סגור</button>`}
+    </div>`;
+  document.body.appendChild(overlay);
+}
+
+async function handleMorningPaymentReturn() {
+  const params = new URLSearchParams(window.location.search);
+  const status = params.get('payment');
+  if (status !== 'success' && status !== 'failure') return;
+
+  const courseId = String(params.get('courseId') || '').trim();
+  const cleanUrl = new URL(window.location.href);
+  ['payment', 'courseId', 'purchaseId'].forEach(key => cleanUrl.searchParams.delete(key));
+  history.replaceState(history.state, '', cleanUrl.pathname + cleanUrl.search + cleanUrl.hash);
+
+  if (status === 'failure') {
+    showMorningPaymentResult('failure', 'לא בוצע חיוב. אפשר לחזור לקורס ולנסות שוב.');
+    return;
+  }
+
+  showMorningPaymentResult('success', 'מאמתים את הרכישה ומעדכנים את הגישה לקורס...', true);
+  const uid = STATE.fireUser?.uid;
+  for (let attempt = 0; attempt < 12; attempt++) {
+    try {
+      const snap = await db.collection('users').doc(uid).get();
+      if (snap.exists) {
+        STATE.userData = { ...(STATE.userData || {}), ...snap.data() };
+        if (courseId && getCourseEntitlement(courseId)) {
+          showMorningPaymentResult('success', 'הגישה לקורס הופעלה בהצלחה. אפשר להתחיל ללמוד.');
+          if (courseId === STATE.courseId) renderPage();
+          else setTimeout(() => {
+            document.getElementById('morning-payment-result')?.remove();
+            goCourse(courseId);
+          }, 1200);
+          return;
+        }
+      }
+    } catch (error) {
+      console.warn('Payment entitlement polling failed:', error);
+      break;
+    }
+    await new Promise(resolve => setTimeout(resolve, 1500));
+  }
+
+  showMorningPaymentResult(
+    'success',
+    'התשלום התקבל, אך עדכון הגישה עדיין בעיבוד. רענן את הדף בעוד מספר רגעים.'
+  );
+}
+
 async function goHome() {
   _stopStudyTracking();
   STATE.page = 'home';
@@ -2767,7 +2981,6 @@ function _renderCourseCards() {
   const saved = STATE.userData?.savedCourses || [];
   const courses = STATE.courses || [];
   const visible = courses.filter(c => saved.includes(c.id));
-  const isPremiumUser = getUserSubscriptionTier() === 'premium';
 
   const role = STATE.userData?.role;
   const showAnalytics = role === 'instructor' || role === 'admin';
@@ -2815,8 +3028,11 @@ function _renderCourseCards() {
   }
 
   grid.innerHTML = visible.map(c => {
-    const isPremiumCourse = normalizeCourseAccessSettings(c.accessSettings).tier === 'premium';
-    const premiumClass = (isPremiumUser && isPremiumCourse) ? ' premium-user-course-card' : '';
+    const normalizedSettings = normalizeCourseAccessSettings(c.accessSettings);
+    const isPremiumCourse = normalizedSettings.tier === 'premium';
+    const premiumClass = isPremiumCourse && isPremiumUnlockedForCourse(c.id, normalizedSettings)
+      ? ' premium-user-course-card'
+      : '';
     return `
     <div class="course-card${premiumClass}" onclick="goCourse('${c.id}')">
       <button class="save-course-btn saved"
