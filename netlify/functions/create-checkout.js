@@ -186,6 +186,8 @@ exports.handler = async (event) => {
       successUrl: returnUrl(appUrl, 'success', courseId, purchaseId),
       failureUrl: returnUrl(appUrl, 'failure', courseId, purchaseId),
       custom: metadata,
+      ...(morning.pluginId ? { pluginId: morning.pluginId } : {}),
+      ...(morning.group !== null ? { group: morning.group } : {}),
     });
 
     await sessionRef.update({
