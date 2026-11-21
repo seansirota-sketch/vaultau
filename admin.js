@@ -6036,6 +6036,12 @@ const DEFAULT_COURSE_ACCESS_SETTINGS = Object.freeze({
   },
   freeAllowedSubjects: [],
   upgradeContentHtml: '',
+  payment: {
+    enabled: false,
+    price: 0,
+    currency: 'ILS',
+    durationDays: 365,
+  },
 });
 const _adminCoursesCache = new Map();
 
@@ -6053,6 +6059,8 @@ function normalizeCourseAccessSettings(raw) {
     .map(s => normalizeQuestionSubject(s))
     .filter(Boolean))];
   const upgradeContentHtml = String(raw?.upgradeContentHtml || '').trim();
+  const payment = raw?.payment || {};
+  const paymentPrice = Number(payment.price);
   return {
     tier,
     freeLimits: {
@@ -6063,6 +6071,17 @@ function normalizeCourseAccessSettings(raw) {
     },
     freeAllowedSubjects,
     upgradeContentHtml,
+    payment: {
+      enabled: payment.enabled === true && Number.isFinite(paymentPrice) && paymentPrice > 0,
+      price: Number.isFinite(paymentPrice) && paymentPrice > 0 ? Math.round(paymentPrice * 100) / 100 : 0,
+      currency: ['ILS', 'USD', 'EUR', 'GBP'].includes(String(payment.currency || '').toUpperCase())
+        ? String(payment.currency).toUpperCase()
+        : 'ILS',
+      durationDays: (() => {
+        const days = Math.floor(Number(payment.durationDays || 365));
+        return Number.isInteger(days) && days >= 1 && days <= 3650 ? days : 365;
+      })(),
+    },
   };
 }
 
@@ -6081,7 +6100,10 @@ function describeCourseAccess(settings) {
     ? ` · allowlist נושאים ${cfg.freeAllowedSubjects.length}`
     : '';
   const upgradePart = cfg.upgradeContentHtml ? ' · חלון שדרוג מותאם' : '';
-  return `פרימיום · וידאו ${fmt(cfg.freeLimits.maxVideoOpens)} · נושאים ${fmt(cfg.freeLimits.maxSubjectSelections)} · מסומנות ${fmt(cfg.freeLimits.maxStarredQuestions)} · בוצעו ${fmt(cfg.freeLimits.maxDoneExams)}${allowlistPart}${upgradePart}`;
+  const paymentPart = cfg.payment.enabled
+    ? ` · תשלום ${cfg.payment.price} ${cfg.payment.currency}`
+    : ' · ללא רכישה אונליין';
+  return `פרימיום · וידאו ${fmt(cfg.freeLimits.maxVideoOpens)} · נושאים ${fmt(cfg.freeLimits.maxSubjectSelections)} · מסומנות ${fmt(cfg.freeLimits.maxStarredQuestions)} · בוצעו ${fmt(cfg.freeLimits.maxDoneExams)}${allowlistPart}${upgradePart}${paymentPart}`;
 }
 
 async function adminAddCourse() {
@@ -6100,9 +6122,20 @@ async function adminAddCourse() {
     },
     freeAllowedSubjects: parseFreeAllowedSubjectsInput(document.getElementById('c-free-subjects')?.value || ''),
     upgradeContentHtml: document.getElementById('c-upgrade-content')?.value || '',
+    payment: {
+      enabled: document.getElementById('c-payment-enabled')?.checked === true,
+      price: document.getElementById('c-payment-price')?.value || 0,
+      currency: document.getElementById('c-payment-currency')?.value || 'ILS',
+      durationDays: document.getElementById('c-payment-duration')?.value || 365,
+    },
   });
   if (!name || !code) { toast('נא למלא שם וקוד', 'error'); return; }
   if (creditsRaw === '' || isNaN(credits) || credits < 0) { toast('נא למלא נקודות זכות תקינות', 'error'); return; }
+  if (document.getElementById('c-payment-enabled')?.checked
+      && (tier !== 'premium' || !(Number(document.getElementById('c-payment-price')?.value) > 0))) {
+    toast('רכישה אונליין דורשת קורס פרימיום ומחיר גדול מאפס', 'error');
+    return;
+  }
 
   try {
     const id = genId();
@@ -6126,6 +6159,10 @@ async function adminAddCourse() {
     if (document.getElementById('c-limit-done')) document.getElementById('c-limit-done').value = '3';
     if (document.getElementById('c-free-subjects')) document.getElementById('c-free-subjects').value = '';
     if (document.getElementById('c-upgrade-content')) document.getElementById('c-upgrade-content').value = '';
+    if (document.getElementById('c-payment-enabled')) document.getElementById('c-payment-enabled').checked = false;
+    if (document.getElementById('c-payment-price')) document.getElementById('c-payment-price').value = '';
+    if (document.getElementById('c-payment-currency')) document.getElementById('c-payment-currency').value = 'ILS';
+    if (document.getElementById('c-payment-duration')) document.getElementById('c-payment-duration').value = '365';
     toast('✅ קורס נוסף (בסטטוס טיוטה)', 'success');
     await renderCoursesList();
     await populateAllSelects();
@@ -6350,6 +6387,32 @@ function openEditCourse(id) {
         <textarea id="edit-course-upgrade-content" rows="5"
           placeholder="<h3>בחר מסלול</h3>&#10;<div class='plans-grid'>...</div>">${esc(accessSettings.upgradeContentHtml || '')}</textarea>
       </div>
+      <div class="form-group" style="padding:.9rem;border:1px solid var(--border);border-radius:10px;background:#f8fafc">
+        <label style="display:flex;align-items:center;gap:.5rem;font-weight:700;cursor:pointer">
+          <input id="edit-course-payment-enabled" type="checkbox" ${accessSettings.payment.enabled ? 'checked' : ''}>
+          הפעל רכישה מאובטחת ב-Morning
+        </label>
+        <div class="form-row" style="margin-top:.75rem">
+          <div class="form-group">
+            <label>מחיר</label>
+            <input id="edit-course-payment-price" type="number" min="1" step="0.01"
+              value="${accessSettings.payment.price || ''}">
+          </div>
+          <div class="form-group">
+            <label>מטבע</label>
+            <select id="edit-course-payment-currency">
+              ${['ILS', 'USD', 'EUR', 'GBP'].map(code =>
+                `<option value="${code}" ${accessSettings.payment.currency === code ? 'selected' : ''}>${code}</option>`
+              ).join('')}
+            </select>
+          </div>
+          <div class="form-group">
+            <label>תקופת גישה בימים</label>
+            <input id="edit-course-payment-duration" type="number" min="1" max="3650" step="1"
+              value="${accessSettings.payment.durationDays}">
+          </div>
+        </div>
+      </div>
 
       <div style="display:flex;gap:.75rem;justify-content:flex-end;margin-top:1.5rem">
         <button class="btn btn-secondary"
@@ -6388,10 +6451,21 @@ async function saveEditCourse() {
     },
     freeAllowedSubjects: parseFreeAllowedSubjectsInput(document.getElementById('edit-course-free-subjects')?.value || ''),
     upgradeContentHtml: document.getElementById('edit-course-upgrade-content')?.value || '',
+    payment: {
+      enabled: document.getElementById('edit-course-payment-enabled')?.checked === true,
+      price: document.getElementById('edit-course-payment-price')?.value || 0,
+      currency: document.getElementById('edit-course-payment-currency')?.value || 'ILS',
+      durationDays: document.getElementById('edit-course-payment-duration')?.value || 365,
+    },
   });
 
   if (!name || !code) { toast('נא למלא שם וקוד', 'error'); return; }
   if (creditsRaw === '' || isNaN(creditPoints) || creditPoints < 0) { toast('נא למלא נקודות זכות תקינות', 'error'); return; }
+  if (document.getElementById('edit-course-payment-enabled')?.checked
+      && (tier !== 'premium' || !(Number(document.getElementById('edit-course-payment-price')?.value) > 0))) {
+    toast('רכישה אונליין דורשת קורס פרימיום ומחיר גדול מאפס', 'error');
+    return;
+  }
 
   const saveBtn = document.querySelector('#edit-course-modal .btn-primary');
   if (saveBtn) { saveBtn.disabled = true; saveBtn.textContent = 'שומר...'; }

@@ -133,6 +133,31 @@ vaultau/
 - **Auth:** Firebase Authentication (email/password)
 - **Functions:** Netlify serverless functions handle Claude API calls server-side (keeps API keys off the client)
 
+### Morning course checkout
+
+Premium courses can be sold through Morning's hosted payment form. The server
+reads the price, currency, and access duration from `courses/{courseId}` and
+creates a Morning document of type `400` (receipt only). Successful
+signed `payment/received` webhooks grant a course-specific entitlement at
+`users/{uid}.courseAccess[courseId]`; clients cannot write that field.
+
+Configure the following Netlify environment variables:
+
+| Variable | Description |
+|----------|-------------|
+| `MORNING_API_KEY` | Morning OAuth client ID / API key |
+| `MORNING_API_SECRET` | Morning OAuth client secret |
+| `MORNING_API_BASE_URL` | `https://api.greeninvoice.co.il/api/v1` or sandbox `https://sandbox.d.greeninvoice.co.il/api/v1` |
+| `MORNING_TOKEN_URL` | Optional OAuth token URL; inferred from the API base URL when omitted |
+| `MORNING_WEBHOOK_SECRET` | Secret configured in Morning's webhook settings |
+| `MORNING_APP_URL` | Canonical VaultAU origin used for success/failure returns |
+
+In Morning Developer Tools, add a webhook for
+`https://<site>/.netlify/functions/morning-webhook`, subscribe to
+`payment/received`, and configure the same `MORNING_WEBHOOK_SECRET`. Morning's
+hosted payment page determines the enabled methods; enable credit card, Bit,
+Apple Pay, and Google Pay in the Morning/Grow payment plugin configuration.
+
 ---
 
 ## Role-Based Access
