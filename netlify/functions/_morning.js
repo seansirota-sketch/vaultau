@@ -39,7 +39,11 @@ function getMorningConfig(env = process.env) {
       : 'https://api.morning.co/idp/v1/oauth/token';
   }
 
-  return { apiBaseUrl, clientId, clientSecret, tokenUrl };
+  const pluginId = String(env.MORNING_PAYMENT_PLUGIN_ID || '').trim();
+  const rawGroup = String(env.MORNING_PAYMENT_GROUP || '').trim();
+  const group = /^\d+$/.test(rawGroup) ? Number(rawGroup) : null;
+
+  return { apiBaseUrl, clientId, clientSecret, tokenUrl, pluginId, group };
 }
 
 function normalizeCoursePayment(course) {
@@ -132,8 +136,23 @@ async function createMorningPaymentForm(config, accessToken, payload, fetchImpl 
   });
   const result = await response.json().catch(() => ({}));
   if (!response.ok || result.errorCode !== 0 || !result.url) {
-    const details = result.errorDescription || result.error || `HTTP ${response.status}`;
-    throw new Error('Morning checkout creation failed: ' + details);
+    const errorCode = Number(result.errorCode);
+    const knownErrors = {
+      2418: 'The payment amount must be greater than zero.',
+      2600: 'No active Morning clearing terminal/payment plugin is configured for this business.',
+      2601: 'The Morning clearing terminal could not process the charge.',
+      2604: 'The configured payment flow or group is invalid.',
+      2619: 'The configured payment charge type is invalid.',
+    };
+    const rawDetails = result.errorDescription
+      || result.error_description
+      || result.message
+      || result.error;
+    const details = typeof rawDetails === 'string'
+      ? rawDetails
+      : (knownErrors[errorCode] || `HTTP ${response.status}`);
+    const code = Number.isFinite(errorCode) && errorCode !== 0 ? ` (error ${errorCode})` : '';
+    throw new Error('Morning checkout creation failed: ' + details + code);
   }
   return result.url;
 }

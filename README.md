@@ -149,6 +149,8 @@ Configure the following Netlify environment variables:
 | `MORNING_API_SECRET` | Morning OAuth client secret |
 | `MORNING_API_BASE_URL` | `https://api.greeninvoice.co.il/api/v1` or sandbox `https://sandbox.d.greeninvoice.co.il/api/v1` |
 | `MORNING_TOKEN_URL` | Optional OAuth token URL; inferred from the API base URL when omitted |
+| `MORNING_PAYMENT_PLUGIN_ID` | Optional clearing plugin ID when the Morning account does not have a compatible default plugin |
+| `MORNING_PAYMENT_GROUP` | Optional payment group (`100`, `120`, `150`, or `160`) required by some Grow plugin configurations |
 | `MORNING_WEBHOOK_SECRET` | Secret configured in Morning's webhook settings |
 | `MORNING_APP_URL` | Canonical VaultAU origin used for success/failure returns |
 
@@ -157,6 +159,8 @@ In Morning Developer Tools, add a webhook for
 `payment/received`, and configure the same `MORNING_WEBHOOK_SECRET`. Morning's
 hosted payment page determines the enabled methods; enable credit card, Bit,
 Apple Pay, and Google Pay in the Morning/Grow payment plugin configuration.
+Sandbox requires an active clearing terminal/payment plugin on the sandbox
+business; otherwise Morning returns HTTP 400 / error `2600`.
 
 ---
 

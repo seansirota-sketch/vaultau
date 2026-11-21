@@ -6,6 +6,7 @@ const { test } = require('node:test');
 
 const {
   createMorningCustomMetadata,
+  createMorningPaymentForm,
   normalizeCoursePayment,
   parseMorningCustomMetadata,
   paymentTotalsMatch,
@@ -63,4 +64,22 @@ test('webhook totals must exactly match the trusted checkout amount', () => {
   assert.equal(paymentTotalsMatch('99.99', 99.99), true);
   assert.equal(paymentTotalsMatch(99.98, 99.99), false);
   assert.equal(paymentTotalsMatch('not-a-number', 99.99), false);
+});
+
+test('Morning checkout errors expose inactive-terminal codes', async () => {
+  const fetchImpl = async () => ({
+    ok: false,
+    status: 400,
+    json: async () => ({ errorCode: 2600 }),
+  });
+
+  await assert.rejects(
+    () => createMorningPaymentForm(
+      { apiBaseUrl: 'https://sandbox.example.test/api/v1' },
+      'token',
+      {},
+      fetchImpl
+    ),
+    /No active Morning clearing terminal.*error 2600/
+  );
 });
